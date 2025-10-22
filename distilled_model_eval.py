@@ -59,6 +59,7 @@ def run_evaluation():
     # 4. Run validation
     accuracy = validate_student(student, classifier, val_loader)
     print(f"Validation Accuracy of Distilled Model: {accuracy:.2f}%")
+    print("Changing this line for testing between VSCode and code dev server")
 
 if __name__ == "__main__":
     run_evaluation()
