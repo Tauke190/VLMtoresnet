@@ -20,6 +20,10 @@ import timm
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 TRAIN_DIR = '~/data/datasets/oxford_pet/train'
 VAL_DIR = '~/data/datasets/oxford_pet/val' # Path for the validation set
+
+# Only for code development server
+# TRAIN_DIR = '~/data/datasets/oxford_pet/train'
+# VAL_DIR = '~/data/datasets/oxford_pet/val' 
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 
 BATCH_SIZE = 16  # Adjust based on your GPU memory

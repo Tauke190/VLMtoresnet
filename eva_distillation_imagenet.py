@@ -18,10 +18,13 @@ import timm
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
-TRAIN_DIR = '~/data/datasets/oxford_pet/train'
-VAL_DIR = '~/data/datasets/oxford_pet/val' # Path for the validation set
+TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
+VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
+TRAIN_SUBSET_RATIO = 0.15  # 
+# Only for code development server
+# TRAIN_DIR = '~/data/datasets/oxford_pet/train'
+# VAL_DIR = '~/data/datasets/oxford_pet/val' 
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
-
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
 NUM_EPOCHS = 5 # Increased for demonstration to see progress
@@ -88,11 +91,33 @@ def run_distillation():
     train_transform = timm.data.create_transform(**data_config, is_training=True)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
 
+# ...existing code...
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
-        train_dataset = ImageFolder(root=TRAIN_DIR, transform=train_transform)
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+        base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
 
+        if TRAIN_SUBSET_RATIO is not None and 0.0 < TRAIN_SUBSET_RATIO < 1.0:
+            # build list of indices per class
+            targets = base_train.targets
+            class_to_indices = {}
+            for idx, t in enumerate(targets):
+                class_to_indices.setdefault(t, []).append(idx)
+
+            # sample approx TRAIN_SUBSET_RATIO from each class (at least 1 image/class)
+            selected_indices = []
+            g = torch.Generator().manual_seed(42)  # reproducible sampling
+            for cls, idxs in class_to_indices.items():
+                k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
+                perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
+                for p in perm:
+                    selected_indices.append(idxs[p])
+
+            train_dataset = Subset(base_train, selected_indices)
+            print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
+        else:
+            train_dataset = base_train
+
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
         print(f"Loading validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
         # Create a smaller subset for faster validation
@@ -103,6 +128,7 @@ def run_distillation():
         print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)
         return
+# ...existing code...
 
     # Determine number of classes from the dataset
     num_classes = len(train_dataset.classes)
