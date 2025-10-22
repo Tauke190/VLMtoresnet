@@ -7,7 +7,8 @@
 #SBATCH --gres=gpu:1                        # Number of GPUs (adjust as needed)
 #SBATCH --mem=16G                           # Memory allocation (adjust as needed)
 #SBATCH --time=48:00:00                     # Maximum runtime (adjust as needed)
-#SBATCH --partition=gpu                     # Partition name (adjust based on your cluster configuration)
+#SBATCH --partition=preemptable                  # Partition name (adjust based on your cluster configuration)
+#SBATCH --qos=preemptable                # Use the assigned QOS
 
 # Load necessary modules (if required)
 module load python/3.8
@@ -16,7 +17,7 @@ module load cuda
 # Activate your Python environment
 conda activate openmmlab
 # Navigate to the directory containing your script
-cd /Users/avinash/Desktop/distillation/VLMtoresnet
+cd /home/av354855/distillation/VLMtoresnet
 
 # Run your training script
 python eva_distillation_imagenet.py
