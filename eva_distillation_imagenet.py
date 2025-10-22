@@ -18,12 +18,12 @@ import timm
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
-TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
-VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
+#TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
+#VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
 TRAIN_SUBSET_RATIO = 0.15  # 
 # Only for code development server
-# TRAIN_DIR = '~/data/datasets/oxford_pet/train'
-# VAL_DIR = '~/data/datasets/oxford_pet/val' 
+TRAIN_DIR = '~/data/datasets/ImageNet/train'
+VAL_DIR = '~/data/datasets/ImageNet/val' 
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
@@ -131,7 +131,7 @@ def run_distillation():
 # ...existing code...
 
     # Determine number of classes from the dataset
-    num_classes = len(train_dataset.classes)
+    num_classes = len(base_train.classes)
     print(f"Found {num_classes} classes in the dataset.")
 
     # Create a projection layer and a new classifier head for the student
@@ -195,6 +195,4 @@ def run_distillation():
 
 if __name__ == '__main__':
     run_distillation()
-
-
 
