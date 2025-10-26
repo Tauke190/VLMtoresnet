@@ -23,7 +23,8 @@ import time
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
 TRAIN_SUBSET_RATIO = 1
 # Only for code development server
-TRAIN_DIR = '~/data/datasets/imagenet/train'
+TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
 VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
@@ -109,11 +110,11 @@ def run_distillation():
         else:
             train_dataset = base_train
 
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
         print(f"Loading validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
         val_subset = Subset(full_val_dataset, range(min(VAL_SUBSET_SIZE, len(full_val_dataset))))
-        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Using a validation subset of {len(val_subset)} images.")
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
