@@ -132,8 +132,9 @@ def run_distillation():
     optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
     # --- Fast Total ETA Estimation ---
-    print("\nEstimating total training time using first 10 batches...")
     N = 100
+    print(f"\nEstimating total training time using first {N} batches for {NUM_EPOCHS} epochs...")
+
     batch_times = []
     for i, (images, labels) in enumerate(train_loader):
         start_batch = time.time()

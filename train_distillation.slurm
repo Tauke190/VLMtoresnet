@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --job-name=distillation_train
 #SBATCH --output=distillation_%j.out
