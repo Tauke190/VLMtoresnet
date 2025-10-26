@@ -15,6 +15,8 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 import clip
+import time  # Add at the top with other imports
+
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
@@ -27,7 +29,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 5 # Increased for demonstration to see progress
+NUM_EPOCHS = 5 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
@@ -131,7 +133,12 @@ def run_distillation():
     optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
     print("\nStarting distillation...")
+    epoch_times = []
+
     for epoch in range(NUM_EPOCHS):
+
+        start_time = time.time()  # Start timer
+
         student.train()
         classifier.train()
         running_loss = 0.0
@@ -158,9 +165,18 @@ def run_distillation():
                 avg_loss_so_far = running_loss / (i + 1)
                 print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
 
+        epoch_time = time.time() - start_time
+        epoch_times.append(epoch_time)
+        avg_epoch_time = sum(epoch_times) / len(epoch_times)
+        remaining_epochs = NUM_EPOCHS - (epoch + 1)
+        eta_seconds = avg_epoch_time * remaining_epochs
+        eta_str = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
+        
         epoch_loss = running_loss / len(train_loader)
         print(f"\n--- End of Epoch {epoch+1} ---")
         print(f"Average Training Loss: {epoch_loss:.4f}")
+        print(f"Epoch Time: {epoch_time:.2f} seconds")
+        print(f"Estimated Time Remaining: {eta_str}")
 
         val_accuracy = validate_student(student, classifier, val_loader)
         print(f"Validation Accuracy after Epoch {epoch+1}: {val_accuracy:.2f}%")
