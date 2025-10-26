@@ -22,8 +22,8 @@ import clip
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
 TRAIN_SUBSET_RATIO = 1  # 
 # Only for code development server
-TRAIN_DIR = '~/data/datasets/ImageNet/train'
-VAL_DIR = '~/data/datasets/ImageNet/val' 
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val' 
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
