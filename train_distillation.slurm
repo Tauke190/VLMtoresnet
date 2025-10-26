@@ -10,11 +10,26 @@
 #SBATCH --partition=preemptable
 #SBATCH --qos=preemptable
 
+# Load necessary modules
 module load anaconda
 module load python
 module load cuda
 
+# --- FIX STARTS HERE ---
+
+# Source your bash profile to initialize conda
+source ~/.bashrc
+
+# Activate your specific conda environment
+conda activate openmmlab
+
+# --- FIX ENDS HERE ---
+
+# Change to your working directory
 cd /home/av354855/distillation/VLMtoresnet
 
-# Run script inside conda environment without activating
-conda run -n openmmlab python eva_distillation_imagenet.py
+# Run your script (now inside the activated environment)
+python eva_distillation_imagenet.py
+
+# (Optional but good practice) Deactivate the environment at the end
+conda deactivate
