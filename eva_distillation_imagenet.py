@@ -28,7 +28,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 5
+NUM_EPOCHS = 50
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
@@ -133,7 +133,7 @@ def run_distillation():
 
     # --- Fast Total ETA Estimation ---
     print("\nEstimating total training time using first 10 batches...")
-    N = 10
+    N = 100
     batch_times = []
     for i, (images, labels) in enumerate(train_loader):
         start_batch = time.time()
