@@ -1,13 +1,12 @@
-
 # knowledge_distillation.py
 #
 # Description:
-# A script to perform knowledge distillation from an EVA-02 teacher to a
+# A script to perform knowledge distillation from a CLIP ViT-L/14 teacher to a
 # ResNet-50 student, with validation on a subset of the validation set
 # after each epoch. This version is configured for the Oxford-IIIT Pet Dataset.
 #
 # Dependencies:
-# pip install torch torchvision timm
+# pip install torch torchvision timm git+https://github.com/openai/CLIP.git
 
 import torch
 import torch.nn as nn
@@ -15,12 +14,13 @@ import torch.optim as optim
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
+import clip
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 0.15  # 
+TRAIN_SUBSET_RATIO = 1  # 
 # Only for code development server
 TRAIN_DIR = '~/data/datasets/ImageNet/train'
 VAL_DIR = '~/data/datasets/ImageNet/val' 
@@ -31,9 +31,9 @@ NUM_EPOCHS = 5 # Increased for demonstration to see progress
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
-    """Extracts features from the teacher model."""
+    """Extracts features from the CLIP teacher model."""
     with torch.no_grad():
-        features = model.forward_features(images)[:, 0]  # Use CLS token
+        features = model.encode_image(images)
     return features
 
 def get_student_features(model, images):
@@ -41,10 +41,7 @@ def get_student_features(model, images):
     Extracts features from the student model's backbone and applies
     global average pooling to get a feature vector.
     """
-    # Get the feature map from the ResNet backbone (e.g., shape: [N, 2048, 14, 14])
     feature_map = model.forward_features(images)
-    # Apply global average pooling to collapse spatial dimensions (-> [N, 2048])
-    # This is necessary to match the teacher's feature vector shape.
     pooled_features = model.global_pool(feature_map)
     return pooled_features
 
@@ -72,40 +69,34 @@ def run_distillation():
     print(f"Using device: {DEVICE}")
 
     # 1. --- Setup Models ---
-    print("Loading teacher model (EVA-02)...")
-    teacher_model_name = 'eva02_large_patch14_448.mim_in22k_ft_in22k_in1k'
-    teacher = timm.create_model(teacher_model_name, pretrained=True, num_classes=0).to(DEVICE)
+    print("Loading teacher model (CLIP ViT-L/14)...")
+    teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
     for param in teacher.parameters():
         param.requires_grad = False
 
     print("Loading student model (ResNet-50)...")
-    # Load student backbone without a classifier head
     student = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
 
-    teacher_feature_dim = teacher.embed_dim
+    teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = student.num_features
 
     # 2. --- Setup Dataset and DataLoader ---
-    data_config = timm.data.resolve_model_data_config(teacher)
-    train_transform = timm.data.create_transform(**data_config, is_training=True)
-    val_transform = timm.data.create_transform(**data_config, is_training=False)
+    train_transform = preprocess
+    val_transform = preprocess
 
-# ...existing code...
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
         base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
 
         if TRAIN_SUBSET_RATIO is not None and 0.0 < TRAIN_SUBSET_RATIO < 1.0:
-            # build list of indices per class
             targets = base_train.targets
             class_to_indices = {}
             for idx, t in enumerate(targets):
                 class_to_indices.setdefault(t, []).append(idx)
 
-            # sample approx TRAIN_SUBSET_RATIO from each class (at least 1 image/class)
             selected_indices = []
-            g = torch.Generator().manual_seed(42)  # reproducible sampling
+            g = torch.Generator().manual_seed(42)
             for cls, idxs in class_to_indices.items():
                 k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
                 perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
@@ -120,7 +111,6 @@ def run_distillation():
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
         print(f"Loading validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
-        # Create a smaller subset for faster validation
         val_subset = Subset(full_val_dataset, range(min(VAL_SUBSET_SIZE, len(full_val_dataset))))
         val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
         print(f"Using a validation subset of {len(val_subset)} images.")
@@ -128,23 +118,18 @@ def run_distillation():
         print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)
         return
-# ...existing code...
 
-    # Determine number of classes from the dataset
     num_classes = len(base_train.classes)
     print(f"Found {num_classes} classes in the dataset.")
 
-    # Create a projection layer and a new classifier head for the student
     projection = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
     classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
 
-    # 3. --- Setup Loss and Optimizer ---
     distill_loss_fn = nn.MSELoss()
     classif_loss_fn = nn.CrossEntropyLoss()
     params_to_train = list(student.parameters()) + list(projection.parameters()) + list(classifier.parameters())
     optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
-    # 4. --- Distillation Training Loop ---
     print("\nStarting distillation...")
     for epoch in range(NUM_EPOCHS):
         student.train()
@@ -156,19 +141,14 @@ def run_distillation():
             teacher_features = get_teacher_features(teacher, images)
             student_features = get_student_features(student, images)
 
-            # --- Calculate Losses ---
-            # 1. Distillation Loss
             projected_teacher_features = projection(teacher_features)
             loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
-            # 2. Classification Loss
             logits = classifier(student_features)
             loss_classif = classif_loss_fn(logits, labels)
 
-            # Combine losses (equal weighting for simplicity)
             total_loss = loss_distill + loss_classif
 
-            # Backpropagation
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
@@ -182,17 +162,13 @@ def run_distillation():
         print(f"\n--- End of Epoch {epoch+1} ---")
         print(f"Average Training Loss: {epoch_loss:.4f}")
 
-        # --- Validation Step ---
         val_accuracy = validate_student(student, classifier, val_loader)
         print(f"Validation Accuracy after Epoch {epoch+1}: {val_accuracy:.2f}%")
         print("---------------------------------")
 
-
     print("\nDistillation training finished.")
-    # Save the student backbone and the trained classifier
     torch.save(student.state_dict(), 'resnet50_distilled_backbone.pth')
     torch.save(classifier.state_dict(), 'resnet50_distilled_classifier.pth')
 
 if __name__ == '__main__':
     run_distillation()
-
