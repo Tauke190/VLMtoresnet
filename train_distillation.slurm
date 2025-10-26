@@ -14,12 +14,8 @@ module load anaconda
 module load python
 module load cuda
 
-# Activate the conda environment using full path (avoids conda.sh issues)
-# Replace with your actual conda base path if different
-/home/av354855/.conda/bin/conda activate openmmlab
-
-# Navigate to your project directory
+# Go to project directory
 cd /home/av354855/distillation/VLMtoresnet
 
-# Run your training script
-python eva_distillation_imagenet.py
+# Run your Python script inside the conda environment without activating
+conda run -n openmmlab python eva_distillation_imagenet.py
