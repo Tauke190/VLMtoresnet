@@ -141,7 +141,7 @@ def run_distillation():
             teacher_features = get_teacher_features(teacher, images)
             student_features = get_student_features(student, images)
 
-            projected_teacher_features = projection(teacher_features)
+            projected_teacher_features = projection(teacher_features.float())
             loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
             logits = classifier(student_features)
