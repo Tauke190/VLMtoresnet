@@ -15,21 +15,20 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 import clip
-import time  # Add at the top with other imports
-
+import time
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 1  # 
+TRAIN_SUBSET_RATIO = 1
 # Only for code development server
 TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val' 
+VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 5 
+NUM_EPOCHS = 5
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
@@ -132,12 +131,37 @@ def run_distillation():
     params_to_train = list(student.parameters()) + list(projection.parameters()) + list(classifier.parameters())
     optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
+    # --- Fast Total ETA Estimation ---
+    print("\nEstimating total training time using first 10 batches...")
+    N = 10
+    batch_times = []
+    for i, (images, labels) in enumerate(train_loader):
+        start_batch = time.time()
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        teacher_features = get_teacher_features(teacher, images)
+        student_features = get_student_features(student, images)
+        projected_teacher_features = projection(teacher_features.float())
+        loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+        logits = classifier(student_features)
+        loss_classif = classif_loss_fn(logits, labels)
+        total_loss = loss_distill + loss_classif
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+        batch_times.append(time.time() - start_batch)
+        if i + 1 == N:
+            break
+    avg_batch_time = sum(batch_times) / len(batch_times)
+    total_batches = len(train_loader)
+    est_epoch_time = avg_batch_time * total_batches
+    est_total_time = est_epoch_time * NUM_EPOCHS
+    est_total_str = time.strftime('%H:%M:%S', time.gmtime(est_total_time))
+    print(f"Estimated total training time (based on {N} batches): {est_total_str}")
+
     print("\nStarting distillation...")
     epoch_times = []
 
     for epoch in range(NUM_EPOCHS):
-
-        start_time = time.time()  # Start timer
 
         student.train()
         classifier.train()
@@ -165,18 +189,9 @@ def run_distillation():
                 avg_loss_so_far = running_loss / (i + 1)
                 print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
 
-        epoch_time = time.time() - start_time
-        epoch_times.append(epoch_time)
-        avg_epoch_time = sum(epoch_times) / len(epoch_times)
-        remaining_epochs = NUM_EPOCHS - (epoch + 1)
-        eta_seconds = avg_epoch_time * remaining_epochs
-        eta_str = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
-        
         epoch_loss = running_loss / len(train_loader)
         print(f"\n--- End of Epoch {epoch+1} ---")
         print(f"Average Training Loss: {epoch_loss:.4f}")
-        print(f"Epoch Time: {epoch_time:.2f} seconds")
-        print(f"Estimated Time Remaining: {eta_str}")
 
         val_accuracy = validate_student(student, classifier, val_loader)
         print(f"Validation Accuracy after Epoch {epoch+1}: {val_accuracy:.2f}%")
