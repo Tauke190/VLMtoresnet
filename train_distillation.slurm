@@ -14,12 +14,11 @@ module load anaconda
 module load python
 module load cuda
 
-# Initialize conda in the current shell session (no need for conda init)
-source $(conda info --base)/etc/profile.d/conda.sh
+# Activate the conda environment using full path (avoids conda.sh issues)
+# Replace with your actual conda base path if different
+/home/av354855/.conda/bin/conda activate openmmlab
 
-# Activate your conda environment
-conda activate openmmlab
-
+# Navigate to your project directory
 cd /home/av354855/distillation/VLMtoresnet
 
 # Run your training script
