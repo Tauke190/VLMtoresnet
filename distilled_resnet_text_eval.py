@@ -4,10 +4,12 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 from tqdm import tqdm
+import clip  # Requires OpenAI's CLIP library
+
 
 # --- Configuration ---
 VAL_DIR = '/home/av354855/data/datasets/imagenet/val'  # Path to your validation dataset
-VAL_SUBSET_SIZE = 10000
+VAL_SUBSET_SIZE = 50000
 BATCH_SIZE = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -153,8 +155,7 @@ def run_text_based_evaluation():
 
     # 3. Load the text encoder (e.g., CLIP's text encoder)
     print("Loading text encoder...")
-    import clip  # Requires OpenAI's CLIP library
-    text_model, preprocess = clip.load("ViT-B/32", device=DEVICE)  # Use a lightweight CLIP model
+    text_model, preprocess = clip.load("ViT-L/14", device=DEVICE)  # Use a lightweight CLIP model
     tokenizer = clip.tokenize
 
     # 4. Generate text features
