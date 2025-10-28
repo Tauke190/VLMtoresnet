@@ -22,7 +22,7 @@ import random  # Add this import at the top of the file
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 1
+TRAIN_SUBSET_RATIO = 0.01
 # Only for code development server
 # TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
 TRAIN_DIR = '~/data/datasets/imagenet/train'
@@ -30,7 +30,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 50
+NUM_EPOCHS = 1
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
