@@ -6,7 +6,6 @@ import timm
 from tqdm import tqdm
 import clip  # Requires OpenAI's CLIP library
 
-
 # --- Configuration ---
 VAL_DIR = '/home/av354855/data/datasets/imagenet/val'  # Path to your validation dataset
 VAL_SUBSET_SIZE = 50000
@@ -98,11 +97,12 @@ PROMPT_TEMPLATES = [
 ]
 
 # --- Utility Functions ---
-def get_student_features(model, images):
-    """Extract global average pooled features from the student (ResNet-50)."""
+def get_student_features(model, images, projection_layer):
+    """Extract global average pooled features from the student (ResNet-50) and project to 768 dimensions."""
     feature_map = model.forward_features(images)
-    pooled_features = model.global_pool(feature_map)
-    return pooled_features
+    pooled_features = model.global_pool(feature_map)  # Shape: [batch_size, 2048]
+    projected_features = projection_layer(pooled_features)  # Shape: [batch_size, 768]
+    return projected_features
 
 def get_text_features(class_names, text_model, tokenizer):
     """Generate text features for all class names using prompt templates."""
@@ -116,14 +116,15 @@ def get_text_features(class_names, text_model, tokenizer):
         text_features = torch.stack(text_features)  # Shape: [num_classes, text_feature_dim]
         return text_features
 
-def validate_with_text(student_model, val_loader, text_features):
+def validate_with_text(student_model, val_loader, text_features, projection_layer):
     """Perform text-based evaluation."""
     student_model.eval()
+    projection_layer.eval()
     correct, total = 0, 0
     with torch.no_grad():
         for images, labels in tqdm(val_loader, desc="Validating"):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            image_features = get_student_features(student_model, images)
+            image_features = get_student_features(student_model, images, projection_layer)
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)  # Normalize
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
 
@@ -144,7 +145,13 @@ def run_text_based_evaluation():
     student.load_state_dict(torch.load('resnet50_distilled_backbone.pth', map_location=DEVICE))
     student.eval()
 
-    # 2. Prepare the validation dataset
+    # 2. Load the projection layer
+    print("Loading projection layer...")
+    projection_layer = nn.Linear(2048, 768).to(DEVICE)
+    projection_layer.load_state_dict(torch.load('projection_layer.pth', map_location=DEVICE))
+    projection_layer.eval()
+
+    # 3. Prepare the validation dataset
     data_config = timm.data.resolve_model_data_config(student)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
@@ -153,18 +160,18 @@ def run_text_based_evaluation():
 
     class_names = val_dataset.classes  # Class names from the dataset
 
-    # 3. Load the text encoder (e.g., CLIP's text encoder)
+    # 4. Load the text encoder (e.g., CLIP's text encoder)
     print("Loading text encoder...")
-    text_model, preprocess = clip.load("ViT-L/14", device=DEVICE)  # Use a lightweight CLIP model
+    text_model, preprocess = clip.load("ViT-L/14", device=DEVICE)  # Use the same CLIP model as during distillation
     tokenizer = clip.tokenize
 
-    # 4. Generate text features
+    # 5. Generate text features
     print("Generating text features...")
     text_features = get_text_features(class_names, text_model, tokenizer)
 
-    # 5. Run validation
+    # 6. Run validation
     print("Starting text-based evaluation...")
-    accuracy = validate_with_text(student, val_loader, text_features)
+    accuracy = validate_with_text(student, val_loader, text_features, projection_layer)
     print(f"Text-Based Validation Accuracy: {accuracy:.2f}%")
 
 if __name__ == "__main__":
