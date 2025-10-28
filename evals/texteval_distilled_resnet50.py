@@ -155,7 +155,7 @@ def run_text_based_evaluation():
     # Transpose the weights for evaluation (2048 → 768)
     evaluation_weights = {
         'weight': distillation_weights['weight'].T,  # Transpose the weight matrix
-        'bias': distillation_weights['bias']         # Bias remains the same
+        'bias': distillation_weights['bias'][:768]  # Slice the bias to match the output dimension
     }
 
     # Load the transposed weights into the evaluation projection layer
