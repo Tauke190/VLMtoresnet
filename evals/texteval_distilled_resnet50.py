@@ -142,13 +142,13 @@ def run_text_based_evaluation():
     # 1. Load the student backbone (distilled)
     print("Loading distilled student backbone...")
     student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    student.load_state_dict(torch.load('resnet50_distilled_backbone.pth', map_location=DEVICE))
+    student.load_state_dict(torch.load('../resnet50_distilled_backbone.pth', map_location=DEVICE))
     student.eval()
 
     # 2. Load the projection layer
     print("Loading projection layer...")
     projection_layer = nn.Linear(2048, 768).to(DEVICE)
-    projection_layer.load_state_dict(torch.load('projection_layer.pth', map_location=DEVICE))
+    projection_layer.load_state_dict(torch.load('../projection_layer.pth', map_location=DEVICE))
     projection_layer.eval()
 
     # 3. Prepare the validation dataset

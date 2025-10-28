@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, Subset
 import timm
 import clip
 import time
+import random  # Add this import at the top of the file
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
@@ -23,10 +24,10 @@ import time
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
 TRAIN_SUBSET_RATIO = 1
 # Only for code development server
-TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
 VAL_DIR = '~/data/datasets/imagenet/val'
-VAL_SUBSET_SIZE = 1000 # Number of images to use for validation each epoch
+VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
 NUM_EPOCHS = 50
@@ -165,6 +166,11 @@ def run_distillation():
 
     for epoch in range(NUM_EPOCHS):
 
+        # picks randomized subset for validation
+        val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
+        val_subset = Subset(full_val_dataset, val_indices)
+        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
         student.train()
         classifier.train()
         running_loss = 0.0
@@ -202,6 +208,7 @@ def run_distillation():
     print("\nDistillation training finished.")
     torch.save(student.state_dict(), 'resnet50_distilled_backbone.pth')
     torch.save(classifier.state_dict(), 'resnet50_distilled_classifier.pth')
+    torch.save(projection.state_dict(), 'projection_layer.pth')
 
 if __name__ == '__main__':
     run_distillation()
