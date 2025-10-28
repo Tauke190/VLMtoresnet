@@ -128,8 +128,8 @@ def validate_with_text(student_model, val_loader, text_features, projection_laye
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)  # Normalize
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
 
-            # Ensure image_features is in float32 to match text_features
-            image_features = image_features.float()
+            # Ensure both tensors are in the same precision (Half)
+            image_features = image_features.half()  # Convert to Half precision
 
             # Compute similarity between image features and text features
             logits = image_features @ text_features.T  # Shape: [batch_size, num_classes]
