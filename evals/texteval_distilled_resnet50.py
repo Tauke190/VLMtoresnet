@@ -148,7 +148,18 @@ def run_text_based_evaluation():
     # 2. Load the projection layer
     print("Loading projection layer...")
     projection_layer = nn.Linear(2048, 768).to(DEVICE)
-    projection_layer.load_state_dict(torch.load('../projection_layer.pth', map_location=DEVICE))
+
+    # Load the projection layer weights (768 → 2048)
+    distillation_weights = torch.load('../projection_layer.pth', map_location=DEVICE)
+
+    # Transpose the weights for evaluation (2048 → 768)
+    evaluation_weights = {
+        'weight': distillation_weights['weight'].T,  # Transpose the weight matrix
+        'bias': distillation_weights['bias']         # Bias remains the same
+    }
+
+    # Load the transposed weights into the evaluation projection layer
+    projection_layer.load_state_dict(evaluation_weights)
     projection_layer.eval()
 
     # 3. Prepare the validation dataset
