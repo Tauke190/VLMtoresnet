@@ -6,7 +6,7 @@ import timm
 from tqdm import tqdm
 
 # --- Configuration ---
-VAL_DIR = '~/data/datasets/oxford_pet/val'  # Path to your validation dataset
+VAL_DIR = '/home/av354855/data/datasets/imagenet/val'  # Path to your validation dataset
 VAL_SUBSET_SIZE = 10000
 BATCH_SIZE = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
