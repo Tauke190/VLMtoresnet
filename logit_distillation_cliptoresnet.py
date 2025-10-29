@@ -215,6 +215,8 @@ def run_distillation():
         total_start_time = time.time()
 
         for epoch in range(NUM_EPOCHS):
+            # Start timer for the epoch
+            epoch_start_time = time.time()
 
             # picks randomized subset for validation
             val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
@@ -255,6 +257,11 @@ def run_distillation():
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
+
+            # End timer for the epoch
+            epoch_end_time = time.time()
+            epoch_time = epoch_end_time - epoch_start_time
+            print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
             # Zero-shot validation
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
