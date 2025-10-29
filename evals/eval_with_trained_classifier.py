@@ -1,10 +1,10 @@
-# linear probe evaluation script for distilled ResNet-50 model
+# evaluation with a pretrained classifier head on top of a distilled ResNet-50 backbone
 
 import torch
-import torch.nn as nn
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 import timm
+from tqdm import tqdm  # For progress bar
 
 # --- Configuration ---
 VAL_DIR = '~/data/datasets/imagenet/val'  # Path to your ImageNet validation dataset
@@ -12,60 +12,48 @@ BATCH_SIZE = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # --- Utility Functions ---
-def get_student_features(model, images):
-    """Extract global average pooled features from the student (ResNet-50)."""
-    feature_map = model.forward_features(images)
-    pooled_features = model.global_pool(feature_map)
-    return pooled_features
-
-def validate_student(student_model, classifier, val_loader):
-    """Evaluates accuracy on validation set."""
-    student_model.eval()
-    classifier.eval()
+def validate_model(model, val_loader):
+    """Evaluates accuracy on validation set with a progress bar."""
+    model.eval()
     correct, total = 0, 0
     with torch.no_grad():
-        for images, labels in val_loader:
+        for images, labels in tqdm(val_loader, desc="Validating", unit="batch"):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = get_student_features(student_model, images)
-            outputs = classifier(features)
+            outputs = model(images)
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
 
 # --- Main Evaluation ---
-def run_evaluation(model_path, classifier_path):
+def run_evaluation(model_path):
     print(f"Using device: {DEVICE}")
 
-    # 1. Load the student backbone (distilled)
-    print("Loading distilled student backbone...")
-    student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
+    # 1. Load the distilled ResNet-50 backbone
+    print("Loading distilled ResNet-50 backbone...")
+    student = timm.create_model('resnet50', pretrained=False).to(DEVICE)
     student.load_state_dict(torch.load(model_path, map_location=DEVICE))
     student.eval()
 
-    # 2. Prepare the validation dataset
+    # 2. Replace the classifier with a pretrained one
+    print("Loading pretrained classifier...")
+    pretrained_model = timm.create_model('resnet50', pretrained=True).to(DEVICE)
+    student.fc = pretrained_model.fc  # Replace the classifier head with the pretrained one
+
+    # 3. Prepare the validation dataset
     data_config = timm.data.resolve_model_data_config(student)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
-    num_classes = len(val_dataset.classes)
-
-    # 3. Load trained classifier head
-    print("Loading trained classifier...")
-    classifier = nn.Linear(student.num_features, num_classes).to(DEVICE)
-    classifier.load_state_dict(torch.load(classifier_path, map_location=DEVICE))
-    classifier.eval()
-
     # 4. Run validation
-    accuracy = validate_student(student, classifier, val_loader)
-    print(f"Validation Accuracy of Distilled Model: {accuracy:.2f}%")
+    accuracy = validate_model(student, val_loader)
+    print(f"Validation Accuracy of Distilled Model with Pretrained Classifier: {accuracy:.2f}%")
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Evaluate a distilled ResNet-50 model.")
+    parser = argparse.ArgumentParser(description="Evaluate a distilled ResNet-50 model with a pretrained classifier.")
     parser.add_argument("--model-path", type=str, required=True, help="Path to the student model file.")
-    parser.add_argument("--classifier-path", type=str, required=True, help="Path to the trained classifier file.")
     args = parser.parse_args()
 
-    run_evaluation(args.model_path, args.classifier_path)
+    run_evaluation(args.model_path)
