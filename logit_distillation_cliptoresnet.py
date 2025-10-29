@@ -256,7 +256,7 @@ def run_distillation():
 
                 if i == 999:  # After processing the first 100 batches
                     elapsed_time = time.time() - epoch_start_time
-                    avg_time_per_batch = elapsed_time / 100
+                    avg_time_per_batch = elapsed_time / 1000
                     total_batches = len(train_loader) * NUM_EPOCHS
                     estimated_total_time = avg_time_per_batch * total_batches
                     estimated_hours = int(estimated_total_time // 3600)
@@ -278,6 +278,13 @@ def run_distillation():
             epoch_end_time = time.time()
             epoch_time = epoch_end_time - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
+
+            if epoch == 0:
+                estimated_total_time = epoch_time * NUM_EPOCHS
+                estimated_hours = int(estimated_total_time // 3600)
+                estimated_minutes = int((estimated_total_time % 3600) // 60)
+                estimated_seconds = int(estimated_total_time % 60)
+                print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
             # Zero-shot validation
             # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
