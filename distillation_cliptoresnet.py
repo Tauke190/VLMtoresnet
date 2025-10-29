@@ -128,19 +128,16 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
     top5_accuracy = 100 * top5_correct / total
     return top1_accuracy, top5_accuracy
 
-def compute_flops(model, verbose=False, print_per_layer_stat=False, resolution=(3, 224, 224)):
+def compute_flops(model, resolution=(3, 224, 224)):
     """
-    Computes the FLOPs and parameters of the given model.
-    Requires fvcore to be installed: pip install fvcore
+    Computes the FLOPs and parameters of the given model using thop.
     """
-    from fvcore.nn import FlopCountAnalysis
+    from thop import profile
     input = torch.randn(1, *resolution).to(DEVICE)
-    flops = FlopCountAnalysis(model.float(), input)
-    total_flops = flops.total() / 10 ** 9  # Convert to GFLOPs
-    total_params = np.sum([int(np.prod(p.shape)) for p in model.parameters()])
-    print(f"\n\n***** FLOP TOTAL: {total_flops:.2f} GFLOPs *****")
-    print(f"***** Model Parameters: {total_params:,} *****\n")
-    return total_flops, total_params
+    flops, params = profile(model, inputs=(input,))
+    print(f"\n\n***** FLOP TOTAL: {flops / 10 ** 9:.2f} GFLOPs *****")
+    print(f"***** Model Parameters: {params:,} *****\n")
+    return flops / 10 ** 9, params
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
