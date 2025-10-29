@@ -32,7 +32,7 @@ def run_evaluation(model_path):
     # 1. Load the distilled ResNet-50 backbone
     print("Loading distilled ResNet-50 backbone...")
     student = timm.create_model('resnet50', pretrained=False).to(DEVICE)
-    student.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    student.load_state_dict(torch.load(model_path, map_location=DEVICE), strict=False)  # Allow missing keys
     student.eval()
 
     # 2. Replace the classifier with a pretrained one
