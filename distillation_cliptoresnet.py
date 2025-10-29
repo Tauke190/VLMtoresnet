@@ -16,6 +16,7 @@ import timm
 import clip
 import time
 import random  # Add this import at the top of the file
+import numpy as np  # Add this import for parameter calculation
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
@@ -48,21 +49,24 @@ def get_student_features(model, images):
     return pooled_features
 
 def validate_student(student_model, classifier, val_loader):
-    """Evaluates the student model on a given dataloader."""
+    """Evaluates the student model on a given dataloader and calculates top-1 and top-5 accuracy."""
     student_model.eval()
     classifier.eval()
-    correct = 0
+    top1_correct = 0
+    top5_correct = 0
     total = 0
     with torch.no_grad():
         for images, labels in val_loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             features = student_model.forward_features(images)
             outputs = classifier(features)
-            _, predicted = torch.max(outputs.data, 1)
+            _, top5_preds = outputs.topk(5, dim=1)
             total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    accuracy = 100 * correct / total
-    return accuracy
+            top1_correct += (top5_preds[:, 0] == labels).sum().item()  # Top-1 accuracy
+            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()  # Top-5 accuracy
+    top1_accuracy = 100 * top1_correct / total
+    top5_accuracy = 100 * top5_correct / total
+    return top1_accuracy, top5_accuracy
 
 class StudentWithProjector(nn.Module):
     def __init__(self, backbone):
@@ -91,7 +95,7 @@ def load_prompts_from_file(filepath):
 def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, templates, device=DEVICE):
     """
     Performs zero-shot validation using CLIP text embeddings as class prototypes.
-    Considers all prompt templates for each class.
+    Considers all prompt templates for each class and calculates top-1 and top-5 accuracy.
     """
     # Prepare class text prompts using all templates
     prompts = [template.format(name) for name in class_names for template in templates]
@@ -106,7 +110,8 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
     num_classes = len(class_names)
     text_features = text_features.view(num_classes, num_templates, -1).mean(dim=1)
 
-    correct = 0
+    top1_correct = 0
+    top5_correct = 0
     total = 0
     student_model.eval()
     for images, labels in val_loader:
@@ -115,16 +120,32 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
             student_features = student_model.forward_features(images)
             student_features = student_features / student_features.norm(dim=-1, keepdim=True)  # Normalize
             logits = student_features @ text_features.t()
-            preds = logits.argmax(dim=1)
-            correct += (preds == labels).sum().item()
+            _, top5_preds = logits.topk(5, dim=1)
             total += labels.size(0)
-    accuracy = 100 * correct / total
-    return accuracy
+            top1_correct += (top5_preds[:, 0] == labels).sum().item()  # Top-1 accuracy
+            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()  # Top-5 accuracy
+    top1_accuracy = 100 * top1_correct / total
+    top5_accuracy = 100 * top5_correct / total
+    return top1_accuracy, top5_accuracy
+
+def compute_flops(model, verbose=False, print_per_layer_stat=False, resolution=(3, 224, 224)):
+    """
+    Computes the FLOPs and parameters of the given model.
+    Requires fvcore to be installed: pip install fvcore
+    """
+    from fvcore.nn import FlopCountAnalysis
+    input = torch.randn(1, *resolution).to(DEVICE)
+    flops = FlopCountAnalysis(model.float(), input)
+    total_flops = flops.total() / 10 ** 9  # Convert to GFLOPs
+    total_params = np.sum([int(np.prod(p.shape)) for p in model.parameters()])
+    print(f"\n\n***** FLOP TOTAL: {total_flops:.2f} GFLOPs *****")
+    print(f"***** Model Parameters: {total_params:,} *****\n")
+    return total_flops, total_params
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
-    # 1. --- Setup Models ---
+    # --- Setup Models ---
     print("Loading teacher model (CLIP ViT-L/14)...")
     teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
@@ -136,7 +157,11 @@ def run_distillation():
     teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = backbone.num_features
 
-    # 2. --- Setup Dataset and DataLoader ---
+    # Compute FLOPs and parameters for the student model
+    print("Computing FLOPs and parameters for the student model...")
+    compute_flops(backbone, resolution=(3, 224, 224))
+
+    # --- Setup Dataset and DataLoader ---
     train_transform = preprocess
     val_transform = preprocess
 
@@ -225,10 +250,10 @@ def run_distillation():
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
-            val_accuracy = validate_student(student, classifier, val_loader)
-            zeroshot_accuracy = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Logit-based) after Epoch {epoch+1}: {val_accuracy:.2f}%")
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: {zeroshot_accuracy:.2f}%")
+            val_top1, val_top5 = validate_student(student, classifier, val_loader)
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Logit-based) after Epoch {epoch+1}: Top-1: {val_top1:.2f}%, Top-5: {val_top5:.2f}%")
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
             print("---------------------------------")
 
         print("\nDistillation training finished.")
