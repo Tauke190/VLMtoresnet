@@ -1,5 +1,4 @@
-# knowledge_distillation.py
-#
+# Logit distillation + Supervised finetuning 
 # Description:
 # A script to perform knowledge distillation from a CLIP ViT-L/14 teacher to a
 # ResNet-50 student, with validation on a subset of the validation set
@@ -22,7 +21,7 @@ import random  # Add this import at the top of the file
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 0.01
+TRAIN_SUBSET_RATIO = 0.15
 # Only for code development server
 # TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
 TRAIN_DIR = '~/data/datasets/imagenet/train'
@@ -30,7 +29,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 1
+NUM_EPOCHS = 10
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
@@ -74,6 +73,33 @@ class StudentWithProjector(nn.Module):
         features = self.backbone.forward_features(x)
         pooled = self.backbone.global_pool(features)
         return pooled
+
+def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, device=DEVICE):
+    """
+    Performs zero-shot validation using CLIP text embeddings as class prototypes.
+    """
+    # Prepare class text prompts
+    prompts = [f"a photo of a {name}" for name in class_names]
+    with torch.no_grad():
+        text_tokens = clip.tokenize(prompts).to(device)
+        text_features = teacher.encode_text(text_tokens).float()
+        text_features = projector(text_features)  # Project to student feature space
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
+
+    correct = 0
+    total = 0
+    student_model.eval()
+    for images, labels in val_loader:
+        images, labels = images.to(device), labels.to(device)
+        with torch.no_grad():
+            student_features = student_model.forward_features(images)
+            student_features = student_features / student_features.norm(dim=-1, keepdim=True)  # Normalize
+            logits = student_features @ text_features.t()
+            preds = logits.argmax(dim=1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+    accuracy = 100 * correct / total
+    return accuracy
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -168,6 +194,8 @@ def run_distillation():
         print("\nStarting distillation...")
         epoch_times = []
 
+        class_names = base_train.classes  # For zero-shot validation
+
         for epoch in range(NUM_EPOCHS):
 
             # picks randomized subset for validation
@@ -205,7 +233,9 @@ def run_distillation():
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
             val_accuracy = validate_student(student, classifier, val_loader)
-            print(f"Validation Accuracy after Epoch {epoch+1}: {val_accuracy:.2f}%")
+            zeroshot_accuracy = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, DEVICE)
+            print(f"Validation Accuracy (Logit-based) after Epoch {epoch+1}: {val_accuracy:.2f}%")
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: {zeroshot_accuracy:.2f}%")
             print("---------------------------------")
 
         print("\nDistillation training finished.")
