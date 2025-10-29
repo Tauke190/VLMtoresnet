@@ -254,6 +254,16 @@ def run_distillation():
 
                 running_loss += total_loss.item()
 
+                if i == 99:  # After processing the first 100 batches
+                    elapsed_time = time.time() - epoch_start_time
+                    avg_time_per_batch = elapsed_time / 100
+                    total_batches = len(train_loader) * NUM_EPOCHS
+                    estimated_total_time = avg_time_per_batch * total_batches
+                    estimated_hours = int(estimated_total_time // 3600)
+                    estimated_minutes = int((estimated_total_time % 3600) // 60)
+                    estimated_seconds = int(estimated_total_time % 60)
+                    print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
+
                 # Print average loss every 100 steps
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
