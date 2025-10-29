@@ -66,16 +66,14 @@ def validate_student(student_model, classifier, val_loader):
     return accuracy
 
 class StudentWithProjector(nn.Module):
-    def __init__(self, backbone, projector):
+    def __init__(self, backbone):
         super().__init__()
         self.backbone = backbone
-        self.projector = projector
 
     def forward_features(self, x):
         features = self.backbone.forward_features(x)
         pooled = self.backbone.global_pool(features)
-        projected = self.projector(pooled)
-        return projected
+        return pooled
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -130,8 +128,8 @@ def run_distillation():
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
-        projector = nn.Linear(student_feature_dim, student_feature_dim).to(DEVICE)
-        student = StudentWithProjector(backbone, projector).to(DEVICE)
+        projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
+        student = StudentWithProjector(backbone).to(DEVICE)  # Remove projector from student
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
 
         distill_loss_fn = nn.MSELoss()
@@ -184,11 +182,11 @@ def run_distillation():
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
                 teacher_features = get_teacher_features(teacher, images)
-                projected_student_features = student.forward_features(images)
                 projected_teacher_features = projector(teacher_features.float())
-                loss_distill = distill_loss_fn(projected_student_features, projected_teacher_features)
+                student_features = student.forward_features(images)
+                loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
-                logits = classifier(projected_student_features)
+                logits = classifier(student_features)
                 loss_classif = classif_loss_fn(logits, labels)
 
                 total_loss = loss_distill + loss_classif
