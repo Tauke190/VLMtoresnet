@@ -1,15 +1,12 @@
+import argparse
 import torch
 import torch.nn as nn
 from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import timm
 from tqdm import tqdm
 
 # --- Configuration ---
-TRAIN_DIR = '/home/av354855/data/datasets/imagenet/train'  # Path to your training dataset
-VAL_DIR = '/home/av354855/data/datasets/imagenet/val'  # Path to your validation dataset
-TRAIN_SUBSET_SIZE = 50000
-VAL_SUBSET_SIZE = 50000
 BATCH_SIZE = 64
 EPOCHS = 10
 LEARNING_RATE = 0.01
@@ -36,27 +33,34 @@ def get_student_features(model, images):
     return pooled_features
 
 # --- Linear Evaluation ---
-def linear_evaluation():
+def linear_evaluation(model_path, dataset):
     print(f"Using device: {DEVICE}")
 
     # 1. Load the student backbone (distilled)
     print("Loading distilled student backbone...")
     student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    student.load_state_dict(torch.load('../resnet50_distilled_backbone.pth', map_location=DEVICE))
+    student.load_state_dict(torch.load(model_path, map_location=DEVICE))
     student.eval()
 
     # 2. Prepare the training and validation datasets
+    if dataset == "imagenet":
+        train_dir = '/home/av354855/data/datasets/imagenet/train'
+        val_dir = '/home/av354855/data/datasets/imagenet/val'
+    elif dataset == "oxfordpet":
+        train_dir = '/home/av354855/data/datasets/oxford_pet/train'
+        val_dir = '/home/av354855/data/datasets/oxford_pet/val'
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset}")
+
+    print(f"Using dataset: {dataset}")
     data_config = timm.data.resolve_model_data_config(student)
     transform = timm.data.create_transform(**data_config, is_training=True)
 
-    train_dataset = ImageFolder(root=TRAIN_DIR, transform=transform)
-    val_dataset = ImageFolder(root=VAL_DIR, transform=transform)
+    train_dataset = ImageFolder(root=train_dir, transform=transform)
+    val_dataset = ImageFolder(root=val_dir, transform=transform)
 
-    train_subset = Subset(train_dataset, range(min(TRAIN_SUBSET_SIZE, len(train_dataset))))
-    val_subset = Subset(val_dataset, range(min(VAL_SUBSET_SIZE, len(val_dataset))))
-
-    train_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
     # 3. Extract features
     print("Extracting training features...")
@@ -117,4 +121,9 @@ def linear_evaluation():
     print(f"Validation Accuracy: {val_acc:.2f}%")
 
 if __name__ == "__main__":
-    linear_evaluation()
+    parser = argparse.ArgumentParser(description="Linear Probe Evaluation")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the model to evaluate")
+    parser.add_argument("--dataset", type=str, required=True, choices=["imagenet", "oxfordpet"], help="Dataset to use for evaluation")
+    args = parser.parse_args()
+
+    linear_evaluation(args.model_path, args.dataset)
