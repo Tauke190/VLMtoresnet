@@ -26,7 +26,7 @@ TRAIN_SUBSET_RATIO = 1
 
 # For cluster server
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/validation'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
 # Only for code development server
 # TRAIN_DIR = '~/data/datasets/imagenet/train'
