@@ -1,5 +1,5 @@
-# evaluation with trained classifier for imagenet for distilled ResNet-50 model
-# python logiteval_distilled_resnet50.py --model-path resnet50_distilled_backbone.pth --classifier-path resnet50_classifier.pth
+# linear probe evaluation script for distilled ResNet-50 model
+
 import torch
 import torch.nn as nn
 from torchvision.datasets import ImageFolder
@@ -34,7 +34,7 @@ def validate_student(student_model, classifier, val_loader):
     return 100 * correct / total
 
 # --- Main Evaluation ---
-def run_evaluation(model_path):
+def run_evaluation(model_path, classifier_path):
     print(f"Using device: {DEVICE}")
 
     # 1. Load the student backbone (distilled)
@@ -51,8 +51,10 @@ def run_evaluation(model_path):
 
     num_classes = len(val_dataset.classes)
 
-    # 3. Create classifier head
+    # 3. Load trained classifier head
+    print("Loading trained classifier...")
     classifier = nn.Linear(student.num_features, num_classes).to(DEVICE)
+    classifier.load_state_dict(torch.load(classifier_path, map_location=DEVICE))
     classifier.eval()
 
     # 4. Run validation
@@ -63,6 +65,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Evaluate a distilled ResNet-50 model.")
     parser.add_argument("--model-path", type=str, required=True, help="Path to the student model file.")
+    parser.add_argument("--classifier-path", type=str, required=True, help="Path to the trained classifier file.")
     args = parser.parse_args()
 
-    run_evaluation(args.model_path)
+    run_evaluation(args.model_path, args.classifier_path)
