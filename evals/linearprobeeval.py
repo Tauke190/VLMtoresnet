@@ -11,7 +11,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 # --- Configuration ---
 BATCH_SIZE = 64
-EPOCHS = 10
+EPOCHS = 50
 LEARNING_RATE = 0.01
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
