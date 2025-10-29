@@ -254,7 +254,7 @@ def run_distillation():
 
                 running_loss += total_loss.item()
 
-                if i == 99:  # After processing the first 100 batches
+                if i == 999:  # After processing the first 100 batches
                     elapsed_time = time.time() - epoch_start_time
                     avg_time_per_batch = elapsed_time / 100
                     total_batches = len(train_loader) * NUM_EPOCHS
