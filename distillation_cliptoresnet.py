@@ -148,10 +148,10 @@ def run_distillation():
             start_batch = time.time()
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             teacher_features = get_teacher_features(teacher, images)
-            student_features = get_student_features(student, images)
+            projected_student_features = student.forward_features(images)
             projected_teacher_features = projector(teacher_features.float())
-            loss_distill = distill_loss_fn(student_features, projected_teacher_features)
-            logits = classifier(student_features)
+            loss_distill = distill_loss_fn(projected_student_features, projected_teacher_features)
+            logits = classifier(projected_student_features)
             loss_classif = classif_loss_fn(logits, labels)
             total_loss = loss_distill + loss_classif
             optimizer.zero_grad()
@@ -185,9 +185,8 @@ def run_distillation():
 
                 teacher_features = get_teacher_features(teacher, images)
                 projected_student_features = student.forward_features(images)
-
-                # Distillation loss between projected student features and teacher features
-                loss_distill = distill_loss_fn(projected_student_features, teacher_features.float())
+                projected_teacher_features = projector(teacher_features.float())
+                loss_distill = distill_loss_fn(projected_student_features, projected_teacher_features)
 
                 logits = classifier(projected_student_features)
                 loss_classif = classif_loss_fn(logits, labels)
