@@ -14,7 +14,7 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 import clip
-import time
+import time  # Import time for measuring training duration
 import random  # Add this import at the top of the file
 import numpy as np  # Add this import for parameter calculation
 
@@ -218,6 +218,9 @@ def run_distillation():
 
             student.train()
             running_loss = 0.0
+
+            # Measure time for the first 100 batches
+            start_time = time.time()
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
@@ -231,9 +234,31 @@ def run_distillation():
                 optimizer.step()
 
                 running_loss += loss_distill.item()
-                if (i + 1) % 100 == 0:
-                    avg_loss_so_far = running_loss / (i + 1)
-                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
+
+                # Estimate training time after 100 batches
+                if i == 99:
+                    elapsed_time = time.time() - start_time
+                    total_batches = len(train_loader)
+                    estimated_time = (elapsed_time / 100) * total_batches
+                    print(f"Estimated training time per epoch: {estimated_time / 60:.2f} minutes")
+                    break
+
+            # Continue training after time estimation
+            for i, (images, labels) in enumerate(train_loader):
+                if i < 100:  # Skip the first 100 batches (already processed)
+                    continue
+                images, labels = images.to(DEVICE), labels.to(DEVICE)
+
+                teacher_features = get_teacher_features(teacher, images)
+                projected_teacher_features = projector(teacher_features.float())
+                student_features = student.forward_features(images)
+                loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+
+                optimizer.zero_grad()
+                loss_distill.backward()
+                optimizer.step()
+
+                running_loss += loss_distill.item()
 
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
