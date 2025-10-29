@@ -30,7 +30,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 1
+NUM_EPOCHS = 20
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
