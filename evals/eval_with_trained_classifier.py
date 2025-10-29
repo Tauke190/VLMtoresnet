@@ -41,7 +41,7 @@ def run_evaluation(model_path):
     student.fc = pretrained_model.fc  # Replace the classifier head with the pretrained one
 
     # 3. Prepare the validation dataset
-    data_config = timm.data.resolve_model_data_config(student)
+    data_config = timm.data.resolve_model_data_config(pretrained_model)  # Use pretrained model config
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
