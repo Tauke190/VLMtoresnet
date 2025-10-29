@@ -22,7 +22,7 @@ import numpy as np  # Add this import for parameter calculation
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 0.01
+TRAIN_SUBSET_RATIO = 1
 # Only for code development server
 # TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
 TRAIN_DIR = '~/data/datasets/imagenet/train'
@@ -281,11 +281,14 @@ def run_distillation():
         minutes = int((total_training_time % 3600) // 60)
         seconds = int(total_training_time % 60)
         print(f"\nTotal training time: {hours} hours, {minutes} minutes, {seconds} seconds")
+        print("---------------------------------")
 
         # Final validation with the full validation dataset
         # print("\nPerforming final validation with the full validation dataset...")
         # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
         # print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
+        print(f"Using the full validation dataset with {len(full_val_dataset)} images for final validation.")
 
         top1, top5 = validate_student(student, classifier, val_loader)
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
