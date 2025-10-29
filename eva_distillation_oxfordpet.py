@@ -1,4 +1,3 @@
-
 # knowledge_distillation.py
 #
 # Description:
@@ -15,6 +14,9 @@ import torch.optim as optim
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
+import clip
+import random
+import time
 
 # --- Configuration ---
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
@@ -66,110 +68,230 @@ def validate_student(student_model, classifier, val_loader):
     accuracy = 100 * correct / total
     return accuracy
 
+def compute_flops(model, resolution):
+    # Dummy implementation for FLOPs computation
+    # Replace with actual FLOPs computation if needed
+    print(f"Computing FLOPs for model: {model.__class__.__name__}, Resolution: {resolution}")
+
+def load_prompts_from_file(file_path):
+    # Dummy implementation for loading prompts
+    # Replace with actual prompt loading logic if needed
+    return ["a photo of a {}.", "an image of a {}.", "a snapshot of a {}."]
+
+class StudentWithProjector(nn.Module):
+    def __init__(self, backbone):
+        super(StudentWithProjector, self).__init__()
+        self.backbone = backbone
+
+    def forward_features(self, x):
+        return self.backbone(x)
+
+def zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, device):
+    """Perform zero-shot validation using CLIP-like prompting."""
+    student.eval()
+    correct_top1 = 0
+    correct_top5 = 0
+    total = 0
+
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+
+            # Get student features
+            student_features = student.forward_features(images)
+
+            # Zero-shot classification head (logits)
+            logits = projector(student_features.float())
+
+            # Compute top-k accuracy
+            _, predicted_top1 = torch.max(logits, 1)
+            correct_top1 += (predicted_top1 == labels).sum().item()
+
+            # For top-5 accuracy, we need to get the top 5 predictions
+            _, predicted_top5 = torch.topk(logits, 5, dim=1)
+            correct_top5 += (predicted_top5 == labels.view(-1, 1).expand_as(predicted_top5)).sum().item()
+
+            total += labels.size(0)
+
+    accuracy_top1 = 100 * correct_top1 / total
+    accuracy_top5 = 100 * correct_top5 / total
+    return accuracy_top1, accuracy_top5
+
 def run_distillation():
-    """
-    Main function to set up models, data, and run the distillation training loop.
-    """
     print(f"Using device: {DEVICE}")
 
-    # 1. --- Setup Models ---
-    print("Loading teacher model (EVA-02)...")
-    teacher_model_name = 'eva02_large_patch14_448.mim_in22k_ft_in22k_in1k'
-    teacher = timm.create_model(teacher_model_name, pretrained=True, num_classes=0).to(DEVICE)
+    # --- Setup Models ---
+    print("Loading teacher model (CLIP ViT-L/14)...")
+    teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
     for param in teacher.parameters():
         param.requires_grad = False
 
     print("Loading student model (ResNet-50)...")
-    # Load student backbone without a classifier head
-    student = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
+    backbone = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
+    teacher_feature_dim = teacher.visual.output_dim
+    student_feature_dim = backbone.num_features
 
-    teacher_feature_dim = teacher.embed_dim
-    student_feature_dim = student.num_features
+    # Compute FLOPs and parameters for the student model
+    print("Computing FLOPs and parameters for the student model...")
+    compute_flops(backbone, resolution=(3, 224, 224))
 
-    # 2. --- Setup Dataset and DataLoader ---
-    data_config = timm.data.resolve_model_data_config(teacher)
-    train_transform = timm.data.create_transform(**data_config, is_training=True)
-    val_transform = timm.data.create_transform(**data_config, is_training=False)
+    # --- Setup Dataset and DataLoader ---
+    train_transform = preprocess
+    val_transform = preprocess
 
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
-        train_dataset = ImageFolder(root=TRAIN_DIR, transform=train_transform)
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+        base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
 
+        if TRAIN_SUBSET_RATIO is not None and 0.0 < TRAIN_SUBSET_RATIO < 1.0:
+            targets = base_train.targets
+            class_to_indices = {}
+            for idx, t in enumerate(targets):
+                class_to_indices.setdefault(t, []).append(idx)
+
+            selected_indices = []
+            g = torch.Generator().manual_seed(42)
+            for cls, idxs in class_to_indices.items():
+                k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
+                perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
+                for p in perm:
+                    selected_indices.append(idxs[p])
+
+            train_dataset = Subset(base_train, selected_indices)
+            print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
+        else:
+            train_dataset = base_train
+
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
         print(f"Loading validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
-        # Create a smaller subset for faster validation
         val_subset = Subset(full_val_dataset, range(min(VAL_SUBSET_SIZE, len(full_val_dataset))))
-        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Using a validation subset of {len(val_subset)} images.")
+
+        # --- Now assign num_classes and build projector/student ---
+        num_classes = len(base_train.classes)
+        print(f"Found {num_classes} classes in the dataset.")
+
+        projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
+        student = StudentWithProjector(backbone).to(DEVICE)
+        classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
+
+        distill_loss_fn = nn.MSELoss()
+        params_to_train = list(student.parameters()) + list(classifier.parameters())
+        optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
+
+        # --- Load prompts ---
+        prompt_file = "prompt/imagenet1k.txt"
+        templates = load_prompts_from_file(prompt_file)
+        class_names = base_train.classes
+
+        print("\nStarting distillation...")
+
+        # Start timer for total training time
+        total_start_time = time.time()
+
+        # Estimate time for the first epoch
+        estimated_epoch_time = None
+
+        for epoch in range(NUM_EPOCHS):
+
+            # picks randomized subset for validation
+            val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
+            val_subset = Subset(full_val_dataset, val_indices)
+            val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
+            student.train()
+            classifier.train()
+            running_loss = 0.0
+
+            # Measure time for the first 100 batches
+            if epoch == 0:  # Only estimate time during the first epoch
+                start_time = time.time()
+                for i, (images, labels) in enumerate(train_loader):
+                    images, labels = images.to(DEVICE), labels.to(DEVICE)
+
+                    teacher_features = get_teacher_features(teacher, images)
+                    projected_teacher_features = projector(teacher_features.float())
+                    student_features = student.forward_features(images)
+                    loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+
+                    logits = classifier(student_features)
+                    loss_classif = nn.CrossEntropyLoss()(logits, labels)
+
+                    total_loss = loss_distill + loss_classif
+
+                    optimizer.zero_grad()
+                    total_loss.backward()
+                    optimizer.step()
+
+                    running_loss += total_loss.item()
+
+                    # Estimate training time after 100 batches
+                    if i == 99:
+                        elapsed_time = time.time() - start_time
+                        total_batches = len(train_loader)
+                        estimated_epoch_time = (elapsed_time / 100) * total_batches
+                        estimated_total_time = estimated_epoch_time * NUM_EPOCHS
+                        print(f"Estimated training time per epoch: {estimated_epoch_time / 60:.2f} minutes")
+                        print(f"Estimated total training time: {estimated_total_time / 3600:.2f} hours")
+                        break
+
+            # Continue training after time estimation
+            for i, (images, labels) in enumerate(train_loader):
+                if epoch == 0 and i < 100:  # Skip the first 100 batches (already processed)
+                    continue
+                images, labels = images.to(DEVICE), labels.to(DEVICE)
+
+                teacher_features = get_teacher_features(teacher, images)
+                projected_teacher_features = projector(teacher_features.float())
+                student_features = student.forward_features(images)
+                loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+
+                logits = classifier(student_features)
+                loss_classif = nn.CrossEntropyLoss()(logits, labels)
+
+                total_loss = loss_distill + loss_classif
+
+                optimizer.zero_grad()
+                total_loss.backward()
+                optimizer.step()
+
+                running_loss += total_loss.item()
+
+            epoch_loss = running_loss / len(train_loader)
+            print(f"\n--- End of Epoch {epoch+1} ---")
+            print(f"Average Training Loss: {epoch_loss:.4f}")
+
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            print("---------------------------------")
+
+        # Final validation on the entire validation dataset
+        print("\nPerforming final validation on the entire validation dataset...")
+
+        # Create a DataLoader for the full validation dataset
+        full_val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
+        # Logit-based validation
+        print("\nLogit-based validation:")
+        final_logit_top1, final_logit_top5 = validate_student(student, classifier, full_val_loader)
+        print(f"Final Validation Accuracy (Logit-based): Top-1: {final_logit_top1:.2f}%, Top-5: {final_logit_top5:.2f}%")
+
+        # Zero-shot validation
+        print("\nZero-shot validation:")
+        final_zeroshot_top1, final_zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, full_val_loader, teacher, templates, DEVICE)
+        print(f"Final Validation Accuracy (Zero-shot): Top-1: {final_zeroshot_top1:.2f}%, Top-5: {final_zeroshot_top5:.2f}%")
+
+        print("\nDistillation training finished.")
+        torch.save(student.state_dict(), 'resnet50_with_projector.pth')
+        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation.pth')
+
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)
         return
-
-    # Determine number of classes from the dataset
-    num_classes = len(train_dataset.classes)
-    print(f"Found {num_classes} classes in the dataset.")
-
-    # Create a projection layer and a new classifier head for the student
-    projection = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
-    classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
-
-    # 3. --- Setup Loss and Optimizer ---
-    distill_loss_fn = nn.MSELoss()
-    classif_loss_fn = nn.CrossEntropyLoss()
-    params_to_train = list(student.parameters()) + list(projection.parameters()) + list(classifier.parameters())
-    optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
-
-    # 4. --- Distillation Training Loop ---
-    print("\nStarting distillation...")
-    for epoch in range(NUM_EPOCHS):
-        student.train()
-        classifier.train()
-        running_loss = 0.0
-        for i, (images, labels) in enumerate(train_loader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-            teacher_features = get_teacher_features(teacher, images)
-            student_features = get_student_features(student, images)
-
-            # --- Calculate Losses ---
-            # 1. Distillation Loss
-            projected_teacher_features = projection(teacher_features)
-            loss_distill = distill_loss_fn(student_features, projected_teacher_features)
-
-            # 2. Classification Loss
-            logits = classifier(student_features)
-            loss_classif = classif_loss_fn(logits, labels)
-
-            # Combine losses (equal weighting for simplicity)
-            total_loss = loss_distill + loss_classif
-
-            # Backpropagation
-            optimizer.zero_grad()
-            total_loss.backward()
-            optimizer.step()
-
-            running_loss += total_loss.item()
-            if (i + 1) % 100 == 0:
-                avg_loss_so_far = running_loss / (i + 1)
-                print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
-
-        epoch_loss = running_loss / len(train_loader)
-        print(f"\n--- End of Epoch {epoch+1} ---")
-        print(f"Average Training Loss: {epoch_loss:.4f}")
-
-        # --- Validation Step ---
-        val_accuracy = validate_student(student, classifier, val_loader)
-        print(f"Validation Accuracy after Epoch {epoch+1}: {val_accuracy:.2f}%")
-        print("---------------------------------")
-
-
-    print("\nDistillation training finished.")
-    # Save the student backbone and the trained classifier
-    torch.save(student.state_dict(), 'resnet50_distilled_backbone.pth')
-    torch.save(classifier.state_dict(), 'resnet50_distilled_classifier.pth')
 
 if __name__ == '__main__':
     run_distillation()

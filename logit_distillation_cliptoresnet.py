@@ -213,6 +213,9 @@ def run_distillation():
         # Start timer for total training time
         total_start_time = time.time()
 
+        # Estimate time for the first epoch
+        estimated_epoch_time = None
+
         for epoch in range(NUM_EPOCHS):
 
             # picks randomized subset for validation
@@ -224,32 +227,38 @@ def run_distillation():
             running_loss = 0.0
 
             # Measure time for the first 100 batches
-            start_time = time.time()
-            for i, (images, labels) in enumerate(train_loader):
-                images, labels = images.to(DEVICE), labels.to(DEVICE)
+            if epoch == 0:  # Only estimate time during the first epoch
+                start_time = time.time()
+                for i, (images, labels) in enumerate(train_loader):
+                    images, labels = images.to(DEVICE), labels.to(DEVICE)
 
-                teacher_features = get_teacher_features(teacher, images)
-                projected_teacher_features = projector(teacher_features.float())
-                student_features = student.forward_features(images)
-                loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+                    teacher_features = get_teacher_features(teacher, images)
+                    projected_teacher_features = projector(teacher_features.float())
+                    student_features = student.forward_features(images)
+                    loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
-                optimizer.zero_grad()
-                loss_distill.backward()
-                optimizer.step()
+                    optimizer.zero_grad()
+                    loss_distill.backward()
+                    optimizer.step()
 
-                running_loss += loss_distill.item()
+                    running_loss += loss_distill.item()
 
-                # Estimate training time after 100 batches
-                if i == 99:
-                    elapsed_time = time.time() - start_time
-                    total_batches = len(train_loader)
-                    estimated_time = (elapsed_time / 100) * total_batches
-                    print(f"Estimated training time per epoch: {estimated_time / 60:.2f} minutes")
-                    break
+                    # Estimate training time after 100 batches
+                    if i == 99:
+                        elapsed_time = time.time() - start_time
+                        total_batches = len(train_loader)
+                        estimated_epoch_time = (elapsed_time / 100) * total_batches
+                        estimated_total_time = estimated_epoch_time * NUM_EPOCHS
+                        print(f"Estimated training time per epoch: {estimated_epoch_time / 60:.2f} minutes")
+                        print(f"Estimated total training time: {estimated_total_time / 3600:.2f} hours")
+                        break
+
+            # Start epoch timer
+            epoch_start_time = time.time()
 
             # Continue training after time estimation
             for i, (images, labels) in enumerate(train_loader):
-                if i < 100:  # Skip the first 100 batches (already processed)
+                if epoch == 0 and i < 100:  # Skip the first 100 batches (already processed)
                     continue
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
@@ -271,6 +280,20 @@ def run_distillation():
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
             print("---------------------------------")
+
+            # End epoch timer
+            epoch_end_time = time.time()
+            epoch_time = epoch_end_time - epoch_start_time
+
+            # Calculate remaining time
+            elapsed_time = time.time() - total_start_time
+            remaining_time = (estimated_epoch_time * NUM_EPOCHS) - elapsed_time
+
+            # Convert remaining time to hours, minutes, and seconds
+            hours = int(remaining_time // 3600)
+            minutes = int((remaining_time % 3600) // 60)
+            seconds = int(remaining_time % 60)
+            print(f"ETA for training completion: {hours} hours, {minutes} minutes, {seconds} seconds")
 
         # End timer for total training time
         total_end_time = time.time()
