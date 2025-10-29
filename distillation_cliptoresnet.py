@@ -22,7 +22,7 @@ import numpy as np  # Add this import for parameter calculation
 # !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
 #TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
 #VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
-TRAIN_SUBSET_RATIO = 0.15
+TRAIN_SUBSET_RATIO = 1
 # Only for code development server
 # TRAIN_DIR = '/datasets/ImageNet2012nonpub/train'
 TRAIN_DIR = '~/data/datasets/imagenet/train'
@@ -192,17 +192,15 @@ def run_distillation():
         val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Using a validation subset of {len(val_subset)} images.")
 
-        # --- Now assign num_classes and build projector/student/classifier ---
+        # --- Now assign num_classes and build projector/student ---
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
         projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
-        student = StudentWithProjector(backbone).to(DEVICE)  # Remove projector from student
-        classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
+        student = StudentWithProjector(backbone).to(DEVICE)
 
         distill_loss_fn = nn.MSELoss()
-        classif_loss_fn = nn.CrossEntropyLoss()
-        params_to_train = list(student.parameters()) + list(classifier.parameters())
+        params_to_train = list(student.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         # --- Load prompts ---
@@ -219,7 +217,6 @@ def run_distillation():
             val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
             student.train()
-            classifier.train()
             running_loss = 0.0
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -229,16 +226,11 @@ def run_distillation():
                 student_features = student.forward_features(images)
                 loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
-                logits = classifier(student_features)
-                loss_classif = classif_loss_fn(logits, labels)
-
-                total_loss = loss_distill + loss_classif
-
                 optimizer.zero_grad()
-                total_loss.backward()
+                loss_distill.backward()
                 optimizer.step()
 
-                running_loss += total_loss.item()
+                running_loss += loss_distill.item()
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
                     print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
@@ -247,15 +239,12 @@ def run_distillation():
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
-            val_top1, val_top5 = validate_student(student, classifier, val_loader)
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Logit-based) after Epoch {epoch+1}: Top-1: {val_top1:.2f}%, Top-5: {val_top5:.2f}%")
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
             print("---------------------------------")
 
         print("\nDistillation training finished.")
         torch.save(student.state_dict(), 'resnet50_with_projector.pth')
-        torch.save(classifier.state_dict(), 'resnet50_distilled_classifier.pth')
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
