@@ -30,7 +30,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
 BATCH_SIZE = 16  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 10
+NUM_EPOCHS = 1
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def get_teacher_features(model, images):
@@ -246,6 +246,12 @@ def run_distillation():
 
                 running_loss += total_loss.item()
 
+                # Print average loss every 100 steps
+                if (i + 1) % 100 == 0:
+                    avg_loss_so_far = running_loss / (i + 1)
+                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
+
+            # Calculate and print average loss for the epoch
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
