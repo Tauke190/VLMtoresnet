@@ -74,17 +74,37 @@ class StudentWithProjector(nn.Module):
         pooled = self.backbone.global_pool(features)
         return pooled
 
-def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, device=DEVICE):
+def load_prompts_from_file(filepath):
+    """
+    Loads all prompt templates from a text file.
+    Each line in the file represents a template.
+    """
+    try:
+        with open(filepath, 'r') as f:
+            templates = [line.strip() for line in f.readlines()]
+        print(f"Loaded {len(templates)} templates from {filepath}.")
+        return templates
+    except FileNotFoundError:
+        print(f"Error: Prompt file not found at {filepath}.")
+        return []
+
+def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, templates, device=DEVICE):
     """
     Performs zero-shot validation using CLIP text embeddings as class prototypes.
+    Considers all prompt templates for each class.
     """
-    # Prepare class text prompts
-    prompts = [f"a photo of a {name}" for name in class_names]
+    # Prepare class text prompts using all templates
+    prompts = [template.format(name) for name in class_names for template in templates]
     with torch.no_grad():
         text_tokens = clip.tokenize(prompts).to(device)
         text_features = teacher.encode_text(text_tokens).float()
         text_features = projector(text_features)  # Project to student feature space
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
+
+    # Average the text features for each class
+    num_templates = len(templates)
+    num_classes = len(class_names)
+    text_features = text_features.view(num_classes, num_templates, -1).mean(dim=1)
 
     correct = 0
     total = 0
@@ -163,39 +183,12 @@ def run_distillation():
         params_to_train = list(student.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
-        # --- Fast Total ETA Estimation ---
-        N = 100
-        print(f"\nEstimating total training time using first {N} batches for {NUM_EPOCHS} epochs...")
-
-        batch_times = []
-        for i, (images, labels) in enumerate(train_loader):
-            start_batch = time.time()
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            teacher_features = get_teacher_features(teacher, images)
-            projected_student_features = student.forward_features(images)
-            projected_teacher_features = projector(teacher_features.float())
-            loss_distill = distill_loss_fn(projected_student_features, projected_teacher_features)
-            logits = classifier(projected_student_features)
-            loss_classif = classif_loss_fn(logits, labels)
-            total_loss = loss_distill + loss_classif
-            optimizer.zero_grad()
-            total_loss.backward()
-            optimizer.step()
-            batch_times.append(time.time() - start_batch)
-            if i + 1 == N:
-                break
-        avg_batch_time = sum(batch_times) / len(batch_times)
-        total_batches = len(train_loader)
-        est_epoch_time = avg_batch_time * total_batches
-        est_total_time = est_epoch_time * NUM_EPOCHS
-        est_total_str = time.strftime('%H:%M:%S', time.gmtime(est_total_time))
-        print(f"Estimated total training time (based on {N} batches): {est_total_str}")
+        # --- Load prompts ---
+        prompt_file = "c:\\Users\\avina\\Desktop\\VLMtoresnet\\prompt\\imagenet1k.txt"
+        templates = load_prompts_from_file(prompt_file)
+        class_names = base_train.classes
 
         print("\nStarting distillation...")
-        epoch_times = []
-
-        class_names = base_train.classes  # For zero-shot validation
-
         for epoch in range(NUM_EPOCHS):
 
             # picks randomized subset for validation
@@ -233,7 +226,7 @@ def run_distillation():
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
             val_accuracy = validate_student(student, classifier, val_loader)
-            zeroshot_accuracy = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, DEVICE)
+            zeroshot_accuracy = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Logit-based) after Epoch {epoch+1}: {val_accuracy:.2f}%")
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: {zeroshot_accuracy:.2f}%")
             print("---------------------------------")
