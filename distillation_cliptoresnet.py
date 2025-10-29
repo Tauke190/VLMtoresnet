@@ -184,7 +184,7 @@ def run_distillation():
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         # --- Load prompts ---
-        prompt_file = "c:\\Users\\avina\\Desktop\\VLMtoresnet\\prompt\\imagenet1k.txt"
+        prompt_file = "prompt/imagenet1k.txt"
         templates = load_prompts_from_file(prompt_file)
         class_names = base_train.classes
 
