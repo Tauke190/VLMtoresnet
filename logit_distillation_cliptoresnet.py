@@ -188,9 +188,8 @@ def run_distillation():
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
         print(f"Loading validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
-        val_subset = Subset(full_val_dataset, range(min(VAL_SUBSET_SIZE, len(full_val_dataset))))
-        val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Using a validation subset of {len(val_subset)} images.")
+        val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+        print(f"Using the full validation dataset with {len(full_val_dataset)} images.")
 
         # --- Now assign num_classes and build projector/student ---
         num_classes = len(base_train.classes)
@@ -199,8 +198,10 @@ def run_distillation():
         projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
         student = StudentWithProjector(backbone).to(DEVICE)
 
+        # Add a normal classifier for evaluation
+        classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
-        params_to_train = list(student.parameters())
+        params_to_train = list(student.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         # --- Load prompts ---
@@ -213,53 +214,18 @@ def run_distillation():
         # Start timer for total training time
         total_start_time = time.time()
 
-        # Estimate time for the first epoch
-        estimated_epoch_time = None
-
         for epoch in range(NUM_EPOCHS):
 
             # picks randomized subset for validation
             val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
             val_subset = Subset(full_val_dataset, val_indices)
-            val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+            val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
             student.train()
+            classifier.train()
             running_loss = 0.0
 
-            # Measure time for the first 100 batches
-            if epoch == 0:  # Only estimate time during the first epoch
-                start_time = time.time()
-                for i, (images, labels) in enumerate(train_loader):
-                    images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-                    teacher_features = get_teacher_features(teacher, images)
-                    projected_teacher_features = projector(teacher_features.float())
-                    student_features = student.forward_features(images)
-                    loss_distill = distill_loss_fn(student_features, projected_teacher_features)
-
-                    optimizer.zero_grad()
-                    loss_distill.backward()
-                    optimizer.step()
-
-                    running_loss += loss_distill.item()
-
-                    # Estimate training time after 100 batches
-                    if i == 99:
-                        elapsed_time = time.time() - start_time
-                        total_batches = len(train_loader)
-                        estimated_epoch_time = (elapsed_time / 100) * total_batches
-                        estimated_total_time = estimated_epoch_time * NUM_EPOCHS
-                        print(f"Estimated training time per epoch: {estimated_epoch_time / 60:.2f} minutes")
-                        print(f"Estimated total training time: {estimated_total_time / 3600:.2f} hours")
-                        break
-
-            # Start epoch timer
-            epoch_start_time = time.time()
-
-            # Continue training after time estimation
             for i, (images, labels) in enumerate(train_loader):
-                if epoch == 0 and i < 100:  # Skip the first 100 batches (already processed)
-                    continue
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
                 teacher_features = get_teacher_features(teacher, images)
@@ -267,33 +233,31 @@ def run_distillation():
                 student_features = student.forward_features(images)
                 loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
+                # Classifier loss
+                outputs = classifier(student_features)
+                classifier_loss = nn.CrossEntropyLoss()(outputs, labels)
+
+                # Combine losses
+                total_loss = loss_distill + classifier_loss
+
                 optimizer.zero_grad()
-                loss_distill.backward()
+                total_loss.backward()
                 optimizer.step()
 
-                running_loss += loss_distill.item()
+                running_loss += total_loss.item()
 
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
+            # Zero-shot validation
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
+            # Normal classifier validation
+            top1, top5 = validate_student(student, classifier, val_loader_subset)
+            print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
-
-            # End epoch timer
-            epoch_end_time = time.time()
-            epoch_time = epoch_end_time - epoch_start_time
-
-            # Calculate remaining time
-            elapsed_time = time.time() - total_start_time
-            remaining_time = (estimated_epoch_time * NUM_EPOCHS) - elapsed_time
-
-            # Convert remaining time to hours, minutes, and seconds
-            hours = int(remaining_time // 3600)
-            minutes = int((remaining_time % 3600) // 60)
-            seconds = int(remaining_time % 60)
-            print(f"ETA for training completion: {hours} hours, {minutes} minutes, {seconds} seconds")
 
         # End timer for total training time
         total_end_time = time.time()
@@ -304,6 +268,14 @@ def run_distillation():
         minutes = int((total_training_time % 3600) // 60)
         seconds = int(total_training_time % 60)
         print(f"\nTotal training time: {hours} hours, {minutes} minutes, {seconds} seconds")
+
+        # Final validation with the full validation dataset
+        print("\nPerforming final validation with the full validation dataset...")
+        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
+        print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
+        top1, top5 = validate_student(student, classifier, val_loader)
+        print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
 
         print("\nDistillation training finished.")
         torch.save(student.state_dict(), 'resnet50_with_projector.pth')
