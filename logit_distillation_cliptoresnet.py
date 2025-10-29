@@ -209,6 +209,10 @@ def run_distillation():
         class_names = base_train.classes
 
         print("\nStarting distillation...")
+
+        # Start timer for total training time
+        total_start_time = time.time()
+
         for epoch in range(NUM_EPOCHS):
 
             # picks randomized subset for validation
@@ -267,6 +271,16 @@ def run_distillation():
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
             print("---------------------------------")
+
+        # End timer for total training time
+        total_end_time = time.time()
+        total_training_time = total_end_time - total_start_time
+
+        # Convert total training time to hours, minutes, and seconds
+        hours = int(total_training_time // 3600)
+        minutes = int((total_training_time % 3600) // 60)
+        seconds = int(total_training_time % 60)
+        print(f"\nTotal training time: {hours} hours, {minutes} minutes, {seconds} seconds")
 
         print("\nDistillation training finished.")
         torch.save(student.state_dict(), 'resnet50_with_projector.pth')
