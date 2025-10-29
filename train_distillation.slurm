@@ -1,18 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=distillation_train
-#SBATCH --output=distillation_%j.out
-#SBATCH --error=distillation_%j.err
+#SBATCH --job-name=logit_distillation_train
+#SBATCH --output=logit_distillation_%j.out
+#SBATCH --error=logit_distillation_%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
 #SBATCH --mem=8G
-#SBATCH --time=2:00:00
-#SBATCH --partition=preemptable
-#SBATCH --qos=preemptable
+#SBATCH --time=24:00:00
 
 # Load necessary modules
-module load anaconda
-module load python
+module load anaconda3
 module load cuda
 
 # --- FIX STARTS HERE ---
@@ -26,10 +23,10 @@ conda activate openmmlab
 # --- FIX ENDS HERE ---
 
 # Change to your working directory
-cd /home/av354855/distillation/VLMtoresnet
+cd /home/av354855/VLMtoresnet
 
 # Run your script (now inside the activated environment)
-python eva_distillation_imagenet.py
+python logit_distillation_cliptoresnet.py
 
 # (Optional but good practice) Deactivate the environment at the end
 conda deactivate
