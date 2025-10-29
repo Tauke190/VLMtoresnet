@@ -5,6 +5,9 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 import timm
 from tqdm import tqdm
+import torch.multiprocessing
+
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 # --- Configuration ---
 BATCH_SIZE = 64
@@ -59,8 +62,8 @@ def linear_evaluation(model_path, dataset):
     train_dataset = ImageFolder(root=train_dir, transform=transform)
     val_dataset = ImageFolder(root=val_dir, transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
 
     # 3. Extract features
     print("Extracting training features...")
