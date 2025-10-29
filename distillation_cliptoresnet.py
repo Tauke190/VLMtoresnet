@@ -57,7 +57,7 @@ def validate_student(student_model, classifier, val_loader):
     with torch.no_grad():
         for images, labels in val_loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = get_student_features(student_model, images)
+            features = student_model.forward_features(images)
             outputs = classifier(features)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -184,9 +184,7 @@ def run_distillation():
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
                 teacher_features = get_teacher_features(teacher, images)
-                student_features = backbone.forward_features(images)
-                pooled_student_features = backbone.global_pool(student_features)
-                projected_student_features = projector(pooled_student_features)
+                projected_student_features = student.forward_features(images)
 
                 # Distillation loss between projected student features and teacher features
                 loss_distill = distill_loss_fn(projected_student_features, teacher_features.float())
