@@ -77,14 +77,16 @@ def validate_student(student_model, classifier, val_loader):
     return top1_accuracy, top5_accuracy
 
 class StudentWithProjector(nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, projector):
         super().__init__()
         self.backbone = backbone
+        self.projector = projector
 
     def forward_features(self, x):
         features = self.backbone.forward_features(x)
         pooled = self.backbone.global_pool(features)
-        return pooled
+        projected = self.projector(pooled)
+        return projected
 
 def load_prompts_from_file(filepath):
     """
@@ -126,8 +128,7 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
         images, labels = images.to(device), labels.to(device)
         with torch.no_grad():
             student_features = student_model.forward_features(images)
-            student_features = projector(student_features)  # Project visual features only
-            student_features = student_features / student_features.norm(dim=-1, keepdim=True)  # Normalize
+            student_features = student_features / student_features.norm(dim=-1, keepdim=True)
             logits = student_features @ text_features.t()
             _, top5_preds = logits.topk(5, dim=1)
             total += labels.size(0)
@@ -205,7 +206,7 @@ def run_distillation():
         print(f"Found {num_classes} classes in the dataset.")
 
         projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
-        student = StudentWithProjector(backbone).to(DEVICE)
+        student = StudentWithProjector(backbone, projector).to(DEVICE)
 
         # Add a normal classifier for evaluation
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
