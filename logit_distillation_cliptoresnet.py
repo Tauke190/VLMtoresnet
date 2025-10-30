@@ -215,6 +215,7 @@ def run_distillation():
         # --- Load prompts ---
         prompt_file = "prompt/imagenet1k.txt"
         templates = load_prompts_from_file(prompt_file)
+        templates = templates[:2] 
         class_names = base_train.classes
 
         print("\nStarting distillation...")
@@ -237,6 +238,11 @@ def run_distillation():
             student.train()
             classifier.train()
             running_loss = 0.0
+
+            # To Check if this works
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -318,6 +324,7 @@ def run_distillation():
             }
             torch.save(checkpoint, f'checkpoint_epoch_{epoch+1}.pth')
             print(f"Checkpoint saved for epoch {epoch+1}.")
+            torch.cuda.empty_cache()
 
         # End timer for total training time
         total_end_time = time.time()
