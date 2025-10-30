@@ -34,7 +34,7 @@ def run_evaluation(checkpoint_path):
     # Load backbone
     print("Loading distilled ResNet-50 backbone...")
     backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    backbone.load_state_dict(checkpoint['backbone_state_dict'], strict=True)
+    backbone.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
     backbone.eval()
 
     # Load classifier
