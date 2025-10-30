@@ -25,12 +25,12 @@ import numpy as np  # Add this import for parameter calculation
 TRAIN_SUBSET_RATIO = 1
 
 # For cluster server
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
 # Only for code development server
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
 
 
 VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
