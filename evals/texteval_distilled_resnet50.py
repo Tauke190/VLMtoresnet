@@ -106,7 +106,7 @@ def run_text_based_evaluation(checkpoint_path):
     print(f"Using device: {DEVICE}")
 
     # Hardcoded prompt path
-    prompt_path = "prompt/imagenet1k.txt"
+    prompt_path = "../prompt/imagenet1k.txt"
     print(f"Loading prompt templates from {prompt_path} ...")
     templates = load_prompt_templates(prompt_path)
     templates = templates[:2]
