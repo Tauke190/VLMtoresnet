@@ -145,8 +145,6 @@ def compute_flops(model, resolution=(3, 224, 224)):
     print(f"***** Model Parameters: {params:,} *****\n")
     return flops / 10 ** 9, params
 
-# Save the model after each epoch and update the saved file
-
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -222,11 +220,6 @@ def run_distillation():
         # Start timer for total training time
         total_start_time = time.time()
 
-        # Early stopping parameters
-        patience = 3  # Number of epochs to wait for improvement
-        best_loss = float('inf')  # Initialize best loss as infinity
-        early_stop_counter = 0  # Counter for early stopping
-
         for epoch in range(NUM_EPOCHS):
             # Start timer for the epoch
             epoch_start_time = time.time()
@@ -248,18 +241,24 @@ def run_distillation():
                 student_features = student.forward_features(images)
                 loss_distill = distill_loss_fn(student_features, projected_teacher_features)
 
-                # Classifier loss
-                outputs = classifier(student_features)
-                classifier_loss = nn.CrossEntropyLoss()(outputs, labels)
-
-                # Combine losses
-                total_loss = loss_distill + classifier_loss
+                # Remove classifier loss and only use distillation loss
+                total_loss = loss_distill
 
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
 
                 running_loss += total_loss.item()
+
+                if i == 999:  # After processing the first 100 batches
+                    elapsed_time = time.time() - epoch_start_time
+                    avg_time_per_batch = elapsed_time / 1000
+                    total_batches = len(train_loader) * NUM_EPOCHS
+                    estimated_total_time = avg_time_per_batch * total_batches
+                    estimated_hours = int(estimated_total_time // 3600)
+                    estimated_minutes = int((estimated_total_time % 3600) // 60)
+                    estimated_seconds = int(estimated_total_time % 60)
+                    print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
                 # Print average loss every 100 steps
                 if (i + 1) % 100 == 0:
@@ -276,6 +275,13 @@ def run_distillation():
             epoch_time = epoch_end_time - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
+            if epoch == 0:
+                estimated_total_time = epoch_time * NUM_EPOCHS
+                estimated_hours = int(estimated_total_time // 3600)
+                estimated_minutes = int((estimated_total_time % 3600) // 60)
+                estimated_seconds = int(estimated_total_time % 60)
+                print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
+
             # Zero-shot validation
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
@@ -284,26 +290,6 @@ def run_distillation():
             top1, top5 = validate_student(student, classifier, val_loader_subset)
             print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
-
-            # Early stopping logic
-            if epoch_loss < best_loss:
-                best_loss = epoch_loss
-                early_stop_counter = 0  # Reset counter if validation loss improves
-                print(f"Validation loss improved to {best_loss:.4f}. Saving model...")
-                torch.save({
-                    'epoch': epoch + 1,
-                    'student_state_dict': student.state_dict(),
-                    'projector_state_dict': projector.state_dict(),
-                    'classifier_state_dict': classifier.state_dict(),
-                    'loss': epoch_loss,
-                }, f'best_model.pth')
-            else:
-                early_stop_counter += 1
-                print(f"No improvement in validation loss for {early_stop_counter} epoch(s).")
-
-            if early_stop_counter >= patience:
-                print(f"Early stopping triggered after {epoch+1} epochs.")
-                break
 
         # End timer for total training time
         total_end_time = time.time()
@@ -327,6 +313,8 @@ def run_distillation():
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
 
         print("\nDistillation training finished.")
+        torch.save(student.state_dict(), 'resnet50_with_projector2.pth')
+        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation2.pth')
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
