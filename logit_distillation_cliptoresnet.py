@@ -190,7 +190,7 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
