@@ -38,6 +38,8 @@ BATCH_SIZE = 32  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
 NUM_EPOCHS = 10
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+EARLY_STOPPING_PATIENCE = 3  # Number of epochs to wait for improvement
+EARLY_STOPPING_MIN_DELTA = 1e-4  # Minimum change to qualify as improvement
 
 def get_teacher_features(model, images):
     """Extracts features from the CLIP teacher model."""
@@ -220,6 +222,9 @@ def run_distillation():
         # Start timer for total training time
         total_start_time = time.time()
 
+        best_loss = float('inf')
+        epochs_no_improve = 0
+
         for epoch in range(NUM_EPOCHS):
             # Start timer for the epoch
             epoch_start_time = time.time()
@@ -270,6 +275,17 @@ def run_distillation():
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
+            # Early stopping check
+            if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
+                best_loss = epoch_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                print(f"Early stopping patience: {epochs_no_improve}/{EARLY_STOPPING_PATIENCE}")
+                if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
+                    print("Early stopping triggered: training loss has converged.")
+                    break
+
             # End timer for the epoch
             epoch_end_time = time.time()
             epoch_time = epoch_end_time - epoch_start_time
@@ -291,6 +307,18 @@ def run_distillation():
             print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
 
+            # --- Save checkpoint ---
+            checkpoint = {
+                'epoch': epoch + 1,
+                'student_state_dict': student.state_dict(),
+                'backbone_state_dict': backbone.state_dict(),
+                'projector_state_dict': projector.state_dict(),
+                'classifier_state_dict': classifier.state_dict(),
+                'loss': epoch_loss,
+            }
+            torch.save(checkpoint, f'checkpoint_epoch_{epoch+1}.pth')
+            print(f"Checkpoint saved for epoch {epoch+1}.")
+
         # End timer for total training time
         total_end_time = time.time()
         total_training_time = total_end_time - total_start_time
@@ -311,10 +339,7 @@ def run_distillation():
 
         top1, top5 = validate_student(student, classifier, val_loader)
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-
         print("\nDistillation training finished.")
-        torch.save(student.state_dict(), 'resnet50_with_projector2.pth')
-        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation2.pth')
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
