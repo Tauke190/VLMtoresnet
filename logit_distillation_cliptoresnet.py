@@ -20,6 +20,11 @@ import numpy as np
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.15
+# For cluster server
+
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+
 TRAIN_DIR = '~/data/datasets/imagenet/train'
 VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
@@ -158,7 +163,7 @@ def run_distillation():
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
-        projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
+        projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
         params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
