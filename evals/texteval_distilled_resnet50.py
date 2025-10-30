@@ -58,6 +58,10 @@ def zeroshot_validate_student(backbone, projector, class_names, val_loader, teac
     top5_accuracy = 100 * top5_correct / total
     return top1_accuracy, top5_accuracy
 
+def filter_state_dict(state_dict):
+    # Remove keys containing 'total_ops' or 'total_params'
+    return {k: v for k, v in state_dict.items() if 'total_ops' not in k and 'total_params' not in k}
+
 def main():
     parser = argparse.ArgumentParser(description="Zero-shot validation for distilled ResNet-50 student")
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to checkpoint file')
@@ -89,11 +93,13 @@ def main():
     student_feature_dim = backbone.num_features
     projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
 
-    # Load checkpoint
+    # Load checkpoint and filter state_dict
     print(f"Loading checkpoint from {args.checkpoint} ...")
     checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
-    backbone.load_state_dict(checkpoint['backbone_state_dict'])
-    projector.load_state_dict(checkpoint['projector_state_dict'])
+    backbone_state_dict = filter_state_dict(checkpoint['backbone_state_dict'])
+    projector_state_dict = filter_state_dict(checkpoint['projector_state_dict'])
+    backbone.load_state_dict(backbone_state_dict)
+    projector.load_state_dict(projector_state_dict)
 
     # Run zero-shot validation
     print("Running zero-shot validation...")
