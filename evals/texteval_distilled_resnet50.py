@@ -4,7 +4,8 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 from tqdm import tqdm
-import clip  # Requires OpenAI's CLIP library
+import clip
+import argparse
 
 # --- Configuration ---
 VAL_DIR = '/home/av354855/data/datasets/imagenet/val'  # Path to your validation dataset
@@ -12,89 +13,11 @@ VAL_SUBSET_SIZE = 50000
 BATCH_SIZE = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# --- Official CLIP Prompt Templates ---
-PROMPT_TEMPLATES = [
-    "a bad photo of a {}.",
-    "a photo of many {}.",
-    "a sculpture of a {}.",
-    "a photo of the hard to see {}.",
-    "a low resolution photo of the {}.",
-    "a rendering of a {}.",
-    "graffiti of a {}.",
-    "a bad photo of the {}.",
-    "a cropped photo of the {}.",
-    "a tattoo of a {}.",
-    "the embroidered {}.",
-    "a photo of a hard to see {}.",
-    "a bright photo of a {}.",
-    "a photo of a clean {}.",
-    "a photo of a dirty {}.",
-    "a dark photo of the {}.",
-    "a drawing of a {}.",
-    "a photo of my {}.",
-    "the plastic {}.",
-    "a photo of the cool {}.",
-    "a close-up photo of a {}.",
-    "a black and white photo of the {}.",
-    "a painting of the {}.",
-    "a painting of a {}.",
-    "a pixelated photo of the {}.",
-    "a sculpture of the {}.",
-    "a bright photo of the {}.",
-    "a cropped photo of a {}.",
-    "a plastic {}.",
-    "a photo of the dirty {}.",
-    "a jpeg corrupted photo of a {}.",
-    "a blurry photo of the {}.",
-    "a photo of the {}.",
-    "a good photo of the {}.",
-    "a rendering of the {}.",
-    "a {} in a video game.",
-    "a photo of one {}.",
-    "a doodle of a {}.",
-    "a close-up photo of the {}.",
-    "a photo of a {}.",
-    "the origami {}.",
-    "the {} in a video game.",
-    "a sketch of a {}.",
-    "a doodle of the {}.",
-    "a origami {}.",
-    "a low resolution photo of a {}.",
-    "the toy {}.",
-    "a rendition of the {}.",
-    "a photo of the clean {}.",
-    "a photo of a large {}.",
-    "a rendition of a {}.",
-    "a photo of a nice {}.",
-    "a photo of a weird {}.",
-    "a blurry photo of a {}.",
-    "a cartoon {}.",
-    "art of a {}.",
-    "a sketch of the {}.",
-    "a embroidered {}.",
-    "a pixelated photo of a {}.",
-    "itap of the {}.",
-    "a jpeg corrupted photo of the {}.",
-    "a good photo of a {}.",
-    "a plushie {}.",
-    "a photo of the nice {}.",
-    "a photo of the small {}.",
-    "a photo of the weird {}.",
-    "the cartoon {}.",
-    "art of the {}.",
-    "a drawing of the {}.",
-    "a photo of the large {}.",
-    "a black and white photo of a {}.",
-    "the plushie {}.",
-    "a dark photo of a {}.",
-    "itap of a {}.",
-    "graffiti of the {}.",
-    "a toy {}.",
-    "itap of my {}.",
-    "a photo of a cool {}.",
-    "a photo of a small {}.",
-    "a tattoo of the {}.",
-]
+def load_prompt_templates(filepath):
+    """Load prompt templates from a text file, one per line."""
+    with open(filepath, 'r') as f:
+        templates = [line.strip() for line in f if line.strip()]
+    return templates
 
 # --- Utility Functions ---
 def get_student_features(model, images, projection_layer):
@@ -138,55 +61,87 @@ def validate_with_text(student_model, val_loader, text_features, projection_laye
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
 
+def zeroshot_validate_student(student_model, projector, class_names, val_loader, text_model, tokenizer, templates, device=DEVICE):
+    """
+    Performs zero-shot validation using CLIP text embeddings as class prototypes.
+    Uses projector only for student visual features, not for text features.
+    Calculates top-1 and top-5 accuracy.
+    """
+    # Prepare class text prompts using all templates
+    prompts = [template.format(name) for name in class_names for template in templates]
+    with torch.no_grad():
+        text_tokens = tokenizer(prompts).to(device)
+        text_features = text_model.encode_text(text_tokens).float()
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
+
+    # Average the text features for each class
+    num_templates = len(templates)
+    num_classes = len(class_names)
+    text_features = text_features.view(num_classes, num_templates, -1).mean(dim=1)
+    text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
+
+    top1_correct = 0
+    top5_correct = 0
+    total = 0
+    student_model.eval()
+    projector.eval()
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader, desc="Zero-shot validating"):
+            images, labels = images.to(device), labels.to(device)
+            image_features = student_model.forward_features(images)
+            image_features = projector(image_features)
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)  # Normalize
+
+            logits = image_features @ text_features.T
+            _, top5_preds = logits.topk(5, dim=1)
+            total += labels.size(0)
+            top1_correct += (top5_preds[:, 0] == labels).sum().item()
+            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
+    top1_accuracy = 100 * top1_correct / total
+    top5_accuracy = 100 * top5_correct / total
+    return top1_accuracy, top5_accuracy
+
 # --- Main Evaluation ---
-def run_text_based_evaluation():
+def run_text_based_evaluation(checkpoint_path, prompt_path):
     print(f"Using device: {DEVICE}")
 
-    # 1. Load the student backbone (distilled)
-    print("Loading distilled student backbone...")
+    # Load prompt templates
+    print(f"Loading prompt templates from {prompt_path} ...")
+    templates = load_prompt_templates(prompt_path)
+    templates = templates[:2]
+    
+    # Load checkpoint
+    print(f"Loading checkpoint from {checkpoint_path} ...")
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
     student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    student.load_state_dict(torch.load('../resnet50_distilled_backbone.pth', map_location=DEVICE))
-    student.eval()
+    student.load_state_dict(checkpoint['student_state_dict'])
+    projector = nn.Linear(2048, 768).to(DEVICE)
+    projector.load_state_dict(checkpoint['projector_state_dict'])
 
-    # 2. Load the projection layer
-    print("Loading projection layer...")
-    projection_layer = nn.Linear(2048, 768).to(DEVICE)
-
-    # Load the projection layer weights (768 → 2048)
-    distillation_weights = torch.load('../projection_layer.pth', map_location=DEVICE)
-
-    # Transpose the weights for evaluation (2048 → 768)
-    evaluation_weights = {
-        'weight': distillation_weights['weight'].T,  # Transpose the weight matrix
-        'bias': distillation_weights['bias'][:768]  # Slice the bias to match the output dimension
-    }
-
-    # Load the transposed weights into the evaluation projection layer
-    projection_layer.load_state_dict(evaluation_weights)
-    projection_layer.eval()
-
-    # 3. Prepare the validation dataset
+    # Prepare validation dataset
     data_config = timm.data.resolve_model_data_config(student)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
     val_subset = Subset(val_dataset, range(min(VAL_SUBSET_SIZE, len(val_dataset))))
     val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    class_names = val_dataset.classes
 
-    class_names = val_dataset.classes  # Class names from the dataset
-
-    # 4. Load the text encoder (e.g., CLIP's text encoder)
+    # Load CLIP text encoder
     print("Loading text encoder...")
-    text_model, preprocess = clip.load("ViT-L/14", device=DEVICE)  # Use the same CLIP model as during distillation
+    text_model, preprocess = clip.load("ViT-L/14", device=DEVICE)
     tokenizer = clip.tokenize
 
-    # 5. Generate text features
-    print("Generating text features...")
-    text_features = get_text_features(class_names, text_model, tokenizer)
-
-    # 6. Run validation
-    print("Starting text-based evaluation...")
-    accuracy = validate_with_text(student, val_loader, text_features, projection_layer)
-    print(f"Text-Based Validation Accuracy: {accuracy:.2f}%")
+    # Zero-shot validation
+    print("Starting zero-shot evaluation...")
+    top1_acc, top5_acc = zeroshot_validate_student(
+        student, projector, class_names, val_loader, text_model, tokenizer, templates, device=DEVICE
+    )
+    print(f"Zero-shot Top-1 Accuracy: {top1_acc:.2f}%")
+    print(f"Zero-shot Top-5 Accuracy: {top5_acc:.2f}%")
 
 if __name__ == "__main__":
-    run_text_based_evaluation()
+    parser = argparse.ArgumentParser(description="Zero-shot evaluation for distilled ResNet50 student.")
+    parser.add_argument('--checkpoint', type=str, required=True, help='Path to the checkpoint file')
+    parser.add_argument('--prompt', type=str, required=True, help='Path to the prompt template file')
+    args = parser.parse_args()
+    run_text_based_evaluation(args.checkpoint, args.prompt)
