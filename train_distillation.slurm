@@ -26,7 +26,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run your script (now inside the activated environment)
-python logit_distillation_cliptoresnet.py
+python -u logit_distillation_cliptoresnet.py
 
 # (Optional but good practice) Deactivate the environment at the end
 conda deactivate
