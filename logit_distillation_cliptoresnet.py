@@ -145,6 +145,8 @@ def compute_flops(model, resolution=(3, 224, 224)):
     print(f"***** Model Parameters: {params:,} *****\n")
     return flops / 10 ** 9, params
 
+# Save the model after each epoch and update the saved file
+
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -254,16 +256,6 @@ def run_distillation():
 
                 running_loss += total_loss.item()
 
-                if i == 999:  # After processing the first 100 batches
-                    elapsed_time = time.time() - epoch_start_time
-                    avg_time_per_batch = elapsed_time / 1000
-                    total_batches = len(train_loader) * NUM_EPOCHS
-                    estimated_total_time = avg_time_per_batch * total_batches
-                    estimated_hours = int(estimated_total_time // 3600)
-                    estimated_minutes = int((estimated_total_time % 3600) // 60)
-                    estimated_seconds = int(estimated_total_time % 60)
-                    print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
-
                 # Print average loss every 100 steps
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
@@ -279,21 +271,26 @@ def run_distillation():
             epoch_time = epoch_end_time - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
-            if epoch == 0:
-                estimated_total_time = epoch_time * NUM_EPOCHS
-                estimated_hours = int(estimated_total_time // 3600)
-                estimated_minutes = int((estimated_total_time % 3600) // 60)
-                estimated_seconds = int(estimated_total_time % 60)
-                print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
-
             # Zero-shot validation
-            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             # Normal classifier validation
             top1, top5 = validate_student(student, classifier, val_loader_subset)
             print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
+
+            # Save the model after each epoch
+            print(f"Saving model after Epoch {epoch+1}...")
+            torch.save({
+                'epoch': epoch + 1,
+                'student_state_dict': student.state_dict(),
+                'projector_state_dict': projector.state_dict(),
+                'classifier_state_dict': classifier.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': epoch_loss,
+            }, f'resnet50_distilled_epoch_{epoch+1}.pth')
+            print(f"Model saved as resnet50_distilled_epoch_{epoch+1}.pth")
 
         # End timer for total training time
         total_end_time = time.time()
@@ -307,9 +304,9 @@ def run_distillation():
         print("---------------------------------")
 
         # Final validation with the full validation dataset
-        # print("\nPerforming final validation with the full validation dataset...")
-        # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
-        # print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+        print("\nPerforming final validation with the full validation dataset...")
+        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
+        print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
         print(f"Using the full validation dataset with {len(full_val_dataset)} images for final validation.")
 
@@ -317,8 +314,6 @@ def run_distillation():
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
 
         print("\nDistillation training finished.")
-        torch.save(student.state_dict(), 'resnet50_with_projector2.pth')
-        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation2.pth')
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
