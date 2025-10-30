@@ -222,6 +222,11 @@ def run_distillation():
         # Start timer for total training time
         total_start_time = time.time()
 
+        # Early stopping parameters
+        patience = 3  # Number of epochs to wait for improvement
+        best_loss = float('inf')  # Initialize best loss as infinity
+        early_stop_counter = 0  # Counter for early stopping
+
         for epoch in range(NUM_EPOCHS):
             # Start timer for the epoch
             epoch_start_time = time.time()
@@ -280,17 +285,25 @@ def run_distillation():
             print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
 
-            # Save the model after each epoch
-            print(f"Saving model after Epoch {epoch+1}...")
-            torch.save({
-                'epoch': epoch + 1,
-                'student_state_dict': student.state_dict(),
-                'projector_state_dict': projector.state_dict(),
-                'classifier_state_dict': classifier.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': epoch_loss,
-            }, f'resnet50_distilled_epoch_{epoch+1}.pth')
-            print(f"Model saved as resnet50_distilled_epoch_{epoch+1}.pth")
+            # Early stopping logic
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                early_stop_counter = 0  # Reset counter if validation loss improves
+                print(f"Validation loss improved to {best_loss:.4f}. Saving model...")
+                torch.save({
+                    'epoch': epoch + 1,
+                    'student_state_dict': student.state_dict(),
+                    'projector_state_dict': projector.state_dict(),
+                    'classifier_state_dict': classifier.state_dict(),
+                    'loss': epoch_loss,
+                }, f'best_model.pth')
+            else:
+                early_stop_counter += 1
+                print(f"No improvement in validation loss for {early_stop_counter} epoch(s).")
+
+            if early_stop_counter >= patience:
+                print(f"Early stopping triggered after {epoch+1} epochs.")
+                break
 
         # End timer for total training time
         total_end_time = time.time()
