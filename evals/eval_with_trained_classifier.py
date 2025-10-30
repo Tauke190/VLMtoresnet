@@ -1,59 +1,63 @@
-# evaluation with a pretrained classifier head on top of a distilled ResNet-50 backbone
-
 import torch
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 import timm
-from tqdm import tqdm  # For progress bar
+from tqdm import tqdm
 
 # --- Configuration ---
-VAL_DIR = '~/data/datasets/imagenet/val'  # Path to your ImageNet validation dataset
+VAL_DIR = '~/data/datasets/imagenet/val'
 BATCH_SIZE = 16
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# --- Utility Functions ---
-def validate_model(model, val_loader):
-    """Evaluates accuracy on validation set with a progress bar."""
-    model.eval()
+def validate_model(backbone, classifier, val_loader):
+    backbone.eval()
+    classifier.eval()
     correct, total = 0, 0
     with torch.no_grad():
         for images, labels in tqdm(val_loader, desc="Validating", unit="batch"):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            outputs = model(images)
+            features = backbone.forward_features(images)
+            pooled = backbone.global_pool(features)
+            outputs = classifier(pooled)
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
 
-# --- Main Evaluation ---
-def run_evaluation(model_path):
+def run_evaluation(checkpoint_path):
     print(f"Using device: {DEVICE}")
 
-    # 1. Load the distilled ResNet-50 backbone
+    # Load checkpoint
+    print("Loading checkpoint...")
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+
+    # Load backbone
     print("Loading distilled ResNet-50 backbone...")
-    student = timm.create_model('resnet50', pretrained=False).to(DEVICE)
-    student.load_state_dict(torch.load(model_path, map_location=DEVICE), strict=False)  # Allow missing keys
-    student.eval()
+    backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
+    backbone.load_state_dict(checkpoint['backbone_state_dict'], strict=True)
+    backbone.eval()
 
-    # 2. Replace the classifier with a pretrained one
-    print("Loading pretrained classifier...")
-    pretrained_model = timm.create_model('resnet50', pretrained=True).to(DEVICE)
-    student.fc = pretrained_model.fc  # Replace the classifier head with the pretrained one
+    # Load classifier
+    print("Loading trained classifier...")
+    num_classes = checkpoint['classifier_state_dict']['weight'].shape[0]
+    classifier = torch.nn.Linear(backbone.num_features, num_classes).to(DEVICE)
+    classifier.load_state_dict(checkpoint['classifier_state_dict'])
+    classifier.eval()
 
-    # 3. Prepare the validation dataset
-    data_config = timm.data.resolve_model_data_config(pretrained_model)  # Use pretrained model config
+    # Prepare validation dataset
+    data_config = timm.data.resolve_model_data_config(backbone)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
-    # 4. Run validation
-    accuracy = validate_model(student, val_loader)
-    print(f"Validation Accuracy of Distilled Model with Pretrained Classifier: {accuracy:.2f}%")
+    # Run validation
+    accuracy = validate_model(backbone, classifier, val_loader)
+    print(f"Validation Accuracy of Distilled Model with Trained Classifier: {accuracy:.2f}%")
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Evaluate a distilled ResNet-50 model with a pretrained classifier.")
-    parser.add_argument("--model-path", type=str, required=True, help="Path to the student model file.")
+    parser = argparse.ArgumentParser(description="Evaluate a distilled ResNet-50 model with trained classifier.")
+    parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the checkpoint file.")
     args = parser.parse_args()
 
-    run_evaluation(args.model_path)
+    run_evaluation(args.checkpoint_path)
