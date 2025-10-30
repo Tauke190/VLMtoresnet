@@ -102,10 +102,11 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
     return top1_accuracy, top5_accuracy
 
 # --- Main Evaluation ---
-def run_text_based_evaluation(checkpoint_path, prompt_path):
+def run_text_based_evaluation(checkpoint_path):
     print(f"Using device: {DEVICE}")
 
-    # Load prompt templates
+    # Hardcoded prompt path
+    prompt_path = "prompt/imagenet1k.txt"
     print(f"Loading prompt templates from {prompt_path} ...")
     templates = load_prompt_templates(prompt_path)
     templates = templates[:2]
@@ -142,6 +143,6 @@ def run_text_based_evaluation(checkpoint_path, prompt_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Zero-shot evaluation for distilled ResNet50 student.")
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to the checkpoint file')
-    parser.add_argument('--prompt', type=str, required=True, help='Path to the prompt template file')
+    # Remove the prompt argument
     args = parser.parse_args()
-    run_text_based_evaluation(args.checkpoint, args.prompt)
+    run_text_based_evaluation(args.checkpoint)
