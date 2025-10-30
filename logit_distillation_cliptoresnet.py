@@ -103,14 +103,14 @@ def load_prompts_from_file(filepath):
 def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, templates, device=DEVICE):
     """
     Performs zero-shot validation using CLIP text embeddings as class prototypes.
-    Considers all prompt templates for each class and calculates top-1 and top-5 accuracy.
+    Uses projector only for student visual features, not for text features.
+    Calculates top-1 and top-5 accuracy.
     """
     # Prepare class text prompts using all templates
     prompts = [template.format(name) for name in class_names for template in templates]
     with torch.no_grad():
         text_tokens = clip.tokenize(prompts).to(device)
         text_features = teacher.encode_text(text_tokens).float()
-        text_features = projector(text_features)  # Project to student feature space
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
 
     # Average the text features for each class
@@ -126,6 +126,7 @@ def zeroshot_validate_student(student_model, projector, class_names, val_loader,
         images, labels = images.to(device), labels.to(device)
         with torch.no_grad():
             student_features = student_model.forward_features(images)
+            student_features = projector(student_features)  # Project visual features only
             student_features = student_features / student_features.norm(dim=-1, keepdim=True)  # Normalize
             logits = student_features @ text_features.t()
             _, top5_preds = logits.topk(5, dim=1)
