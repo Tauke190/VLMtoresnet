@@ -14,34 +14,51 @@ from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
 import clip
-import time
-import random
-import numpy as np
+import time  # Import time for measuring training duration
+import random  # Add this import at the top of the file
+import numpy as np  # Add this import for parameter calculation
 
 # --- Configuration ---
+# !!! IMPORTANT: Update these paths to your Oxford-IIIT Pet dataset directories.
+#TRAIN_DIR = '~/datasets/ImageNet2012nonpub/train/'
+#VAL_DIR = '~/datasets/ImageNet2012nonpub/val' # Path for the validation set
 TRAIN_SUBSET_RATIO = 0.15
+
+# For cluster server
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+
+# Only for code development server
 TRAIN_DIR = '~/data/datasets/imagenet/train'
 VAL_DIR = '~/data/datasets/imagenet/val'
-VAL_SUBSET_SIZE = 5000
-BATCH_SIZE = 32
+
+
+VAL_SUBSET_SIZE = 5000 # Number of images to use for validation each epoch
+BATCH_SIZE = 32  # Adjust based on your GPU memory
 LEARNING_RATE = 1e-4
 NUM_EPOCHS = 10
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-EARLY_STOPPING_PATIENCE = 3
-EARLY_STOPPING_MIN_DELTA = 1e-4
+EARLY_STOPPING_PATIENCE = 3  # Number of epochs to wait for improvement
+EARLY_STOPPING_MIN_DELTA = 1e-4  # Minimum change to qualify as improvement
 
 def get_teacher_features(model, images):
+    """Extracts features from the CLIP teacher model."""
     with torch.no_grad():
         features = model.encode_image(images)
     return features
 
-def get_student_features(backbone, images):
-    feature_map = backbone.forward_features(images)
-    pooled_features = backbone.global_pool(feature_map)
+def get_student_features(model, images):
+    """
+    Extracts features from the student model's backbone and applies
+    global average pooling to get a feature vector.
+    """
+    feature_map = model.forward_features(images)
+    pooled_features = model.global_pool(feature_map)
     return pooled_features
 
-def validate_student(backbone, classifier, val_loader):
-    backbone.eval()
+def validate_student(student_model, classifier, val_loader):
+    """Evaluates the student model on a given dataloader and calculates top-1 and top-5 accuracy."""
+    student_model.eval()
     classifier.eval()
     top1_correct = 0
     top5_correct = 0
@@ -49,17 +66,33 @@ def validate_student(backbone, classifier, val_loader):
     with torch.no_grad():
         for images, labels in val_loader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = get_student_features(backbone, images)
+            features = student_model.forward_features(images)
             outputs = classifier(features)
             _, top5_preds = outputs.topk(5, dim=1)
             total += labels.size(0)
-            top1_correct += (top5_preds[:, 0] == labels).sum().item()
-            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
+            top1_correct += (top5_preds[:, 0] == labels).sum().item()  # Top-1 accuracy
+            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()  # Top-5 accuracy
     top1_accuracy = 100 * top1_correct / total
     top5_accuracy = 100 * top5_correct / total
     return top1_accuracy, top5_accuracy
 
+class StudentWithProjector(nn.Module):
+    def __init__(self, backbone, projector):
+        super().__init__()
+        self.backbone = backbone
+        self.projector = projector
+
+    def forward_features(self, x):
+        features = self.backbone.forward_features(x)
+        pooled = self.backbone.global_pool(features)
+        projected = self.projector(pooled)
+        return projected
+
 def load_prompts_from_file(filepath):
+    """
+    Loads all prompt templates from a text file.
+    Each line in the file represents a template.
+    """
     try:
         with open(filepath, 'r') as f:
             templates = [line.strip() for line in f.readlines()]
@@ -69,37 +102,46 @@ def load_prompts_from_file(filepath):
         print(f"Error: Prompt file not found at {filepath}.")
         return []
 
-def zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, device=DEVICE):
+def zeroshot_validate_student(student_model, projector, class_names, val_loader, teacher, templates, device=DEVICE):
+    """
+    Performs zero-shot validation using CLIP text embeddings as class prototypes.
+    Uses projector only for student visual features, not for text features.
+    Calculates top-1 and top-5 accuracy.
+    """
+    # Prepare class text prompts using all templates
     prompts = [template.format(name) for name in class_names for template in templates]
     with torch.no_grad():
         text_tokens = clip.tokenize(prompts).to(device)
         text_features = teacher.encode_text(text_tokens).float()
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)  # Normalize
+
+    # Average the text features for each class
     num_templates = len(templates)
     num_classes = len(class_names)
     text_features = text_features.view(num_classes, num_templates, -1).mean(dim=1)
-    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
     top1_correct = 0
     top5_correct = 0
     total = 0
-    backbone.eval()
-    projector.eval()
+    student_model.eval()
     for images, labels in val_loader:
         images, labels = images.to(device), labels.to(device)
         with torch.no_grad():
-            features = get_student_features(backbone, images)
-            student_features = projector(features)
+            student_features = student_model.forward_features(images)
             student_features = student_features / student_features.norm(dim=-1, keepdim=True)
             logits = student_features @ text_features.t()
             _, top5_preds = logits.topk(5, dim=1)
             total += labels.size(0)
-            top1_correct += (top5_preds[:, 0] == labels).sum().item()
-            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
+            top1_correct += (top5_preds[:, 0] == labels).sum().item()  # Top-1 accuracy
+            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()  # Top-5 accuracy
     top1_accuracy = 100 * top1_correct / total
     top5_accuracy = 100 * top5_correct / total
     return top1_accuracy, top5_accuracy
 
 def compute_flops(model, resolution=(3, 224, 224)):
+    """
+    Computes the FLOPs and parameters of the given model using thop.
+    """
     from thop import profile
     input = torch.randn(1, *resolution).to(DEVICE)
     flops, params = profile(model, inputs=(input,))
@@ -122,9 +164,11 @@ def run_distillation():
     teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = backbone.num_features
 
+    # Compute FLOPs and parameters for the student model
     print("Computing FLOPs and parameters for the student model...")
     compute_flops(backbone, resolution=(3, 224, 224))
 
+    # --- Setup Dataset and DataLoader ---
     train_transform = preprocess
     val_transform = preprocess
 
@@ -137,6 +181,7 @@ def run_distillation():
             class_to_indices = {}
             for idx, t in enumerate(targets):
                 class_to_indices.setdefault(t, []).append(idx)
+
             selected_indices = []
             g = torch.Generator().manual_seed(42)
             for cls, idxs in class_to_indices.items():
@@ -144,6 +189,7 @@ def run_distillation():
                 perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
                 for p in perm:
                     selected_indices.append(idxs[p])
+
             train_dataset = Subset(base_train, selected_indices)
             print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
         else:
@@ -155,54 +201,69 @@ def run_distillation():
         val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Using the full validation dataset with {len(full_val_dataset)} images.")
 
+        # --- Now assign num_classes and build projector/student ---
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
         projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
+        student = StudentWithProjector(backbone, projector).to(DEVICE)
+
+        # Add a normal classifier for evaluation
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
-        params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
+        params_to_train = list(student.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
+        # --- Load prompts ---
         prompt_file = "prompt/imagenet1k.txt"
         templates = load_prompts_from_file(prompt_file)
-        templates = templates[:2]
+        templates = templates[:2] 
         class_names = base_train.classes
 
         print("\nStarting distillation...")
+
+        # Start timer for total training time
         total_start_time = time.time()
+
         best_loss = float('inf')
         epochs_no_improve = 0
 
         for epoch in range(NUM_EPOCHS):
+            # Start timer for the epoch
             epoch_start_time = time.time()
+
+            # picks randomized subset for validation
             val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
             val_subset = Subset(full_val_dataset, val_indices)
             val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
-            backbone.train()
-            projector.train()
+            student.train()
             classifier.train()
             running_loss = 0.0
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # To Check if this works
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
+
                 teacher_features = get_teacher_features(teacher, images)
                 projected_teacher_features = projector(teacher_features.float())
-                student_features = get_student_features(backbone, images)
-                student_features = projector(student_features)
+                student_features = student.forward_features(images)
                 loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+
+                # Remove classifier loss and only use distillation loss
                 total_loss = loss_distill
 
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
+
                 running_loss += total_loss.item()
 
-                if i == 999:
+                if i == 999:  # After processing the first 100 batches
                     elapsed_time = time.time() - epoch_start_time
                     avg_time_per_batch = elapsed_time / 1000
                     total_batches = len(train_loader) * NUM_EPOCHS
@@ -212,14 +273,17 @@ def run_distillation():
                     estimated_seconds = int(estimated_total_time % 60)
                     print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
+                # Print average loss every 100 steps
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
                     print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
 
+            # Calculate and print average loss for the epoch
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
+            # Early stopping check
             if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
                 best_loss = epoch_loss
                 epochs_no_improve = 0
@@ -230,6 +294,7 @@ def run_distillation():
                     print("Early stopping triggered: training loss has converged.")
                     break
 
+            # End timer for the epoch
             epoch_end_time = time.time()
             epoch_time = epoch_end_time - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
@@ -241,16 +306,19 @@ def run_distillation():
                 estimated_seconds = int(estimated_total_time % 60)
                 print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # Zero-shot validation
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
-            top1, top5 = validate_student(backbone, classifier, val_loader_subset)
+            # Normal classifier validation
+            top1, top5 = validate_student(student, classifier, val_loader_subset)
             print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
 
+            # --- Save checkpoint ---
             checkpoint = {
                 'epoch': epoch + 1,
-                'student_state_dict': backbone.state_dict(),
+                'student_state_dict': student.state_dict(),
                 'backbone_state_dict': backbone.state_dict(),
                 'projector_state_dict': projector.state_dict(),
                 'classifier_state_dict': classifier.state_dict(),
@@ -260,20 +328,25 @@ def run_distillation():
             print(f"Checkpoint saved for epoch {epoch+1}.")
             torch.cuda.empty_cache()
 
+        # End timer for total training time
         total_end_time = time.time()
         total_training_time = total_end_time - total_start_time
+
+        # Convert total training time to hours, minutes, and seconds
         hours = int(total_training_time // 3600)
         minutes = int((total_training_time % 3600) // 60)
         seconds = int(total_training_time % 60)
         print(f"\nTotal training time: {hours} hours, {minutes} minutes, {seconds} seconds")
         print("---------------------------------")
 
+        # Final validation with the full validation dataset
         print("\nPerforming final validation with the full validation dataset...")
-        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
+        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(student, projector, class_names, val_loader, teacher, templates, DEVICE)
         print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
         print(f"Using the full validation dataset with {len(full_val_dataset)} images for final validation.")
 
-        top1, top5 = validate_student(backbone, classifier, val_loader)
+        top1, top5 = validate_student(student, classifier, val_loader)
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         print("\nDistillation training finished.")
 
