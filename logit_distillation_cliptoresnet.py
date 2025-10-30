@@ -190,16 +190,18 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
-                teacher_features = get_teacher_features(teacher, images)
-                projected_teacher_features = projector(teacher_features.float())
+                teacher_features = get_teacher_features(teacher, images).float()
                 student_features = get_student_features(backbone, images)
-                student_features = projector(student_features)
-                loss_distill = distill_loss_fn(student_features, projected_teacher_features)
+                projected_student_features = projector(student_features)
+                # Normalize both features before computing loss
+                teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
+                projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+                loss_distill = distill_loss_fn(projected_student_features, teacher_features)
                 total_loss = loss_distill
 
                 optimizer.zero_grad()
