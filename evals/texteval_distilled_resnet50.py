@@ -11,7 +11,9 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 32
 
 # Hardcoded paths and parameters
-VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
+VAL_DIR = '~/data/datasets/imagenet/val'
+# For coding server
+# VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
 PROMPT_FILE = '../prompt/imagenet1k.txt'
 NUM_TEMPLATES = 2
 
