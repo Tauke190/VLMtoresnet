@@ -12,21 +12,17 @@
 module load anaconda3
 module load cuda
 
-# --- FIX STARTS HERE ---
+# ✅ Properly initialize conda in non-interactive mode
+eval "$(conda shell.bash hook)"
 
-# Source your bash profile to initialize conda
-source ~/.bashrc
-
-# Activate your specific conda environment
+# Activate your conda environment
 conda activate openmmlab
 
-# --- FIX ENDS HERE ---
-
-# Change to your working directory
+# Change directory
 cd /home/av354855/VLMtoresnet
 
-# Run your script (now inside the activated environment)
+# Run unbuffered
 python -u logit_distillation_cliptoresnet.py
 
-# (Optional but good practice) Deactivate the environment at the end
+# Optional cleanup
 conda deactivate
