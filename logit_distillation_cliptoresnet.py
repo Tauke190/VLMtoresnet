@@ -317,8 +317,8 @@ def run_distillation():
         print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
 
         print("\nDistillation training finished.")
-        torch.save(student.state_dict(), 'resnet50_with_projector.pth')
-        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation.pth')
+        torch.save(student.state_dict(), 'resnet50_with_projector2.pth')
+        torch.save(backbone.state_dict(), 'resnet50_distilled_with_logit_distillation2.pth')
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
