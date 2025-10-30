@@ -91,7 +91,7 @@ def main():
     backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
     teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = backbone.num_features
-    projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
+    projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
 
     # Load checkpoint and filter state_dict
     print(f"Loading checkpoint from {args.checkpoint} ...")
