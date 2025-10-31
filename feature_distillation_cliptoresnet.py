@@ -125,6 +125,10 @@ def compute_flops(model, resolution=(3, 224, 224)):
 
 def register_hook(module, name, feature_dict):
     def hook_fn(module, input, output):
+        # Ensure output is [batch_size, num_tokens, hidden_dim]
+        if output.shape[0] != BATCH_SIZE:
+            # If output is [num_tokens, batch_size, hidden_dim], transpose
+            output = output.permute(1, 0, 2)
         feature_dict[name] = output
     return module.register_forward_hook(hook_fn)
 
