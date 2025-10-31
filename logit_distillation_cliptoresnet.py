@@ -72,7 +72,7 @@ def validate_student(backbone, projector, teacher, val_loader):
     avg_similarity = total_similarity / total
     avg_mse = total_mse / total
     print(f"Average Cosine Similarity: {avg_similarity:.4f}")
-    print(f"Average MSE Loss: {avg_mse:.4f}")
+    print(f"Average MSE Loss: {avg_mse:.6f}")
     return avg_similarity, avg_mse
 
 def load_prompts_from_file(filepath):
@@ -202,10 +202,10 @@ def run_distillation():
             running_loss = 0.0
 
 
-            top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            # top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
+            # print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -263,10 +263,10 @@ def run_distillation():
                 print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.5f}%, Top-5: {zeroshot_top5:.5f}%")
 
-            top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+            avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
+            print(f"Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
             print("---------------------------------")
 
             checkpoint = {
