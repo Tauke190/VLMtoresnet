@@ -185,7 +185,7 @@ def run_distillation():
         templates = templates[:2]
         class_names = base_train.classes
 
-        print("\nStarting distillation...")
+        print("\nStarting logit distillation...")
         total_start_time = time.time()
         best_loss = float('inf')
         epochs_no_improve = 0
