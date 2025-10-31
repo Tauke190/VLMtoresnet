@@ -238,6 +238,10 @@ def run_distillation():
                 teacher_block_feat = teacher_features_dict['clip_block6']  # [B, seq_len, C]
                 teacher_cls_token = teacher_block_feat[:, 0]  # CLS token
 
+                print("teacher_block_feat shape:", teacher_block_feat.shape)
+                print("teacher_cls_token shape:", teacher_cls_token.shape)
+                print("student_pooled_proj shape:", student_pooled_proj.shape)
+
                 # ResNet intermediate feature
                 student_block_feat = student_features_dict['resnet_layer2_1']  # [B, C, H, W]
                 student_pooled = nn.functional.adaptive_avg_pool2d(student_block_feat, (1, 1)).squeeze(-1).squeeze(-1)  # [B, C]
