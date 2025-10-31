@@ -189,6 +189,11 @@ def run_distillation():
         val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Full validation set: {len(full_val_dataset)} images.")
 
+        # Sample a fixed validation subset ONCE
+        val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
+        val_subset = Subset(full_val_dataset, val_indices)
+        val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
@@ -212,9 +217,7 @@ def run_distillation():
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
-            val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
-            val_subset = Subset(full_val_dataset, val_indices)
-            val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+            # Remove val subset sampling from here!
 
             backbone.train()
             projector.train()
