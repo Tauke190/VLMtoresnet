@@ -202,7 +202,7 @@ def run_distillation():
             running_loss = 0.0
 
 
-            top1, top5 = validate_student(backbone, classifier, val_loader_subset)
+            top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
             print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
@@ -265,7 +265,7 @@ def run_distillation():
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
-            top1, top5 = validate_student(backbone, classifier, val_loader_subset)
+            top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
             print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
 
