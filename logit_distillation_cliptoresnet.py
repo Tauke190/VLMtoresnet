@@ -149,28 +149,45 @@ def run_distillation():
         print(f"Loading training dataset from: {TRAIN_DIR}")
         base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
 
-        if TRAIN_SUBSET_RATIO is not None and 0.0 < TRAIN_SUBSET_RATIO < 1.0:
-            targets = base_train.targets
-            class_to_indices = {}
-            for idx, t in enumerate(targets):
-                class_to_indices.setdefault(t, []).append(idx)
-            selected_indices = []
-            g = torch.Generator().manual_seed(42)
-            for cls, idxs in class_to_indices.items():
-                k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
-                perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
-                for p in perm:
-                    selected_indices.append(idxs[p])
-            train_dataset = Subset(base_train, selected_indices)
-            print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
-        else:
-            train_dataset = base_train
+        # --- Take 15% subset from training set ---
+        targets = base_train.targets
+        class_to_indices = {}
+        for idx, t in enumerate(targets):
+            class_to_indices.setdefault(t, []).append(idx)
+        selected_indices = []
+        g = torch.Generator().manual_seed(42)
+        for cls, idxs in class_to_indices.items():
+            k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
+            perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
+            for p in perm:
+                selected_indices.append(idxs[p])
+        trainval_subset = Subset(base_train, selected_indices)
+        print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
+
+        # --- Split 15% subset into train/val (e.g., 80/20 split) ---
+        val_ratio_within_subset = 0.20  # Change to 0.10 for 10%
+        num_subset = len(selected_indices)
+        num_val = int(num_subset * val_ratio_within_subset)
+        num_train = num_subset - num_val
+
+        indices = list(range(num_subset))
+        random.seed(42)
+        random.shuffle(indices)
+        train_indices = indices[:num_train]
+        val_indices = indices[num_train:]
+
+        train_dataset = Subset(trainval_subset, train_indices)
+        val_subset_dataset = Subset(trainval_subset, val_indices)
 
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        print(f"Loading validation dataset from: {VAL_DIR}")
+        val_loader_subset = DataLoader(val_subset_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
+        print(f"Train subset: {len(train_dataset)} images, Validation subset: {len(val_subset_dataset)} images.")
+
+        print(f"Loading full validation dataset from: {VAL_DIR}")
         full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
         val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Using the full validation dataset with {len(full_val_dataset)} images.")
+        print(f"Full validation set: {len(full_val_dataset)} images.")
 
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
@@ -270,7 +287,7 @@ def run_distillation():
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.5f}%, Top-5: {zeroshot_top5:.5f}%")
 
             avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
+            print(f"Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}, MSE: {mse_loss:.5f}")
             print("---------------------------------")
 
             checkpoint = {
@@ -296,7 +313,7 @@ def run_distillation():
         zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
         print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
         avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-        print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
+        print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}, MSE: {mse_loss:.5f}")
         print("\nDistillation training finished.")
 
     except FileNotFoundError as e:

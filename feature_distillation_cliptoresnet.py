@@ -20,6 +20,8 @@ import numpy as np
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.15
+VAL_WITHIN_TRAIN_RATIO = 0.20  # 20% of the 15% subset for validation
+
 # For cluster server
 
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
@@ -31,7 +33,7 @@ VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 10
+NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 EARLY_STOPPING_PATIENCE = 3
 EARLY_STOPPING_MIN_DELTA = 1e-4
@@ -164,32 +166,42 @@ def run_distillation():
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
         base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
-
-        if TRAIN_SUBSET_RATIO is not None and 0.0 < TRAIN_SUBSET_RATIO < 1.0:
-            targets = base_train.targets
-            class_to_indices = {}
-            for idx, t in enumerate(targets):
-                class_to_indices.setdefault(t, []).append(idx)
-            selected_indices = []
-            g = torch.Generator().manual_seed(42)
-            for cls, idxs in class_to_indices.items():
-                k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
-                perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
-                for p in perm:
-                    selected_indices.append(idxs[p])
-            train_dataset = Subset(base_train, selected_indices)
-            print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
-        else:
-            train_dataset = base_train
-
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        print(f"Loading validation dataset from: {VAL_DIR}")
-        full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
-        val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Using the full validation dataset with {len(full_val_dataset)} images.")
-
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
+
+        # --- Step 1: Take 15% subset from training set ---
+        # 1.28M * 0.15 ≈ 192,000 images
+        targets = base_train.targets
+        class_to_indices = {}
+        for idx, t in enumerate(targets):
+            class_to_indices.setdefault(t, []).append(idx)
+        selected_indices = []
+        g = torch.Generator().manual_seed(42)
+        for cls, idxs in class_to_indices.items():
+            k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
+            perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
+            for p in perm:
+                selected_indices.append(idxs[p])
+
+        # --- Step 2: Split 15% subset into train/val ---
+        # Reserve 20% of the 15% subset for validation (~32k if 192k total)
+        random.shuffle(selected_indices)
+        val_split = int(len(selected_indices) * VAL_WITHIN_TRAIN_RATIO)
+        train_indices = selected_indices[val_split:]   # ~160k
+        val_indices_within_train = selected_indices[:val_split]  # ~32k
+
+        train_dataset = Subset(base_train, train_indices)
+        val_dataset_within_train = Subset(base_train, val_indices_within_train)
+
+        print(f"Using {len(train_indices)} images for training and {len(val_indices_within_train)} images for validation (from 15% subset).")
+
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
+        val_loader_within_train = DataLoader(val_dataset_within_train, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
+        print(f"Loading full validation dataset from: {VAL_DIR}")
+        full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
+        val_loader_full = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+        print(f"Full validation set size: {len(full_val_dataset)} images.")
 
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
@@ -209,18 +221,10 @@ def run_distillation():
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
-            val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
-            val_subset = Subset(full_val_dataset, val_indices)
-            val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
             backbone.train()
             projector.train()
             running_loss = 0.0
-
-            # avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-            # print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
-            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -298,6 +302,14 @@ def run_distillation():
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
+            # --- Validation on reserved subset from training ---
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, base_train.classes, val_loader_within_train, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Zero-shot, 15% subset val): Top-1: {zeroshot_top1:.5f}%, Top-5: {zeroshot_top5:.5f}%")
+
+            avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_within_train)
+            print(f"Validation (Logits, 15% subset val): Average Similarity: {avg_sim:.5f}, MSE: {mse_loss:.5f}")
+            print("---------------------------------")
+
             if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
                 best_loss = epoch_loss
                 epochs_no_improve = 0
@@ -319,38 +331,12 @@ def run_distillation():
                 estimated_seconds = int(estimated_total_time % 60)
                 print(f"Estimated total training time: {estimated_hours} hours, {estimated_minutes} minutes, {estimated_seconds} seconds")
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.5f}%, Top-5: {zeroshot_top5:.5f}%")
-
-            avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
-            print("---------------------------------")
-
-            checkpoint = {
-                'epoch': epoch + 1,
-                'student_state_dict': backbone.state_dict(),
-                'projector_state_dict': projector.state_dict(),
-                'loss': epoch_loss,
-            }
-            torch.save(checkpoint, f'checkpoint_epoch_{epoch+1}.pth')
-            print(f"Checkpoint saved for epoch {epoch+1}.")
-            torch.cuda.empty_cache()
-
-        total_end_time = time.time()
-        total_training_time = total_end_time - total_start_time
-        hours = int(total_training_time // 3600)
-        minutes = int((total_training_time % 3600) // 60)
-        seconds = int(total_training_time % 60)
-        print(f"\nTotal training time: {hours} hours, {minutes} minutes, {seconds} seconds")
-        print("---------------------------------")
-
+        # --- Final reporting on full validation set ---
         print("\nPerforming final validation with the full validation dataset...")
-        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
-        print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
-        print(f"Using the full validation dataset with {len(full_val_dataset)} images for final validation.")
-
-        avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-        print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
+        zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, base_train.classes, val_loader_full, teacher, templates, DEVICE)
+        print(f"Final Validation Accuracy (Zero-shot, full val): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+        avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_full)
+        print(f"Final Validation (Logits, full val): Average Similarity: {avg_sim:.2f}, MSE: {mse_loss:.2f}")
         print("\nDistillation training finished.")
 
     except FileNotFoundError as e:
