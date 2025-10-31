@@ -244,9 +244,7 @@ def run_distillation():
                 student_pooled = nn.functional.adaptive_avg_pool2d(student_block_feat, (1, 1)).squeeze(-1).squeeze(-1)  # [B, C]
 
 
-                print("teacher_block_feat shape:", teacher_block_feat.shape)
-                print("teacher_cls_token shape:", teacher_cls_token.shape)
-                print("student_pooled_proj shape:", student_pooled_proj.shape)
+              
                 # Project student pooled feature to match teacher CLS dim if needed
                 if student_pooled.shape[1] != teacher_cls_token.shape[1]:
                     if not hasattr(run_distillation, 'student_proj'):
@@ -254,6 +252,11 @@ def run_distillation():
                     student_pooled_proj = run_distillation.student_proj(student_pooled)
                 else:
                     student_pooled_proj = student_pooled
+
+
+                print("teacher_block_feat shape:", teacher_block_feat.shape)
+                print("teacher_cls_token shape:", teacher_cls_token.shape)
+                print("student_pooled_proj shape:", student_pooled_proj.shape)
 
                 # Normalize
                 teacher_cls_token = teacher_cls_token / teacher_cls_token.norm(dim=-1, keepdim=True)
