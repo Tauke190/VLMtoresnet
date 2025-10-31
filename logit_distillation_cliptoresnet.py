@@ -272,7 +272,6 @@ def run_distillation():
             checkpoint = {
                 'epoch': epoch + 1,
                 'student_state_dict': backbone.state_dict(),
-                'backbone_state_dict': backbone.state_dict(),
                 'projector_state_dict': projector.state_dict(),
                 'classifier_state_dict': classifier.state_dict(),
                 'loss': epoch_loss,
