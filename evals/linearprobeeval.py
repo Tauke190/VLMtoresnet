@@ -132,4 +132,4 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True, choices=["imagenet", "oxfordpet"], help="Dataset to use for evaluation")
     args = parser.parse_args()
 
-    linear_evaluation(args.model_path, args.dataset)
+    linear_evaluation(args.checkpoint, args.dataset)
