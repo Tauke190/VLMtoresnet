@@ -259,9 +259,9 @@ def run_distillation():
                     student_pooled_proj = student_pooled
 
 
-                print("teacher_block_feat shape:", teacher_block_feat.shape)
-                print("teacher_cls_token shape:", teacher_cls_token.shape)
-                print("student_pooled_proj shape:", student_pooled_proj.shape)
+                # print("teacher_block_feat shape:", teacher_block_feat.shape)
+                # print("teacher_cls_token shape:", teacher_cls_token.shape)
+                # print("student_pooled_proj shape:", student_pooled_proj.shape)
 
                 # Normalize
                 teacher_cls_token = teacher_cls_token.float()
