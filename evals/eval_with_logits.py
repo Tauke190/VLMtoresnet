@@ -5,6 +5,7 @@ import torch.nn as nn
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
 import argparse
+from tqdm import tqdm
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 16
@@ -52,7 +53,7 @@ total_similarity = 0.0
 total_samples = 0
 
 with torch.no_grad():
-    for images, _ in val_loader:
+    for images, _ in tqdm(val_loader, desc="Evaluating batches"):
         images = images.to(DEVICE)
         clip_features = teacher.encode_image(images).float()
         clip_features = clip_features / clip_features.norm(dim=-1, keepdim=True)

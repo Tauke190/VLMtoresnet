@@ -6,6 +6,7 @@ import timm
 import clip
 import argparse
 import os
+from tqdm import tqdm  # <-- Add this import
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 32
@@ -43,7 +44,8 @@ def zeroshot_validate_student(backbone, projector, class_names, val_loader, teac
     total = 0
     backbone.eval()
     projector.eval()
-    for images, labels in val_loader:
+    # Add tqdm progress bar
+    for images, labels in tqdm(val_loader, desc="Validating", leave=True):
         images, labels = images.to(device), labels.to(device)
         with torch.no_grad():
             features = get_student_features(backbone, images)
@@ -65,9 +67,18 @@ def filter_state_dict(state_dict):
 def main():
     parser = argparse.ArgumentParser(description="Zero-shot validation for distilled ResNet-50 student")
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to checkpoint file')
+    parser.add_argument('--dataset', type=str, choices=['imagenet', 'oxfordpet'], default='imagenet', help='Dataset to evaluate')
     args = parser.parse_args()
 
     print(f"Using device: {DEVICE}")
+
+    # Set validation directory based on dataset
+    if args.dataset == 'imagenet':
+        val_dir = os.path.expanduser('~/data/datasets/imagenet/val')
+        prompt_file = '../prompt/imagenet1k.txt'
+    elif args.dataset == 'oxfordpet':
+        val_dir = os.path.expanduser('~/data/datasets/oxford_pet/val')
+        prompt_file = '../prompt/oxfordpet.txt'
 
     # Load teacher model and preprocessing
     teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
@@ -76,14 +87,14 @@ def main():
         param.requires_grad = False
 
     # Load validation dataset
-    print(f"Loading validation dataset from: {VAL_DIR}")
-    val_dataset = ImageFolder(root=VAL_DIR, transform=preprocess)
+    print(f"Loading validation dataset from: {val_dir}")
+    val_dataset = ImageFolder(root=val_dir, transform=preprocess)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
     class_names = val_dataset.classes
     print(f"Found {len(class_names)} classes in validation set.")
 
     # Load prompt templates
-    templates = load_prompts_from_file(PROMPT_FILE)
+    templates = load_prompts_from_file(prompt_file)
     templates = templates[:NUM_TEMPLATES]
 
     # Load student backbone and projector
