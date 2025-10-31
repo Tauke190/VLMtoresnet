@@ -50,8 +50,10 @@ def linear_evaluation(model_path, dataset):
 
     # 2. Prepare the training and validation datasets
     if dataset == "imagenet":
-        train_dir = '/home/av354855/data/datasets/imagenet/train'
-        val_dir = '/home/av354855/data/datasets/imagenet/val'
+        # train_dir = '/home/av354855/data/datasets/imagenet/train'
+        # val_dir = '/home/av354855/data/datasets/imagenet/val'
+        train_dir = '/home/c3-0/datasets/ImageNet/train'
+        val_dir = '/home/c3-0/datasets/ImageNet/validation'
     elif dataset == "oxfordpet":
         train_dir = '/home/av354855/data/datasets/oxford_pet/train'
         val_dir = '/home/av354855/data/datasets/oxford_pet/val'
