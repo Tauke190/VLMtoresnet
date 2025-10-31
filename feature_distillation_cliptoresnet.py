@@ -241,6 +241,7 @@ def run_distillation():
                 # CLS token from CLIP block
                 teacher_block_feat = teacher_features_dict['clip_block6']  # [B, seq_len, C]
                 teacher_cls_token = teacher_block_feat[:, 0]  # CLS token
+                teacher_cls_token = teacher_cls_token.float()  # <-- Add this line
 
 
                 # ResNet intermediate feature
@@ -263,6 +264,7 @@ def run_distillation():
                 print("student_pooled_proj shape:", student_pooled_proj.shape)
 
                 # Normalize
+                teacher_cls_token = teacher_cls_token.float()
                 teacher_cls_token = teacher_cls_token / teacher_cls_token.norm(dim=-1, keepdim=True)
                 student_pooled_proj = student_pooled_proj / student_pooled_proj.norm(dim=-1, keepdim=True)
 
