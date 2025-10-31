@@ -22,11 +22,11 @@ import numpy as np
 TRAIN_SUBSET_RATIO = 0.15
 # For cluster server
 
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
@@ -45,24 +45,35 @@ def get_student_features(backbone, images):
     pooled_features = backbone.global_pool(feature_map)
     return pooled_features
 
-def validate_student(backbone, classifier, val_loader):
+def validate_student(backbone, projector, teacher, val_loader):
     backbone.eval()
-    classifier.eval()
-    top1_correct = 0
-    top5_correct = 0
+    projector.eval()
+    teacher.eval()
+    total_similarity = 0.0
+    total_mse = 0.0
     total = 0
     with torch.no_grad():
-        for images, labels in val_loader:
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            features = get_student_features(backbone, images)
-            outputs = classifier(features)
-            _, top5_preds = outputs.topk(5, dim=1)
-            total += labels.size(0)
-            top1_correct += (top5_preds[:, 0] == labels).sum().item()
-            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
-    top1_accuracy = 100 * top1_correct / total
-    top5_accuracy = 100 * top5_correct / total
-    return top1_accuracy, top5_accuracy
+        for images, _ in val_loader:
+            images = images.to(DEVICE)
+            # Student features
+            student_features = get_student_features(backbone, images)
+            projected_student_features = projector(student_features)
+            projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+            # Teacher features
+            teacher_features = teacher.encode_image(images).float()
+            teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
+            # Cosine similarity (dot product)
+            similarity = (projected_student_features * teacher_features).sum(dim=-1)
+            total_similarity += similarity.sum().item()
+            # MSE loss
+            mse = nn.functional.mse_loss(projected_student_features, teacher_features, reduction='sum')
+            total_mse += mse.item()
+            total += images.size(0)
+    avg_similarity = total_similarity / total
+    avg_mse = total_mse / total
+    print(f"Average Cosine Similarity: {avg_similarity:.4f}")
+    print(f"Average MSE Loss: {avg_mse:.4f}")
+    return avg_similarity, avg_mse
 
 def load_prompts_from_file(filepath):
     try:
@@ -190,8 +201,11 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+
+            top1, top5 = validate_student(backbone, classifier, val_loader_subset)
+            print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -252,7 +266,7 @@ def run_distillation():
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             top1, top5 = validate_student(backbone, classifier, val_loader_subset)
-            print(f"Validation Accuracy (Classifier) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+            print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             print("---------------------------------")
 
             checkpoint = {
