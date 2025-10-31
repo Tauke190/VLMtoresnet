@@ -27,7 +27,7 @@ checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
 
 # Load student backbone and projector
 backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-backbone.load_state_dict(checkpoint['backbone_state_dict'])
+backbone.load_state_dict(checkpoint['backbone_state_dict'],strict=False)
 backbone.eval()
 
 teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
