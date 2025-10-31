@@ -216,11 +216,10 @@ def run_distillation():
             projector.train()
             running_loss = 0.0
 
-            top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
-
+            # avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
+            # print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
+            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
