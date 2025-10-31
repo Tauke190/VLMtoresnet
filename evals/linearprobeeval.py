@@ -1,3 +1,5 @@
+# linear probe evaluation script for distilled ResNet-50 model
+
 import argparse
 import torch
 import torch.nn as nn
@@ -42,7 +44,8 @@ def linear_evaluation(model_path, dataset):
     # 1. Load the student backbone (distilled)
     print("Loading distilled student backbone...")
     student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    student.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    checkpoint = torch.load(model_path, map_location=DEVICE)
+    student.load_state_dict(checkpoint['student_state_dict'])
     student.eval()
 
     # 2. Prepare the training and validation datasets
