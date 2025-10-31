@@ -22,11 +22,11 @@ import numpy as np
 TRAIN_SUBSET_RATIO = 0.15
 # For cluster server
 
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
@@ -123,6 +123,11 @@ def compute_flops(model, resolution=(3, 224, 224)):
     print(f"***** Model Parameters: {params:,} *****\n")
     return flops / 10 ** 9, params
 
+def register_hook(module, name, feature_dict):
+    def hook_fn(module, input, output):
+        feature_dict[name] = output
+    return module.register_forward_hook(hook_fn)
+
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -143,6 +148,14 @@ def run_distillation():
 
     train_transform = preprocess
     val_transform = preprocess
+
+    # --- Register hooks for intermediate features ---
+    teacher_features_dict = {}
+    student_features_dict = {}
+
+    # Example: 6th transformer block for CLIP, 2nd block of layer2 for ResNet
+    teacher_handle = register_hook(teacher.visual.transformer.resblocks[5], 'clip_block6', teacher_features_dict)
+    student_handle = register_hook(backbone.layer2[1], 'resnet_layer2_1', student_features_dict)
 
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
@@ -177,6 +190,7 @@ def run_distillation():
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
+        feature_distill_loss_fn = nn.MSELoss()
         params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
@@ -201,22 +215,48 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-
-            # top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
-            # print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
-
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
+                teacher_features_dict.clear()
+                student_features_dict.clear()
+
+                # Forward pass through teacher and student
+                with torch.no_grad():
+                    _ = teacher.encode_image(images)
+                _ = backbone(images)
+
+                # Get final features
                 teacher_features = get_teacher_features(teacher, images).float()
                 student_features = get_student_features(backbone, images)
                 projected_student_features = projector(student_features)
-                # Normalize both features before computing loss
                 teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
                 projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
                 loss_distill = distill_loss_fn(projected_student_features, teacher_features)
-                total_loss = loss_distill
+
+                # --- Intermediate feature distillation ---
+                # CLS token from CLIP block
+                teacher_block_feat = teacher_features_dict['clip_block6']  # [B, seq_len, C]
+                teacher_cls_token = teacher_block_feat[:, 0]  # CLS token
+
+                # ResNet intermediate feature
+                student_block_feat = student_features_dict['resnet_layer2_1']  # [B, C, H, W]
+                student_pooled = nn.functional.adaptive_avg_pool2d(student_block_feat, (1, 1)).squeeze(-1).squeeze(-1)  # [B, C]
+
+                # Project student pooled feature to match teacher CLS dim if needed
+                if student_pooled.shape[1] != teacher_cls_token.shape[1]:
+                    if not hasattr(run_distillation, 'student_proj'):
+                        run_distillation.student_proj = nn.Linear(student_pooled.shape[1], teacher_cls_token.shape[1]).to(DEVICE)
+                    student_pooled_proj = run_distillation.student_proj(student_pooled)
+                else:
+                    student_pooled_proj = student_pooled
+
+                # Normalize
+                teacher_cls_token = teacher_cls_token / teacher_cls_token.norm(dim=-1, keepdim=True)
+                student_pooled_proj = student_pooled_proj / student_pooled_proj.norm(dim=-1, keepdim=True)
+
+                feature_distill_loss = feature_distill_loss_fn(student_pooled_proj, teacher_cls_token)
+
+                total_loss = loss_distill + feature_distill_loss
 
                 optimizer.zero_grad()
                 total_loss.backward()
@@ -291,14 +331,20 @@ def run_distillation():
         print("\nPerforming final validation with the full validation dataset...")
         zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
         print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
-        avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-        print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}%, MSE: {mse_loss:.5f}%")
+        print(f"Using the full validation dataset with {len(full_val_dataset)} images for final validation.")
+
+        top1, top5 = validate_student(backbone, classifier, val_loader)
+        print(f"Final Validation Accuracy (Classifier): Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         print("\nDistillation training finished.")
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)
         return
+
+    # Remove hooks after training
+    teacher_handle.remove()
+    student_handle.remove()
 
 if __name__ == '__main__':
     run_distillation()
