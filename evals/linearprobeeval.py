@@ -128,7 +128,7 @@ def linear_evaluation(model_path, dataset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Linear Probe Evaluation")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the model to evaluate")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to the model to evaluate")
     parser.add_argument("--dataset", type=str, required=True, choices=["imagenet", "oxfordpet"], help="Dataset to use for evaluation")
     args = parser.parse_args()
 
