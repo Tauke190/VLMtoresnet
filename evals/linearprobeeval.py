@@ -45,7 +45,7 @@ def linear_evaluation(model_path, dataset):
     print("Loading distilled student backbone...")
     student = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
     checkpoint = torch.load(model_path, map_location=DEVICE)
-    student.load_state_dict(checkpoint['student_state_dict'])
+    student.load_state_dict(checkpoint['student_state_dict'],state_dict=False)
     student.eval()
 
     # 2. Prepare the training and validation datasets
