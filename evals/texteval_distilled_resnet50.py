@@ -102,15 +102,15 @@ def main():
     backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
     teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = backbone.num_features
-    projector = nn.Linear(teacher_feature_dim, student_feature_dim).to(DEVICE)
+    projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
 
     # Load checkpoint and filter state_dict
     print(f"Loading checkpoint from {args.checkpoint} ...")
     checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
     backbone_state_dict = filter_state_dict(checkpoint['backbone_state_dict'])
     projector_state_dict = filter_state_dict(checkpoint['projector_state_dict'])
-    backbone.load_state_dict(backbone_state_dict)
-    projector.load_state_dict(projector_state_dict)
+    backbone.load_state_dict(backbone_state_dict,strict=False)
+    projector.load_state_dict(projector_state_dict,strict=False)
 
     # Run zero-shot validation
     print("Running zero-shot validation...")
