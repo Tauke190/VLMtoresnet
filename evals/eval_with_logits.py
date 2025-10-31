@@ -48,17 +48,20 @@ def get_student_features(backbone, images):
     pooled_features = backbone.global_pool(feature_map)
     return pooled_features
 
+total_similarity = 0.0
+total_samples = 0
+
 with torch.no_grad():
     for images, _ in val_loader:
         images = images.to(DEVICE)
-        # CLIP logits
         clip_features = teacher.encode_image(images).float()
         clip_features = clip_features / clip_features.norm(dim=-1, keepdim=True)
-        # Student logits
         student_features = get_student_features(backbone, images)
         projected_features = projector(student_features)
         projected_features = projected_features / projected_features.norm(dim=-1, keepdim=True)
-        # Cosine similarity
         similarity = torch.nn.functional.cosine_similarity(projected_features, clip_features, dim=-1)
-        print("Cosine similarity between student and CLIP logits:", similarity.cpu().numpy())
-        break  # Remove break to process all batches
+        total_similarity += similarity.sum().item()
+        total_samples += similarity.size(0)
+
+average_similarity = total_similarity / total_samples
+print(f"Average cosine similarity between student and CLIP logits: {average_similarity:.4f}")
