@@ -17,6 +17,7 @@ import clip
 import time
 import random
 import numpy as np
+from torch.cuda.amp import autocast, GradScaler
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.15
@@ -28,9 +29,9 @@ TRAIN_SUBSET_RATIO = 0.15
 TRAIN_DIR = '~/data/datasets/imagenet/train'
 VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
-BATCH_SIZE = 32
-LEARNING_RATE = 1e-4
-NUM_EPOCHS = 10
+BATCH_SIZE = 64
+LEARNING_RATE = 1e-3
+NUM_EPOCHS = 90
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 EARLY_STOPPING_PATIENCE = 3
 EARLY_STOPPING_MIN_DELTA = 1e-4
@@ -190,6 +191,8 @@ def run_distillation():
         best_loss = float('inf')
         epochs_no_improve = 0
 
+        scaler = GradScaler()
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
             val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
@@ -209,18 +212,19 @@ def run_distillation():
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
-                teacher_features = get_teacher_features(teacher, images).float()
-                student_features = get_student_features(backbone, images)
-                projected_student_features = projector(student_features)
-                # Normalize both features before computing loss
-                teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
-                projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
-                loss_distill = distill_loss_fn(projected_student_features, teacher_features)
-                total_loss = loss_distill
+                with autocast():
+                    teacher_features = get_teacher_features(teacher, images).float()
+                    student_features = get_student_features(backbone, images)
+                    projected_student_features = projector(student_features)
+                    teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
+                    projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+                    loss_distill = distill_loss_fn(projected_student_features, teacher_features)
+                    total_loss = loss_distill
 
                 optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
+                scaler.scale(total_loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 running_loss += total_loss.item()
 
                 if i == 999:
