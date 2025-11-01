@@ -20,7 +20,7 @@ import numpy as np
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.15
-VAL_WITHIN_TRAIN_RATIO = 0.20  # 20% of the 15% subset for validation
+VAL_RATIO_WITHIN_SUBSET = 0.20  # 20% of the 15% subset for validation
 
 # For cluster server
 
@@ -32,7 +32,7 @@ VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 EARLY_STOPPING_PATIENCE = 3
@@ -170,7 +170,6 @@ def run_distillation():
         print(f"Found {num_classes} classes in the dataset.")
 
         # --- Step 1: Take 15% subset from training set ---
-        # 1.28M * 0.15 ≈ 192,000 images
         targets = base_train.targets
         class_to_indices = {}
         for idx, t in enumerate(targets):
@@ -184,16 +183,15 @@ def run_distillation():
                 selected_indices.append(idxs[p])
 
         # --- Step 2: Split 15% subset into train/val ---
-        # Reserve 20% of the 15% subset for validation (~32k if 192k total)
         random.shuffle(selected_indices)
-        val_split = int(len(selected_indices) * VAL_WITHIN_TRAIN_RATIO)
-        train_indices = selected_indices[val_split:]   # ~160k
-        val_indices_within_train = selected_indices[:val_split]  # ~32k
+        val_split = int(len(selected_indices) * VAL_RATIO_WITHIN_SUBSET)
+        train_indices = selected_indices[val_split:]
+        val_indices_within_train = selected_indices[:val_split]
 
         train_dataset = Subset(base_train, train_indices)
         val_dataset_within_train = Subset(base_train, val_indices_within_train)
 
-        print(f"Using {len(train_indices)} images for training and {len(val_indices_within_train)} images for validation (from 15% subset).")
+        print(f"Using {len(train_indices)} images for training and {len(val_indices_within_train)} images for validation (from 15% subset, 10% val).")
 
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
         val_loader_within_train = DataLoader(val_dataset_within_train, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
