@@ -50,10 +50,10 @@ def linear_evaluation(model_path, dataset):
 
     # 2. Prepare the training and validation datasets
     if dataset == "imagenet":
-        # train_dir = '/home/av354855/data/datasets/imagenet/train'
-        # val_dir = '/home/av354855/data/datasets/imagenet/val'
-        train_dir = '/home/c3-0/datasets/ImageNet/train'
-        val_dir = '/home/c3-0/datasets/ImageNet/validation'
+        train_dir = '/home/av354855/data/datasets/imagenet/train'
+        val_dir = '/home/av354855/data/datasets/imagenet/val'
+        # train_dir = '/home/c3-0/datasets/ImageNet/train'
+        # val_dir = '/home/c3-0/datasets/ImageNet/validation'
     elif dataset == "oxfordpet":
         train_dir = '/home/av354855/data/datasets/oxford_pet/train'
         val_dir = '/home/av354855/data/datasets/oxford_pet/val'
@@ -112,7 +112,8 @@ def linear_evaluation(model_path, dataset):
     # 6. Evaluate the linear classifier
     print("Evaluating linear classifier...")
     classifier.eval()
-    correct = 0
+    top1_correct = 0
+    top5_correct = 0
     total = 0
 
     with torch.no_grad():
@@ -122,11 +123,21 @@ def linear_evaluation(model_path, dataset):
 
             outputs = classifier(inputs)
             _, predicted = outputs.max(1)
-            correct += predicted.eq(labels).sum().item()
+            top1_correct += predicted.eq(labels).sum().item()
+
+            # Top-5 accuracy
+            maxk = min(5, outputs.size(1))
+            _, top5_pred = outputs.topk(maxk, 1, True, True)  # [batch_size, 5]
+            top5_pred = top5_pred.t()  # [5, batch_size]
+            correct_matrix = top5_pred.eq(labels.view(1, -1).expand_as(top5_pred))
+            top5_correct += correct_matrix.sum().item()
+
             total += labels.size(0)
 
-    val_acc = 100. * correct / total
-    print(f"Validation Accuracy: {val_acc:.2f}%")
+    top1_acc = 100. * top1_correct / total
+    top5_acc = 100. * top5_correct / total
+    print(f"Validation Top-1 Accuracy: {top1_acc:.2f}%")
+    print(f"Validation Top-5 Accuracy: {top5_acc:.2f}%")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Linear Probe Evaluation")
