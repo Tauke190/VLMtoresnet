@@ -131,8 +131,8 @@ if __name__ == "__main__":
     params = Params()
     print(params, params.batch_size)
 
-    training_folder_name = os.path.expanduser(TRAIN_DIR)
-    val_folder_name = os.path.expanduser(VAL_DIR)
+    training_folder_name = TRAIN_DIR
+    val_folder_name = VAL_DIR
 
     train_transformation = transforms.Compose([
             transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BILINEAR),  # remove antialias for compatibility
