@@ -83,8 +83,9 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
         if batch % 100 == 0:
             current_loss = loss.item()
             progress_bar.set_postfix({"loss": current_loss, "progress": f"{(batch+1)*batch_size}/{size}"})
-            if writer is not None:
-                writer.add_scalar('training loss', current_loss, step)
+            # TensorBoard disabled:
+            # if writer is not None:
+            #     writer.add_scalar('training loss', current_loss, step)
             logger.info(f"Batch {batch+1}: loss={current_loss:.6f}, progress={(batch+1)*batch_size}/{size}")
 
     epoch_time = time.time() - start0
@@ -117,11 +118,12 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
     top5_accuracy = (100 * correct_top5 / size) if (calc_acc5 and size > 0) else None
 
     step = epoch * len(train_dataloader.dataset)
-    if writer is not None:
-        writer.add_scalar('test loss', test_loss, step)
-        writer.add_scalar('test accuracy', accuracy, step)
-        if calc_acc5:
-            writer.add_scalar('test accuracy5', top5_accuracy, step)
+    # TensorBoard disabled:
+    # if writer is not None:
+    #     writer.add_scalar('test loss', test_loss, step)
+    #     writer.add_scalar('test accuracy', accuracy, step)
+    #     if calc_acc5:
+    #         writer.add_scalar('test accuracy5', top5_accuracy, step)
 
     logger.info(f"Test Results - Epoch {epoch+1}: Accuracy={accuracy:.2f}%, Avg loss={test_loss:.6f}")
     if calc_acc5:
@@ -221,10 +223,11 @@ if __name__ == "__main__":
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         assert params == checkpoint["params"]
 
-    from torch.utils.tensorboard import SummaryWriter
+    # from torch.utils.tensorboard import SummaryWriter
     from pathlib import Path
     Path(os.path.join("checkpoints", params.name)).mkdir(parents=True, exist_ok=True)
-    writer = SummaryWriter('runs/' + params.name)
+    # writer = SummaryWriter('runs/' + params.name)
+    writer = None  # TensorBoard disabled
     test(val_loader, model, loss_fn, epoch=0, writer=writer, train_dataloader=train_loader, calc_acc5=True)
     print("Starting training")
     for epoch in range(start_epoch, 10):   
