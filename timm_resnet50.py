@@ -56,7 +56,7 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE,
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=8, pin_memory=True)
 
 # ==== Model ====
-model = models.resnet50(weights=None, num_classes=NUM_CLASSES).to(DEVICE)
+model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
 
 # ==== Optimizer & Scheduler ====
 optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
