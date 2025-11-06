@@ -23,11 +23,11 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
 EPOCHS = 50
 
@@ -63,37 +63,32 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
     size = len(dataloader.dataset)
     model.train()
     start0 = time.time()
+    running_loss = 0.0
+    running_correct = 0
+    total_samples = 0
 
-    # Use tqdm for progress visualization
-    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}", file=sys.stdout, dynamic_ncols=False, ascii=True)
-
-    for batch, (X, y) in progress_bar:
+    for batch, (X, y) in enumerate(dataloader):
         X, y = X.to(device), y.to(device)
-
-        # Compute prediction error
         pred = model(X)
         loss = loss_fn(pred, y)
-
-        # Backpropagation
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-        batch_size = len(X)
-        step = epoch * size + (batch + 1) * batch_size
+        running_loss += loss.item() * X.size(0)
+        running_correct += (pred.argmax(1) == y).sum().item()
+        total_samples += X.size(0)
 
-        # Update tqdm description and writer
         if batch % 100 == 0:
-            current_loss = loss.item()
-            progress_bar.set_postfix({"loss": current_loss, "progress": f"{(batch+1)*batch_size}/{size}"})
-            # TensorBoard disabled:
-            # if writer is not None:
-            #     writer.add_scalar('training loss', current_loss, step)
-            logger.info(f"Batch {batch+1}: loss={current_loss:.6f}, progress={(batch+1)*batch_size}/{size}")
+            batch_loss = running_loss / total_samples if total_samples > 0 else 0.0
+            batch_acc = 100.0 * running_correct / total_samples if total_samples > 0 else 0.0
+            logger.info(f"Epoch {epoch+1} Batch {batch}: loss={batch_loss:.6f}, acc={batch_acc:.2f}%")
             sys.stdout.flush()
 
+    epoch_loss = running_loss / total_samples if total_samples > 0 else 0.0
+    epoch_acc = 100.0 * running_correct / total_samples if total_samples > 0 else 0.0
     epoch_time = time.time() - start0
-    logger.info(f"Epoch {epoch+1} completed in {epoch_time:.2f} seconds")
+    logger.info(f"Epoch {epoch+1} completed: loss={epoch_loss:.6f}, acc={epoch_acc:.2f}%, time={epoch_time:.2f}s")
     sys.stdout.flush()
 
 
