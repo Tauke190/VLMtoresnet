@@ -52,8 +52,8 @@ val_transform = transforms.Compose([
 train_dataset = datasets.ImageFolder(TRAIN_DIR, transform=train_transform)
 val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
 
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=8, pin_memory=True)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True)
 
 # ==== Model ====
 model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
