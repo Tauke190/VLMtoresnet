@@ -22,11 +22,13 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
+
+EPOCHS = 50
 
 ## Set Hyperparameters
 class Params:
@@ -230,7 +232,7 @@ if __name__ == "__main__":
     writer = None  # TensorBoard disabled
     test(val_loader, model, loss_fn, epoch=0, writer=writer, train_dataloader=train_loader, calc_acc5=True)
     print("Starting training")
-    for epoch in range(start_epoch, 10):   
+    for epoch in range(start_epoch, EPOCHS):
         print(f"Epoch {epoch}")
         train(train_loader, model, loss_fn, optimizer, epoch=epoch, writer=writer)
         checkpoint = {
