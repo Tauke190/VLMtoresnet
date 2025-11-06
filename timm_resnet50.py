@@ -20,7 +20,7 @@ VAL_DIR = '~/data/datasets/imagenet/val'
 
 
 # ==== Config ====
-BATCH_SIZE = 256
+BATCH_SIZE = 2048
 EPOCHS = 600
 LR = 5e-3
 WEIGHT_DECAY = 0.01
