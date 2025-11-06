@@ -11,150 +11,161 @@ from timm.optim.lamb import Lamb
 import os
 import time
 
-# ==== Paths ====
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# ==== DDP Imports ====
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+def setup_ddp():
+    dist.init_process_group(backend="nccl")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    return local_rank
 
+def cleanup_ddp():
+    dist.destroy_process_group()
 
-# ==== Config ====
-BATCH_SIZE = 2048
-EPOCHS = 600
-LR = 5e-3
-WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 5
-NUM_CLASSES = 1000  # for ImageNet
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+def main():
+    # ==== DDP Setup ====
+    local_rank = setup_ddp()
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
 
-script_name = os.path.splitext(os.path.basename(__file__))[0]
+    # Print GPU info (only on rank 0)
+    if rank == 0:
+        print(f"Distributed training with {world_size} GPUs detected.")
 
-# ==== Data Augmentation (A1) ====
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.08, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandAugment(num_ops=7, magnitude=5),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225]),
-])
+    # ==== Paths ====
+    # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+    # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+    TRAIN_DIR = '~/data/datasets/imagenet/train'
+    VAL_DIR = '~/data/datasets/imagenet/val'
 
-val_transform = transforms.Compose([
-    transforms.Resize(int(224 / 0.95)),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225]),
-])
+    # ==== Config ====
+    BATCH_SIZE = 256 // world_size  # Split batch across GPUs
+    EPOCHS = 600
+    LR = 5e-3
+    WEIGHT_DECAY = 0.01
+    WARMUP_EPOCHS = 5
+    NUM_CLASSES = 1000  # for ImageNet
+    DEVICE = f'cuda:{local_rank}'
 
-# ==== Dataset ====
-train_dataset = datasets.ImageFolder(TRAIN_DIR, transform=train_transform)
-val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
 
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True)
+    # ==== Data Augmentation (A1) ====
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224, scale=(0.08, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandAugment(num_ops=7, magnitude=5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
+    ])
 
-# ==== Model ====
-model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
+    val_transform = transforms.Compose([
+        transforms.Resize(int(224 / 0.95)),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
+    ])
 
-# ==== Optimizer & Scheduler ====
-optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    # ==== Dataset ====
+    train_dataset = datasets.ImageFolder(TRAIN_DIR, transform=train_transform)
+    val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
 
-# ==== Loss ====
-criterion = BinaryCrossEntropy()
-mixup_fn = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0, prob=1.0, num_classes=NUM_CLASSES)
+    # ==== Distributed Sampler ====
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
 
-# ==== EMA ====
-ema = ModelEma(model, decay=0.9999)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, sampler=train_sampler
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, sampler=val_sampler
+    )
 
-# ==== AMP ====
-scaler = GradScaler()
+    # ==== Model ====
+    model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
+    model = DDP(model, device_ids=[local_rank])
 
-# ==== Validation Function ====
-def evaluate(model, dataloader, device, topk=(1, 5)):
-    model.eval()
-    top1_correct, top5_correct, total = 0, 0, 0
-    with torch.no_grad():
-        for images, targets in dataloader:
-            images, targets = images.to(device), targets.to(device)
-            outputs = model(images)
-            _, pred = outputs.topk(max(topk), 1, True, True)  # [batch, k]
-            pred = pred.t()
-            correct = pred.eq(targets.view(1, -1).expand_as(pred))
-            top1_correct += correct[:1].reshape(-1).float().sum(0).item()
-            top5_correct += correct[:5].reshape(-1).float().sum(0).item()
-            total += targets.size(0)
-    top1 = 100. * top1_correct / total
-    top5 = 100. * top5_correct / total
-    return top1, top5
+    # ==== Optimizer & Scheduler ====
+    optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
-# ==== Subset for Training Evaluation (fixed at start) ====
-subset_size = min(2048, len(train_dataset))
-subset_indices = torch.randperm(len(train_dataset))[:subset_size]
-subset_sampler = torch.utils.data.SubsetRandomSampler(subset_indices)
-subset_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=512, sampler=subset_sampler, num_workers=4, pin_memory=True
-)
+    # ==== Loss ====
+    criterion = BinaryCrossEntropy()
+    mixup_fn = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0, prob=1.0, num_classes=NUM_CLASSES)
 
-# ==== Training Loop ====
-first_100_time, first_1000_time = None, None
-total_batches = len(train_loader)
-for epoch in range(EPOCHS):
-    model.train()
-    running_loss = 0.0
-    batch_start_time = time.time()
-    for batch_idx, (images, targets) in enumerate(train_loader):
-        images, targets = images.to(DEVICE), targets.to(DEVICE)
-        images, targets = mixup_fn(images, targets)
+    # ==== EMA ====
+    ema = ModelEma(model, decay=0.9999, device=DEVICE)
 
-        optimizer.zero_grad()
-        with autocast():
-            outputs = model(images)
-            loss = criterion(outputs, targets)
+    # ==== AMP ====
+    scaler = GradScaler()
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+    # ==== Validation Function ====
+    def evaluate(model, dataloader, device, topk=(1, 5)):
+        model.eval()
+        top1_correct, top5_correct, total = 0, 0, 0
+        with torch.no_grad():
+            for images, targets in dataloader:
+                images, targets = images.to(device), targets.to(device)
+                outputs = model(images)
+                _, pred = outputs.topk(max(topk), 1, True, True)  # [batch, k]
+                pred = pred.t()
+                correct = pred.eq(targets.view(1, -1).expand_as(pred))
+                top1_correct += correct[:1].reshape(-1).float().sum(0).item()
+                top5_correct += correct[:5].reshape(-1).float().sum(0).item()
+                total += targets.size(0)
+        top1 = 100. * top1_correct / total
+        top5 = 100. * top5_correct / total
+        return top1, top5
 
-        ema.update(model)
+    # ==== Training Loop ====
+    for epoch in range(EPOCHS):
+        train_sampler.set_epoch(epoch)  # Shuffle data differently at each epoch
+        model.train()
+        running_loss = 0.0
+        batch_start_time = time.time()
+        for batch_idx, (images, targets) in enumerate(train_loader):
+            images, targets = images.to(DEVICE), targets.to(DEVICE)
+            images, targets = mixup_fn(images, targets)
 
-        running_loss += loss.item()
+            optimizer.zero_grad()
+            with autocast():
+                outputs = model(images)
+                loss = criterion(outputs, targets)
 
-        # Timing for ETA estimation
-        if batch_idx == 99:
-            first_100_time = time.time() - batch_start_time
-            est_total_time_100 = (first_100_time / 100) * total_batches * EPOCHS
-            print(f"[ETA] Based on first 100 batches: ~{est_total_time_100/3600:.2f} hours for full training")
-        if batch_idx == 999:
-            first_1000_time = time.time() - batch_start_time
-            est_total_time_1000 = (first_1000_time / 1000) * total_batches * EPOCHS
-            print(f"[ETA] Based on first 1000 batches: ~{est_total_time_1000/3600:.2f} hours for full training")
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        # Print average loss every 100 batches
-        if (batch_idx + 1) % 100 == 0:
-            avg_loss = running_loss / 100
-            print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
-            running_loss = 0.0
+            ema.update(model)
 
-    scheduler.step()
+            running_loss += loss.item()
 
-    # Evaluate on the fixed subset of the training set at the end of each epoch
-    top1, top5 = evaluate(ema.module, subset_loader, DEVICE)
-    print(f"[Epoch {epoch+1}] Train subset Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
+            # Print average loss every 100 batches (only on rank 0)
+            if (batch_idx + 1) % 100 == 0 and rank == 0:
+                avg_loss = running_loss / 100
+                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
+                running_loss = 0.0
 
-    print(f"Epoch [{epoch+1}/{EPOCHS}] - Last Batch Loss: {loss.item():.4f}")
+        scheduler.step()
 
-    # ==== Save Checkpoint ====
-    checkpoint = {
-        'epoch': epoch + 1,
-        'model_state_dict': model.state_dict(),    }
-    checkpoint_path = f"{script_name}_epoch{epoch+1}.pth"
-    torch.save(checkpoint, checkpoint_path)
-    print(f"Checkpoint saved: {checkpoint_path}")
+        # Evaluate on validation set (only on rank 0)
+        if rank == 0:
+            top1, top5 = evaluate(ema.module, val_loader, DEVICE)
+            print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
-# ==== Validation ====
-top1, top5 = evaluate(ema.module, val_loader, DEVICE)
-print(f"Validation Top-1 Accuracy: {top1:.2f}%")
-print(f"Validation Top-5 Accuracy: {top5:.2f}%")
+            # ==== Save Checkpoint ====
+            checkpoint = {
+                'epoch': epoch + 1,
+                'model_state_dict': model.module.state_dict(),
+            }
+            checkpoint_path = f"{script_name}_epoch{epoch+1}.pth"
+            torch.save(checkpoint, checkpoint_path)
+            print(f"Checkpoint saved: {checkpoint_path}")
+
+    cleanup_ddp()
+
+if __name__ == "__main__":
+    main()
