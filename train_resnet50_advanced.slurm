@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=logit_distillation_train
-#SBATCH --output=logit_distillation_%j.out
-#SBATCH --error=logit_distillation_%j.err
+#SBATCH --job-name=timm_resnet50
+#SBATCH --output=timm_resnet50%j.out
+#SBATCH --error=timm_resnet50%j.err
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:1
 #SBATCH --mem=48G
 #SBATCH --time=48:00:00
 #SBATCH --constraint=ampere        # ✅ request Ampere GPUs only
