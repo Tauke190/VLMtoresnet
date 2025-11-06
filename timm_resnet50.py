@@ -63,7 +63,7 @@ optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 # ==== Loss ====
-criterion = BinaryCrossEntropy(label_smoothing=0.1)
+criterion = BinaryCrossEntropy()
 mixup_fn = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0, prob=1.0, num_classes=NUM_CLASSES)
 
 # ==== EMA ====
