@@ -7,6 +7,7 @@ warnings.filterwarnings('ignore')
 import os
 import time
 from math import sqrt
+import sys
 
 ## Import classes from other files
 from models.resnet50 import ResNet50
@@ -22,11 +23,11 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
 EPOCHS = 50
 
@@ -64,7 +65,7 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
     start0 = time.time()
 
     # Use tqdm for progress visualization
-    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}")
+    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}", file=sys.stdout, dynamic_ncols=False, ascii=True)
 
     for batch, (X, y) in progress_bar:
         X, y = X.to(device), y.to(device)
@@ -89,9 +90,11 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
             # if writer is not None:
             #     writer.add_scalar('training loss', current_loss, step)
             logger.info(f"Batch {batch+1}: loss={current_loss:.6f}, progress={(batch+1)*batch_size}/{size}")
+            sys.stdout.flush()
 
     epoch_time = time.time() - start0
     logger.info(f"Epoch {epoch+1} completed in {epoch_time:.2f} seconds")
+    sys.stdout.flush()
 
 
 def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=False):
@@ -101,7 +104,7 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
     test_loss, correct, correct_top5 = 0, 0, 0
 
     # Use tqdm for progress visualization
-    progress_bar = tqdm(dataloader, desc=f"Testing Epoch {epoch+1}")
+    progress_bar = tqdm(dataloader, desc=f"Testing Epoch {epoch+1}", file=sys.stdout, dynamic_ncols=False, ascii=True)
 
     with torch.no_grad():
         for X, y in progress_bar:
@@ -128,8 +131,10 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
     #         writer.add_scalar('test accuracy5', top5_accuracy, step)
 
     logger.info(f"Test Results - Epoch {epoch+1}: Accuracy={accuracy:.2f}%, Avg loss={test_loss:.6f}")
+    sys.stdout.flush()
     if calc_acc5:
         logger.info(f"Top-5 Accuracy={top5_accuracy:.2f}%")
+        sys.stdout.flush()
 
 if __name__ == "__main__":
     params = Params()
@@ -180,15 +185,12 @@ if __name__ == "__main__":
 
     # device
     print("Libraries imported - ready to use PyTorch", torch.__version__)
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if torch.backends.mps.is_available()
-        else "cpu"
-    )
+    sys.stdout.flush()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"Using {device} device")
+    sys.stdout.flush()
 
     ## Testing with pre-trained model : only to be done once
     ## testing a pretrained model to validate correctness of our dataset, transform and metrics code
@@ -215,9 +217,12 @@ if __name__ == "__main__":
     start_epoch = 0
     checkpoint_path = os.path.join("checkpoints", params.name, f"checkpoint.pth")
     print(checkpoint_path)
+    sys.stdout.flush()
+
     if resume_training and os.path.exists(checkpoint_path):
         print("Resuming training from checkpoint")
         print(checkpoint_path)
+        sys.stdout.flush()
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model"])
         start_epoch = checkpoint["epoch"] + 1
@@ -232,8 +237,10 @@ if __name__ == "__main__":
     writer = None  # TensorBoard disabled
     test(val_loader, model, loss_fn, epoch=0, writer=writer, train_dataloader=train_loader, calc_acc5=True)
     print("Starting training")
+    sys.stdout.flush()
     for epoch in range(start_epoch, EPOCHS):
         print(f"Epoch {epoch}")
+        sys.stdout.flush()
         train(train_loader, model, loss_fn, optimizer, epoch=epoch, writer=writer)
         checkpoint = {
             "model": model.state_dict(),

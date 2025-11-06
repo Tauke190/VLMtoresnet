@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=logit_distillation_train
-#SBATCH --output=logit_distillation_%j.out
-#SBATCH --error=logit_distillation_%j.err
+#SBATCH --job-name=resnettrain
+#SBATCH --output=resnettrain%j.out
+#SBATCH --error=resnettrain%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
 #SBATCH --mem=8G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 
 # Load necessary modules
 module load anaconda3
