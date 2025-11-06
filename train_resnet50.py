@@ -98,11 +98,8 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
     model.eval()
     test_loss, correct, correct_top5 = 0, 0, 0
 
-    # Use tqdm for progress visualization
-    progress_bar = tqdm(dataloader, desc=f"Testing Epoch {epoch+1}", file=sys.stdout, dynamic_ncols=False, ascii=True)
-
     with torch.no_grad():
-        for X, y in progress_bar:
+        for X, y in dataloader:
             X, y = X.to(device), y.to(device)
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
@@ -118,13 +115,6 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
     top5_accuracy = (100 * correct_top5 / size) if (calc_acc5 and size > 0) else None
 
     step = epoch * len(train_dataloader.dataset)
-    # TensorBoard disabled:
-    # if writer is not None:
-    #     writer.add_scalar('test loss', test_loss, step)
-    #     writer.add_scalar('test accuracy', accuracy, step)
-    #     if calc_acc5:
-    #         writer.add_scalar('test accuracy5', top5_accuracy, step)
-
     logger.info(f"Test Results - Epoch {epoch+1}: Accuracy={accuracy:.2f}%, Avg loss={test_loss:.6f}")
     sys.stdout.flush()
     if calc_acc5:
