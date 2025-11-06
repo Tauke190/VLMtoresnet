@@ -1,8 +1,0 @@
-Rsync
-rsync -avh --progress av354855@newton.ist.ucf.edu:~/commands.txt ~/
-
-Makes list of subset of Imagenet for extraction or Rsyncing
-ssh av354855@newton.ist.ucf.edu 'for d in /datasets/ImageNet/data/winter21_whole/*/; do ls "$d" | shuf -n 10 | sed "s|^|$d|" ; done' > imagenet_subset.txt
-
-Imagenet demo
-python demo/image_demo.py demo/bird.JPEG configs/imagenet/resnet50_8xb32_in1k_strong_aug_coslr_300.py --checkpoint resnet50_scalekd_e300_new.pth
