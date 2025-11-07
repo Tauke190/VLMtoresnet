@@ -84,7 +84,7 @@ def main():
         train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True, sampler=train_sampler
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, sampler=val_sampler
+        val_dataset, batch_size=512, shuffle=False, num_workers=0, pin_memory=True, sampler=val_sampler
     )
     print("After DataLoader", flush=True)
 
@@ -152,12 +152,19 @@ def main():
 
             optimizer.zero_grad()
             with autocast():
+                print("Before forward", flush=True)
                 outputs = model(images)
+                print("After forward", flush=True)
+                print("Before loss", flush=True)
                 loss = criterion(outputs, targets)
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+                print("After loss", flush=True)
+                print("Before backward", flush=True)
+                scaler.scale(loss).backward()
+                print("After backward", flush=True)
+                print("Before step", flush=True)
+                scaler.step(optimizer)
+                scaler.update()
+                print("After step", flush=True)
 
             ema.update(model)
 
