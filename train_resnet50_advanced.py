@@ -27,6 +27,7 @@ def cleanup_ddp():
 def main():
     # ==== DDP Setup ====
     local_rank = setup_ddp()
+    print(f"Process started with local_rank={local_rank}", flush=True)
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 

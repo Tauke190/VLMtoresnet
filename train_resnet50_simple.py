@@ -33,7 +33,7 @@ EPOCHS = 50
 ## Set Hyperparameters
 class Params:
     def __init__(self):
-        self.batch_size = 32
+        self.batch_size = 256
         self.name = "resnet_50_sgd1"
         self.workers = 4
         self.lr = 0.1
