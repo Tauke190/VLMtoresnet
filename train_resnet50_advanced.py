@@ -125,21 +125,7 @@ def main():
         top5 = 100. * top5_correct / total
         return top1, top5
 
-    # ==== Quick Validation on Subset of Training Data (only on rank 0) ====
-    if rank == 0:
-        subset_indices = list(range(min(1000, len(train_dataset))))
-        subset_sampler = torch.utils.data.SubsetRandomSampler(subset_indices)
-        subset_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=256, sampler=subset_sampler, num_workers=0, pin_memory=True
-        )
-        print("Running quick validation on a subset of the training data (untrained model)...")
-        if isinstance(model, DDP):
-            eval_model = model.module
-        else:
-            eval_model = model
-        top1, top5 = evaluate(eval_model, subset_loader, DEVICE)
-        print(f"Subset Train Data (Untrained Model) - Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
-
+   
     # ==== Training Loop ====
     print("Before first batch", flush=True)
     for batch_idx, (images, targets) in enumerate(train_loader):
