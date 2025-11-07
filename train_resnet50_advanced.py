@@ -109,9 +109,10 @@ def main():
     # ==== Validation Function ====
     def evaluate(model, dataloader, device, topk=(1, 5)):
         model.eval()
-        top1_correct, top5_correct, total = 0, 0, 0
+        print("Starting evaluation...", flush=True)
         with torch.no_grad():
-            for images, targets in dataloader:
+            for i, (images, targets) in enumerate(dataloader):
+                print(f"Eval batch {i}", flush=True)
                 images, targets = images.to(device), targets.to(device)
                 outputs = model(images)
                 _, pred = outputs.topk(max(topk), 1, True, True)  # [batch, k]
