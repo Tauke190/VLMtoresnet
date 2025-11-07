@@ -22,12 +22,11 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
 EPOCHS = 50
 
@@ -223,9 +222,11 @@ if __name__ == "__main__":
     test(val_loader, model, loss_fn, epoch=0, writer=writer, train_dataloader=train_loader, calc_acc5=True)
     print("Starting training")
     sys.stdout.flush()
+    epoch_times = []
     for epoch in range(start_epoch, EPOCHS):
         print(f"Epoch {epoch}")
         sys.stdout.flush()
+        start_time = time.time()
         train(train_loader, model, loss_fn, optimizer, epoch=epoch, writer=writer)
         checkpoint = {
             "model": model.state_dict(),
@@ -238,3 +239,10 @@ if __name__ == "__main__":
         torch.save(checkpoint, os.path.join("checkpoints", params.name, f"checkpoint.pth"))
         lr_scheduler.step()
         test(val_loader, model, loss_fn, epoch + 1, writer, train_dataloader=train_loader, calc_acc5=True)
+        epoch_time = time.time() - start_time
+        epoch_times.append(epoch_time)
+        avg_epoch_time = np.mean(epoch_times)
+        est_100 = avg_epoch_time * 100
+        est_1000 = avg_epoch_time * 1000
+        print(f"Avg epoch time: {avg_epoch_time:.2f}s | Est. time for 100 epochs: {est_100/3600:.2f}h | Est. time for 1000 epochs: {est_1000/3600:.2f}h")
+        sys.stdout.flush()
