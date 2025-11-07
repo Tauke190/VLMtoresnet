@@ -94,7 +94,7 @@ def main():
     print(f"[Rank {rank}] Initializing model...", flush=True)
     model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
     print(f"[Rank {rank}] Model initialized. Wrapping with DDP...", flush=True)
-    model = DDP(model, device_ids=[local_rank])
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
     print(f"[Rank {rank}] Model wrapped with DDP.", flush=True)
 
     # ==== Optimizer & Scheduler ====
