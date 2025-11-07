@@ -1,0 +1,11 @@
+import os, torch, torch.distributed as dist
+os.environ.setdefault("NCCL_DEBUG","INFO")
+dist.init_process_group("nccl")
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)
+print(f"Rank {dist.get_rank()} using cuda:{local_rank}")
+model = torch.nn.Linear(10, 10).to(f"cuda:{local_rank}")
+model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
+print(f"Rank {dist.get_rank()} DDP wrap done")
+dist.barrier()
+print(f"Rank {dist.get_rank()} done")

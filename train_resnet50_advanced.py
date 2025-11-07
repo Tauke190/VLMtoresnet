@@ -114,7 +114,9 @@ def main():
     print(f"[Rank {rank}] Initializing model...", flush=True)
     model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
     print(f"[Rank {rank}] Before DDP wrap", flush=True)
-    model = DDP(model, device_ids=[local_rank], broadcast_buffers=False)  # removed find_unused_parameters/output_device
+    print(f"[Rank {rank}] local_rank={local_rank}, CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}, torch.cuda.current_device()={torch.cuda.current_device()}, device_count={torch.cuda.device_count()}", flush=True)
+    print(f"[Rank {rank}] Model device: {next(model.parameters()).device}", flush=True)
+    model = DDP(model, device_ids=[local_rank], broadcast_buffers=False)
     print(f"[Rank {rank}] After DDP wrap", flush=True)
 
     # Comm sanity test
