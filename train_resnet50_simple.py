@@ -66,6 +66,8 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
     running_correct = 0
     total_samples = 0
 
+    batch_times = []
+    batch_start = time.time()
     for batch, (X, y) in enumerate(dataloader):
         X, y = X.to(device), y.to(device)
         pred = model(X)
@@ -77,6 +79,23 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
         running_loss += loss.item() * X.size(0)
         running_correct += (pred.argmax(1) == y).sum().item()
         total_samples += X.size(0)
+
+        batch_end = time.time()
+        batch_times.append(batch_end - batch_start)
+        batch_start = batch_end
+
+        if batch == 99:
+            avg_100 = np.mean(batch_times[:100])
+            est_epoch_100 = avg_100 * len(dataloader)
+            print(f"Estimated time for one epoch (based on 100 batches): {est_epoch_100:.2f}s ({est_epoch_100/60:.2f}min)")
+            print(f"Estimated total training time for {EPOCHS} epochs: {est_epoch_100*EPOCHS/3600:.2f}h")
+            sys.stdout.flush()
+        if batch == 999:
+            avg_1000 = np.mean(batch_times[:1000])
+            est_epoch_1000 = avg_1000 * len(dataloader)
+            print(f"Estimated time for one epoch (based on 1000 batches): {est_epoch_1000:.2f}s ({est_epoch_1000/60:.2f}min)")
+            print(f"Estimated total training time for {EPOCHS} epochs: {est_epoch_1000*EPOCHS/3600:.2f}h")
+            sys.stdout.flush()
 
         if batch % 100 == 0:
             batch_loss = running_loss / total_samples if total_samples > 0 else 0.0
