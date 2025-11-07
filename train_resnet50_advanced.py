@@ -129,7 +129,7 @@ def main():
         subset_indices = list(range(min(1000, len(train_dataset))))
         subset_sampler = torch.utils.data.SubsetRandomSampler(subset_indices)
         subset_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=256, sampler=subset_sampler, num_workers=4, pin_memory=True
+            train_dataset, batch_size=256, sampler=subset_sampler, num_workers=0, pin_memory=True
         )
         print("Running quick validation on a subset of the training data (untrained model)...")
         top1, top5 = evaluate(model, subset_loader, DEVICE)
