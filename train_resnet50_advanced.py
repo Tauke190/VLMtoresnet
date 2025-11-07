@@ -88,11 +88,14 @@ def main():
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=512, shuffle=False, num_workers=0, pin_memory=True, sampler=val_sampler
     )
-    print("After DataLoader", flush=True)
+    print(f"[Rank {rank}] After DataLoader", flush=True)
 
     # ==== Model ====
+    print(f"[Rank {rank}] Initializing model...", flush=True)
     model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
+    print(f"[Rank {rank}] Model initialized. Wrapping with DDP...", flush=True)
     model = DDP(model, device_ids=[local_rank])
+    print(f"[Rank {rank}] Model wrapped with DDP.", flush=True)
 
     # ==== Optimizer & Scheduler ====
     optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
