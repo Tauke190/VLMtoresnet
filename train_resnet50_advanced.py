@@ -155,6 +155,11 @@ def main():
 
             running_loss += loss.item()
 
+            if (batch_idx + 1) == 1 and rank == 0:
+                avg_loss = running_loss / 100
+                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
+                running_loss = 0.0
+
             # Print average loss every 100 batches (only on rank 0)
             if (batch_idx + 1) % 100 == 0 and rank == 0:
                 avg_loss = running_loss / 100
