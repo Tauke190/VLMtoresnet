@@ -1,3 +1,12 @@
+import os
+# Set debug env (must be before init_process_group)
+os.environ.setdefault("NCCL_DEBUG", "INFO")
+os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
+os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
+# Optional fallback test:
+# os.environ.setdefault("NCCL_IB_DISABLE", "1")  # uncomment to rule out IB issues
+# os.environ.setdefault("NCCL_SOCKET_IFNAME", "eth0")  # set to your NIC if needed
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,9 +25,17 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 def setup_ddp():
-    dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ["LOCAL_RANK"])
+    import datetime
+    dist.init_process_group(
+        backend="nccl",
+        timeout=datetime.timedelta(minutes=10)
+    )
+    rank = dist.get_rank()
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    device_count = torch.cuda.device_count()
+    assert local_rank < device_count, f"LOCAL_RANK {local_rank} >= device_count {device_count}"
     torch.cuda.set_device(local_rank)
+    print(f"[rank {rank}] init done (local_rank={local_rank}, device_count={device_count})", flush=True)
     return local_rank
 
 def cleanup_ddp():
@@ -90,12 +107,25 @@ def main():
     )
     print(f"[Rank {rank}] After DataLoader", flush=True)
 
-    # ==== Model ====
+    dist.barrier()
+    if rank == 0:
+        print("All ranks reached post-DataLoader barrier", flush=True)
+
     print(f"[Rank {rank}] Initializing model...", flush=True)
     model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
-    print(f"[Rank {rank}] Model initialized. Wrapping with DDP...", flush=True)
-    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-    print(f"[Rank {rank}] Model wrapped with DDP.", flush=True)
+    print(f"[Rank {rank}] Before DDP wrap", flush=True)
+    model = DDP(model, device_ids=[local_rank], broadcast_buffers=False)  # removed find_unused_parameters/output_device
+    print(f"[Rank {rank}] After DDP wrap", flush=True)
+
+    # Comm sanity test
+    test = torch.full((1,), rank, device=DEVICE)
+    dist.all_reduce(test)
+    if rank == 0:
+        print(f"All-reduce sum={test.item()} (expected sum 0+...+{world_size-1})", flush=True)
+
+    dist.barrier()
+    if rank == 0:
+        print("All ranks passed post-DDP barrier", flush=True)
 
     # ==== Optimizer & Scheduler ====
     optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
