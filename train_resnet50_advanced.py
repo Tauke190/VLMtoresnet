@@ -26,8 +26,9 @@ def cleanup_ddp():
 
 def main():
     # ==== DDP Setup ====
+    print("Before DDP setup", flush=True)
     local_rank = setup_ddp()
-    print(f"Process started with local_rank={local_rank}", flush=True)
+    print("After DDP setup", flush=True)
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 
@@ -78,12 +79,14 @@ def main():
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
 
+    print("Before DataLoader", flush=True)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, sampler=train_sampler
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, sampler=val_sampler
     )
+    print("After DataLoader", flush=True)
 
     # ==== Model ====
     model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
@@ -133,6 +136,11 @@ def main():
         print(f"Subset Train Data (Untrained Model) - Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
     # ==== Training Loop ====
+    print("Before first batch", flush=True)
+    for batch_idx, (images, targets) in enumerate(train_loader):
+        print(f"Got batch {batch_idx}", flush=True)
+        break  # Just test the first batch
+
     for epoch in range(EPOCHS):
         train_sampler.set_epoch(epoch)  # Shuffle data differently at each epoch
         model.train()

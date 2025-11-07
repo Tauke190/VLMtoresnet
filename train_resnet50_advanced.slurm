@@ -2,9 +2,9 @@
 #SBATCH --job-name=timm_resnet50
 #SBATCH --output=timm_resnet50%j.out
 #SBATCH --error=timm_resnet50%j.err
-#SBATCH --ntasks=1
+#SBATCH --ntasks=2
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --mem=48G
 #SBATCH --time=48:00:00
 #SBATCH --constraint=ampere        # ✅ request Ampere GPUs only
@@ -23,7 +23,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u timm_resnet50.py
+torchrun --nproc_per_node=2 train_resnet50_advanced.py
 
 # 🧠 Log GPU info before training
 echo "===== GPU Information ====="
