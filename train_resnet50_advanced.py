@@ -81,7 +81,7 @@ def main():
 
     print("Before DataLoader", flush=True)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, sampler=train_sampler
+        train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True, sampler=train_sampler
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, sampler=val_sampler
