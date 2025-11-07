@@ -5,7 +5,7 @@ from torchvision import models, transforms, datasets
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from timm.data import Mixup
-from timm.loss import BinaryCrossEntropy
+from timm.loss import SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from timm.optim.lamb import Lamb
 import os
@@ -39,8 +39,10 @@ def main():
     # ==== Paths ====
     # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
     # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-    TRAIN_DIR = '~/data/datasets/imagenet/train'
-    VAL_DIR = '~/data/datasets/imagenet/val'
+    # TRAIN_DIR = '~/data/datasets/imagenet/train'
+    # VAL_DIR = '~/data/datasets/imagenet/val'
+    TRAIN_DIR = os.path.expanduser('~/data/datasets/imagenet/train')
+    VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
 
     # ==== Config ====
     BATCH_SIZE = 256 // world_size  # Split batch across GPUs
@@ -76,8 +78,8 @@ def main():
     val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
 
     # ==== Distributed Sampler ====
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, drop_last=True)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False, drop_last=False)
 
     print("Before DataLoader", flush=True)
     train_loader = torch.utils.data.DataLoader(
@@ -97,11 +99,13 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
     # ==== Loss ====
-    criterion = BinaryCrossEntropy()
+    # criterion = BinaryCrossEntropy()
+    criterion = SoftTargetCrossEntropy()
     mixup_fn = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0, prob=1.0, num_classes=NUM_CLASSES)
 
     # ==== EMA ====
-    ema = ModelEma(model, decay=0.9999, device=DEVICE)
+    # ema = ModelEma(model, decay=0.9999, device=DEVICE)
+    ema = ModelEma(model.module, decay=0.9999, device=DEVICE)
 
     # ==== AMP ====
     scaler = GradScaler()
@@ -109,11 +113,14 @@ def main():
     # ==== Validation Function ====
     def evaluate(model, dataloader, device, topk=(1, 5)):
         model.eval()
+        top1_correct = 0.0
+        top5_correct = 0.0
+        total = 0
         print("Starting evaluation...", flush=True)
         with torch.no_grad():
             for i, (images, targets) in enumerate(dataloader):
                 print(f"Eval batch {i}", flush=True)
-                images, targets = images.to(device), targets.to(device)
+                images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
                 outputs = model(images)
                 _, pred = outputs.topk(max(topk), 1, True, True)  # [batch, k]
                 pred = pred.t()
@@ -121,52 +128,43 @@ def main():
                 top1_correct += correct[:1].reshape(-1).float().sum(0).item()
                 top5_correct += correct[:5].reshape(-1).float().sum(0).item()
                 total += targets.size(0)
-        top1 = 100. * top1_correct / total
-        top5 = 100. * top5_correct / total
+        top1 = 100. * top1_correct / max(total, 1)
+        top5 = 100. * top5_correct / max(total, 1)
         return top1, top5
 
-   
     # ==== Training Loop ====
-    print("Before first batch", flush=True)
-    for batch_idx, (images, targets) in enumerate(train_loader):
-        print(f"Got batch {batch_idx}", flush=True)
-        break  # Just test the first batch
+    # Remove the one-off warm-up iteration that can desync DDP:
+    # print("Before first batch", flush=True)
+    # for batch_idx, (images, targets) in enumerate(train_loader):
+    #     print(f"Got batch {batch_idx}", flush=True)
+    #     break
 
     for epoch in range(EPOCHS):
-        train_sampler.set_epoch(epoch)  # Shuffle data differently at each epoch
+        train_sampler.set_epoch(epoch)
         model.train()
         running_loss = 0.0
-        batch_start_time = time.time()
         for batch_idx, (images, targets) in enumerate(train_loader):
-            images, targets = images.to(DEVICE), targets.to(DEVICE)
+            images, targets = images.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
             images, targets = mixup_fn(images, targets)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             with autocast():
-                print("Before forward", flush=True)
                 outputs = model(images)
-                print("After forward", flush=True)
-                print("Before loss", flush=True)
                 loss = criterion(outputs, targets)
-                print("After loss", flush=True)
-                print("Before backward", flush=True)
-                scaler.scale(loss).backward()
-                print("After backward", flush=True)
-                print("Before step", flush=True)
-                scaler.step(optimizer)
-                scaler.update()
-                print("After step", flush=True)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-            ema.update(model)
+            # Update EMA with the underlying module
+            ema.update(model.module)
 
             running_loss += loss.item()
 
             if (batch_idx + 1) == 1 and rank == 0:
-                avg_loss = running_loss / 100
+                avg_loss = running_loss / 1
                 print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
                 running_loss = 0.0
 
-            # Print average loss every 100 batches (only on rank 0)
             if (batch_idx + 1) % 100 == 0 and rank == 0:
                 avg_loss = running_loss / 100
                 print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
@@ -174,12 +172,9 @@ def main():
 
         scheduler.step()
 
-        # Evaluate on validation set (only on rank 0)
         if rank == 0:
             top1, top5 = evaluate(ema.module, val_loader, DEVICE)
             print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
-
-            # ==== Save Checkpoint ====
             checkpoint = {
                 'epoch': epoch + 1,
                 'model_state_dict': model.module.state_dict(),
