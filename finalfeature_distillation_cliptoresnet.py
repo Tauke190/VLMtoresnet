@@ -53,6 +53,7 @@ from utils import (
     imagefolder_human_names,
     read_txt,
     save_checkpoint,
+    compute_flops,
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
@@ -78,16 +79,7 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     return top1, top5
 
 # Compute FLOPs on CPU to save VRAM
-def compute_flops(model, resolution=(3, 224, 224)):
-    from thop import profile
-    model_cpu = model.to('cpu')
-    dummy = torch.randn(1, *resolution)
-    with torch.no_grad():
-        flops, params = profile(model_cpu, inputs=(dummy,), verbose=False)
-    model.to(DEVICE)
-    print(f"\n\n***** FLOP TOTAL: {flops / 10 ** 9:.2f} GFLOPs *****")
-    print(f"***** Model Parameters: {params:,} *****\n")
-    return flops / 10 ** 9, params
+
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -166,10 +158,8 @@ def run_distillation():
         print(f"Found {num_classes} classes in the dataset.")
 
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
-        classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
-        ce_loss_fn = nn.CrossEntropyLoss()
-        params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
+        params_to_train = list(backbone.parameters()) + list(projector.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         # Load templates from CLIP/dataloaders/templates
@@ -216,7 +206,7 @@ def run_distillation():
 
             backbone.train()
             projector.train()
-            classifier.train()
+            # classifier.train()  # remove
             running_loss = 0.0
 
             # Timing accumulators for ETA estimation (only first epoch)
@@ -235,8 +225,8 @@ def run_distillation():
                     projected_student_features = projector(student_features)
                     teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
-                    final_feature_distill = nn.MSELoss()(projected_student_features, teacher_features)
-                    logits_cls = classifier(student_features)
+                    final_feature_distill = distill_loss_fn(projected_student_features, teacher_features)
+                    # logits_cls = classifier(student_features)  # remove
                     total_loss = final_feature_distill
 
                 optimizer.zero_grad()

@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,16 +12,16 @@ from torch.cuda.amp import autocast, GradScaler
 import json
 from pathlib import Path
 import sys
+import os
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.3
+TRAIN_SUBSET_RATIO = 0.15
 # For cluster server
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
@@ -47,6 +46,17 @@ PROJECT_ROOT = Path(__file__).parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
+sys.path.append(str(PROJECT_ROOT))
+from utils import (
+    zeroshot_classifier,
+    get_teacher_features,
+    get_student_features,
+    imagenet_aligned_classnames,
+    imagefolder_human_names,
+    read_txt,
+    save_checkpoint,
+    compute_flops,
+)
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
@@ -70,18 +80,6 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     top5 = 100.0 * top5_correct / total
     return top1, top5
 
-# Compute FLOPs on CPU to save VRAM
-def compute_flops(model, resolution=(3, 224, 224)):
-    from thop import profile
-    model_cpu = model.to('cpu')
-    dummy = torch.randn(1, *resolution)
-    with torch.no_grad():
-        flops, params = profile(model_cpu, inputs=(dummy,), verbose=False)
-    model.to(DEVICE)
-    print(f"\n\n***** FLOP TOTAL: {flops / 10 ** 9:.2f} GFLOPs *****")
-    print(f"***** Model Parameters: {params:,} *****\n")
-    return flops / 10 ** 9, params
-
 
 
 
@@ -96,7 +94,6 @@ def contrastive_distill_loss(student_features_norm, labels, class_text_features_
         logits = logits * logit_scale.exp()
     ce = nn.CrossEntropyLoss()
     return ce(logits, labels)
-
 
 
 def run_distillation():
@@ -122,7 +119,7 @@ def run_distillation():
 
     try:
         print(f"Loading training dataset from: {TRAIN_DIR}")
-        base_train = ImageFolder(root=TRAIN_DIR, transform=train_transform)
+        base_train = ImageFolder(root=os.path.expanduser(TRAIN_DIR), transform=train_transform)
 
         # --- Take 15% subset from training set ---
         targets = base_train.targets
@@ -155,12 +152,12 @@ def run_distillation():
         val_subset_dataset = Subset(trainval_subset, val_indices)
 
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        val_loader_subset = DataLoader(val_subset_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+        train_subset_val_loader = DataLoader(val_subset_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
         print(f"Train subset: {len(train_dataset)} images, Validation subset: {len(val_subset_dataset)} images.")
 
         print(f"Loading full validation dataset from: {VAL_DIR}")
-        full_val_dataset = ImageFolder(root=VAL_DIR, transform=val_transform)
+        full_val_dataset = ImageFolder(root=os.path.expanduser(VAL_DIR), transform=val_transform)
         val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         print(f"Full validation set: {len(full_val_dataset)} images.")
 
@@ -186,9 +183,11 @@ def run_distillation():
         logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
 
         # Build zero-shot weights for ImageNet (used for evaluation + CRD anchors)
+        # Load templates properly
+        imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
         print("Building ImageNet zero-shot weights...")
         imagenet_class_names = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
-        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names, templates, teacher).to(DEVICE)  # [D, C]
+        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names, imagenet_templates, teacher).to(DEVICE)  # [D, C]
         # CRD anchors need shape [C, D]; transpose and keep normalized
         text_features_train = imagenet_zs_weights.t().contiguous()  # [C, D]
         # Ensure normalized
@@ -198,7 +197,7 @@ def run_distillation():
         # Optional: Oxford-IIIT Pet zero-shot evaluation setup
         if EVAL_OXFORD_PET:
             print(f"Loading Oxford-IIIT Pet validation dataset from: {OXFORD_PET_VAL_DIR}")
-            pet_val_dataset = ImageFolder(root=OXFORD_PET_VAL_DIR, transform=val_transform)
+            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=val_transform)
             pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
             pet_class_names = imagefolder_human_names(pet_val_dataset)
             pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
@@ -222,7 +221,8 @@ def run_distillation():
         if EVAL_OXFORD_PET and pet_val_loader is not None:
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
-
+        # Save initial checkpoint for parity
+        save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
@@ -309,6 +309,8 @@ def run_distillation():
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+            # Save checkpoint each epoch for parity
+            save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
             print("---------------------------------")
 
         # After training: evaluate both on full val sets

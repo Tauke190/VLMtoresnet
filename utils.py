@@ -38,6 +38,17 @@ def get_student_features(backbone, images):
     # Ensure (B, D) shape for all timm backbones
     return pooled_features.flatten(1)
 
+def compute_flops(model, resolution=(3, 224, 224)):
+    from thop import profile
+    model_cpu = model.to('cpu')
+    dummy = torch.randn(1, *resolution)
+    with torch.no_grad():
+        flops, params = profile(model_cpu, inputs=(dummy,), verbose=False)
+    model.to("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\n\n***** FLOP TOTAL: {flops / 10 ** 9:.2f} GFLOPs *****")
+    print(f"***** Model Parameters: {params:,} *****\n")
+    return flops / 10 ** 9, params
+
 def load_prompts_from_file(filepath):
     try:
         with open(filepath, 'r') as f:
