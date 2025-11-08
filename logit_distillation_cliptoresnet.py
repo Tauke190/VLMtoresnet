@@ -48,36 +48,6 @@ def get_student_features(backbone, images):
     pooled_features = backbone.global_pool(feature_map)
     return pooled_features
 
-def validate_student(backbone, projector, teacher, val_loader):
-    backbone.eval()
-    projector.eval()
-    teacher.eval()
-    total_similarity = 0.0
-    total_mse = 0.0
-    total = 0
-    with torch.no_grad():
-        for images, _ in val_loader:
-            images = images.to(DEVICE)
-            # Student features
-            student_features = get_student_features(backbone, images)
-            projected_student_features = projector(student_features)
-            projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
-            # Teacher features
-            teacher_features = teacher.encode_image(images).float()
-            teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
-            # Cosine similarity (dot product)
-            similarity = (projected_student_features * teacher_features).sum(dim=-1)
-            total_similarity += similarity.sum().item()
-            # MSE loss
-            mse = nn.functional.mse_loss(projected_student_features, teacher_features, reduction='sum')
-            total_mse += mse.item()
-            total += images.size(0)
-    avg_similarity = total_similarity / total
-    avg_mse = total_mse / total
-    print(f"Average Cosine Similarity: {avg_similarity:.4f}")
-    print(f"Average MSE Loss: {avg_mse:.6f}")
-    return avg_similarity, avg_mse
-
 def load_prompts_from_file(filepath):
     try:
         with open(filepath, 'r') as f:
@@ -242,8 +212,6 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-            # top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
-            # print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
@@ -309,9 +277,6 @@ def run_distillation():
 
             zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
             print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.5f}%, Top-5: {zeroshot_top5:.5f}%")
-
-            avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-            print(f"Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}, MSE: {mse_loss:.5f}")
             print("---------------------------------")
 
             checkpoint = {
@@ -336,8 +301,6 @@ def run_distillation():
         print("\nPerforming final validation with the full validation dataset...")
         zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
         print(f"Final Validation Accuracy (Zero-shot): Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
-        avg_sim, mse_loss = validate_student(backbone, projector, teacher, val_loader_subset)
-        print(f"Final Validation (Logits) after Epoch {epoch+1}: Average Similarity: {avg_sim:.5f}, MSE: {mse_loss:.5f}")
         print("\nDistillation training finished.")
 
     except FileNotFoundError as e:
