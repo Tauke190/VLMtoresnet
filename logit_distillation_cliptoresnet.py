@@ -41,7 +41,7 @@ EARLY_STOPPING_MIN_DELTA = 1e-4
 # New eval config
 EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
-OXFORD_PET_VAL_DIR = '~/data/datasets/oxford-iiit-pet/val'  # ImageFolder layout
+OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
 def get_teacher_features(model, images):
     with torch.no_grad():
