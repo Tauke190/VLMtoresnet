@@ -221,6 +221,7 @@ def run_distillation():
             class_names = base_train.classes
 
         templates = load_prompts_from_file(prompt_file)
+        templates = templates[:2]
 
         # Optional: add learnable logit scale
         logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
@@ -240,7 +241,6 @@ def run_distillation():
             projector.train()
             classifier.train()
             running_loss = 0.0
-
 
             # top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
             # print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
