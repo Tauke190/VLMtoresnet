@@ -169,6 +169,25 @@ OXFORD_PET_PROMPTS = [
 
 # --------- MGD helpers ---------
 
+def get_vit_token_width_from_visual(visual) -> int:
+    """
+    Robustly infer the ViT token width (transformer width) from a CLIP visual module
+    across different CLIP versions.
+    """
+    # Some versions expose it directly
+    if hasattr(visual, "width"):
+        return int(visual.width)
+    # Positional embedding: [1, 1+Nt, width]
+    if hasattr(visual, "positional_embedding") and visual.positional_embedding is not None:
+        return int(visual.positional_embedding.shape[-1])
+    # LayerNorm over 'width'
+    if hasattr(visual, "ln_post") and hasattr(visual.ln_post, "weight"):
+        return int(visual.ln_post.weight.shape[0])
+    # Conv1 out_channels equals 'width' for ViT patch embed
+    if hasattr(visual, "conv1") and hasattr(visual.conv1, "out_channels"):
+        return int(visual.conv1.out_channels)
+    raise AttributeError("Cannot infer ViT token width from CLIP visual module.")
+
 def get_teacher_vit_tokens(teacher, images) -> Tuple[torch.Tensor, int, int, int]:
     """
     Extract deep transformer tokens from CLIP ViT visual backbone.
@@ -199,10 +218,9 @@ def get_teacher_vit_tokens(teacher, images) -> Tuple[torch.Tensor, int, int, int
     # discard class token
     tokens = x[:, 1:, :]  # [B, Nt, Dt]
     Dt = tokens.shape[-1]
-    # compute grid from positional embedding size (minus class)
     Nt = tokens.shape[1]
     Ht = Wt = int(math.sqrt(Nt))
-    return tokens, Nt, Ht, Wt  # tokens in transformer width space (Dt = visual.width)
+    return tokens, Nt, Ht, Wt  # tokens in transformer width space (Dt)
 
 class GenerativeBlock(nn.Module):
     """
@@ -285,7 +303,8 @@ def run_distillation():
     print("Loading student model (ResNet-50)...")
     backbone = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
     teacher_feature_dim = teacher.visual.output_dim     # CLIP joint-space dimension (e.g., 768)
-    teacher_token_width = teacher.visual.width          # ViT transformer width (e.g., 1024)
+    # teacher_token_width may not exist as an attribute on some CLIP versions
+    teacher_token_width = get_vit_token_width_from_visual(teacher.visual)  # ViT transformer width
     student_feature_dim = backbone.num_features         # e.g., 2048
 
     print("Computing FLOPs and parameters for the student model...")
@@ -441,7 +460,7 @@ def run_distillation():
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
 
                     # Final feature (global) MSE distillation in normalized space
-                    loss_global = distill_loss_fn(projected_student_features, teacher_features)
+                    # loss_global = distill_loss_fn(projected_student_features, teacher_features)
 
                     # MGD: reconstruct teacher deep tokens from masked student aligned tokens
                     if USE_MGD:
@@ -468,7 +487,8 @@ def run_distillation():
                     # logits_cls = classifier(student_features)
                     # loss_ce = ce_loss_fn(logits_cls, labels)
 
-                    total_loss = loss_global + MGD_WEIGHT * loss_mgd  # + 0.5 * loss_ce (if enabled)
+                    # total_loss = loss_global + MGD_WEIGHT * loss_mgd  # + 0.5 * loss_ce (if enabled)
+                    total_loss =  MGD_WEIGHT * loss_mgd  # + 0.5 * loss_ce (if enabled)
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
