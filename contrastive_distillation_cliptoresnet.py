@@ -54,6 +54,7 @@ from utils import (
     read_txt,
     save_checkpoint,
     compute_flops,
+    load_prompts_from_file
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
