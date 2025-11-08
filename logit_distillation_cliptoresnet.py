@@ -4,7 +4,7 @@ os.environ.setdefault("NCCL_DEBUG", "INFO")
 os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
 os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
 # Optional fallback test:
-# os.environ.setdefault("NCCL_IB_DISABLE", "1")
+os.environ.setdefault("NCCL_IB_DISABLE", "1")  # enable to avoid IB hangs on non-IB nodes
 # os.environ.setdefault("NCCL_SOCKET_IFNAME", "eth0")
 
 import torch
@@ -19,6 +19,13 @@ import random
 import numpy as np
 from torch.cuda.amp import autocast, GradScaler
 import copy  # NEW
+import multiprocessing as mp  # NEW
+
+# Force 'spawn' to avoid forking after CUDA init deadlocks
+try:
+    mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    pass
 
 # ==== DDP Imports ====
 import torch.distributed as dist
