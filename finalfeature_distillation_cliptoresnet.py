@@ -80,28 +80,32 @@ def zeroshot_classifier(classnames, templates, model):
     """
     with torch.no_grad():
         zeroshot_weights = []
-        for classname in classnames:  # removed tqdm
-            texts = [template.format(classname) for template in templates]  # format with class
-            tokens = clip.tokenize(texts).to(DEVICE)                        # tokenize on current device
-            class_embeddings = model.encode_text(tokens)                    # embed with text encoder
+        for classname in classnames:
+            texts = [template.format(classname) for template in templates]
+            tokens = clip.tokenize(texts).to(DEVICE)
+            class_embeddings = model.encode_text(tokens)
+            class_embeddings = class_embeddings.float()  # force FP32 to match student/projection
             class_embeddings /= class_embeddings.norm(dim=-1, keepdim=True)
             class_embedding = class_embeddings.mean(dim=0)
             class_embedding /= class_embedding.norm()
             zeroshot_weights.append(class_embedding)
-        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(DEVICE)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(device=DEVICE, dtype=torch.float32)
     return zeroshot_weights
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
+    # ensure same device and dtype as projection output
+    zs_weights = zs_weights.to(device=device, dtype=torch.float32)
+
     top1_correct, top5_correct, total = 0, 0, 0
     with torch.no_grad():
         for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
             student_feats = get_student_features(backbone, images)
-            proj_feats = projector(student_feats)
+            proj_feats = projector(student_feats).float()  # FP32 to match zs_weights
             proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
-            logits = 100.0 * (proj_feats @ zs_weights)           # zs_weights shape [d, C]
+            logits = 100.0 * (proj_feats @ zs_weights)  # [B, C]
             _, top5 = logits.topk(5, dim=1)
             total += labels.size(0)
             top1_correct += (top5[:, 0] == labels).sum().item()
@@ -274,8 +278,15 @@ def run_distillation():
             classifier.train()
             running_loss = 0.0
 
-            # Train
+            # Timing accumulators for ETA estimation (only first epoch)
+            first_100_time = 0.0
+            first_1000_time = 0.0
+            eta_100_printed = False
+            eta_1000_printed = False
+
             for i, (images, labels) in enumerate(train_loader):
+                batch_start = time.time()
+
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
                 with autocast():
                     teacher_features = get_teacher_features(teacher, images).float()
@@ -285,8 +296,6 @@ def run_distillation():
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
                     final_feature_distill = nn.MSELoss()(projected_student_features, teacher_features)
                     logits_cls = classifier(student_features)
-                    # loss_ce = nn.CrossEntropyLoss()(final_feature_distill, labels)
-                    # total_loss = final_feature_distill + 0.5 * loss_ce
                     total_loss = final_feature_distill
 
                 optimizer.zero_grad()
@@ -295,9 +304,40 @@ def run_distillation():
                 scaler.update()
                 running_loss += total_loss.item()
 
+                # --- Collect timing for ETA estimates only during first epoch ---
+                if epoch == 0:
+                    batch_time = time.time() - batch_start
+                    # Accumulate for first 100
+                    if i < 100:
+                        first_100_time += batch_time
+                        if i == 99 and not eta_100_printed:
+                            avg_bt_100 = first_100_time / 100
+                            total_batches_all_epochs = NUM_EPOCHS * len(train_loader)
+                            est_total_seconds_100 = avg_bt_100 * total_batches_all_epochs
+                            est_hours_100 = est_total_seconds_100 / 3600
+                            est_minutes_per_epoch_100 = (avg_bt_100 * len(train_loader)) / 60
+                            print(f"[ETA-100] Avg batch {avg_bt_100*1000:.1f} ms -> "
+                                  f"Estimated total training time: {est_hours_100:.2f} h "
+                                  f"(~{est_minutes_per_epoch_100:.1f} min/epoch based on first 100 batches).")
+                            eta_100_printed = True
+                    # Accumulate for first 1000
+                    if i < 1000:
+                        first_1000_time += batch_time
+                        if i == 999 and not eta_1000_printed:
+                            avg_bt_1000 = first_1000_time / 1000
+                            total_batches_all_epochs = NUM_EPOCHS * len(train_loader)
+                            est_total_seconds_1000 = avg_bt_1000 * total_batches_all_epochs
+                            est_hours_1000 = est_total_seconds_1000 / 3600
+                            est_minutes_per_epoch_1000 = (avg_bt_1000 * len(train_loader)) / 60
+                            print(f"[ETA-1000] Avg batch {avg_bt_1000*1000:.1f} ms -> "
+                                  f"Estimated total training time: {est_hours_1000:.2f} h "
+                                  f"(~{est_minutes_per_epoch_1000:.1f} min/epoch based on first 1000 batches).")
+                            eta_1000_printed = True
+
+                # Keep minimal progress print every 100 steps (optional; remove if not desired)
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
-                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
+                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] Step [{i+1}/{len(train_loader)}] Avg Loss: {avg_loss_so_far:.4f}")
 
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
