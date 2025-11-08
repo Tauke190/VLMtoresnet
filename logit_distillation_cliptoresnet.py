@@ -136,6 +136,14 @@ def precompute_text_features(teacher, class_names, templates, device=DEVICE, chu
             all_cls_feats.append(cls_feats)
     return torch.cat(all_cls_feats, dim=0)  # [num_classes, d]
 
+# Custom prompt templates for Oxford-IIIT Pet
+OXFORD_PET_PROMPTS = [
+    "a photo of a {}",
+    "a photo of a {}, a type of pet",
+    "a photo of big {}",
+    "a photo of a small {}"
+]
+
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -240,8 +248,8 @@ def run_distillation():
             pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
             pet_class_names = imagefolder_human_names(pet_val_dataset)
             print(f"Found {len(pet_class_names)} pet classes.")
-            print("Precomputing Pet zero-shot text features (chunked)...")
-            text_features_pet = precompute_text_features(teacher, pet_class_names, templates, DEVICE, chunk_size=256)
+            print("Precomputing Pet zero-shot text features (custom prompts)...")
+            text_features_pet = precompute_text_features(teacher, pet_class_names, OXFORD_PET_PROMPTS, DEVICE, chunk_size=256)
             torch.cuda.empty_cache()
         else:
             pet_val_loader, text_features_pet = None, None
