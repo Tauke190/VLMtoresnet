@@ -20,6 +20,9 @@ import numpy as np
 from torch.cuda.amp import autocast, GradScaler
 import json
 from pathlib import Path
+import sys
+from CLIP.resolution_zero_shot import zeroshot_classifier, read_txt  # importing existing functions
+
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.3
@@ -43,6 +46,13 @@ EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
 OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
+# Add path setup for importing zero-shot utilities and templates
+PROJECT_ROOT = Path(__file__).parent
+CLIP_DIR = PROJECT_ROOT / "CLIP"
+TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
+sys.path.append(str(CLIP_DIR))
+
+
 def get_teacher_features(model, images):
     with torch.no_grad():
         features = model.encode_image(images)
@@ -63,28 +73,27 @@ def load_prompts_from_file(filepath):
         print(f"Error: Prompt file not found at {filepath}.")
         return []
 
-# Replace zeroshot_validate_student with a version that uses precomputed text features
-def zeroshot_validate_student(backbone, projector, val_loader, text_features, logit_scale=None, device=DEVICE):
-    text_features = text_features.to(device)
-    top1_correct, top5_correct, total = 0, 0, 0
+# REMOVE old zero-shot and text feature functions
+# (zeroshot_validate_student and precompute_text_features are no longer used)
+
+def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
+    top1_correct, top5_correct, total = 0, 0, 0
     with torch.no_grad():
-        for images, labels in val_loader:
+        for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
-            features = get_student_features(backbone, images)
-            student_features = projector(features)
-            student_features = student_features / student_features.norm(dim=-1, keepdim=True)
-            logits = student_features @ text_features.t()
-            if logit_scale is not None:
-                logits = logits * logit_scale.exp()
-            _, top5_preds = logits.topk(5, dim=1)
+            student_feats = get_student_features(backbone, images)
+            proj_feats = projector(student_feats)
+            proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
+            logits = 100.0 * (proj_feats @ zs_weights)           # zs_weights shape [d, C]
+            _, top5 = logits.topk(5, dim=1)
             total += labels.size(0)
-            top1_correct += (top5_preds[:, 0] == labels).sum().item()
-            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
-    top1_accuracy = 100 * top1_correct / total
-    top5_accuracy = 100 * top5_correct / total
-    return top1_accuracy, top5_accuracy
+            top1_correct += (top5[:, 0] == labels).sum().item()
+            top5_correct += (top5 == labels.view(-1, 1)).sum().item()
+    top1 = 100.0 * top1_correct / total
+    top5 = 100.0 * top5_correct / total
+    return top1, top5
 
 # Compute FLOPs on CPU to save VRAM
 def compute_flops(model, resolution=(3, 224, 224)):
@@ -117,32 +126,6 @@ def imagenet_aligned_classnames(dataset, json_path="imagenet_class_index.json"):
 
 def imagefolder_human_names(dataset):
     return [c.replace('_', ' ') for c in dataset.classes]
-
-# New: precompute text features in chunks (avoids OOM) and cache
-def precompute_text_features(teacher, class_names, templates, device=DEVICE, chunk_size=256):
-    teacher.eval()
-    all_cls_feats = []
-    with torch.no_grad():
-        for name in class_names:
-            feats_chunks = []
-            for i in range(0, len(templates), chunk_size):
-                batch_prompts = [templates[j].format(name) for j in range(i, min(i + chunk_size, len(templates)))]
-                tokens = clip.tokenize(batch_prompts).to(device)
-                feats = teacher.encode_text(tokens).float()
-                feats = feats / feats.norm(dim=-1, keepdim=True)
-                feats_chunks.append(feats)
-            cls_feats = torch.cat(feats_chunks, dim=0).mean(dim=0, keepdim=True)
-            cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
-            all_cls_feats.append(cls_feats)
-    return torch.cat(all_cls_feats, dim=0)  # [num_classes, d]
-
-# Custom prompt templates for Oxford-IIIT Pet
-OXFORD_PET_PROMPTS = [
-    "a photo of a {}",
-    "a photo of a {}, a type of pet",
-    "a photo of big {}",
-    "a photo of a small {}"
-]
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -214,6 +197,7 @@ def run_distillation():
         val_subset = Subset(full_val_dataset, val_indices)
         val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
 
+        # --- After loading datasets and creating loaders ---
         num_classes = len(base_train.classes)
         print(f"Found {num_classes} classes in the dataset.")
 
@@ -224,35 +208,26 @@ def run_distillation():
         params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
-        prompt_file = "prompt/imagenet1k.txt"
-        # For ImageNet, align names to ImageFolder's class order
+        # Load templates from CLIP/dataloaders/templates
+        imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
         imagenet_class_names = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
-        print("Prepared ImageNet human-readable class names aligned to dataset order.")
+        print("Loaded ImageNet templates from CLIP/dataloaders/templates/imagenet1k.txt")
+        print(f"Templates count: {len(imagenet_templates)}")
 
-        templates = load_prompts_from_file(prompt_file)
-        # Do not truncate templates; prompt ensembling helps zero-shot
-        # templates = templates[:2]
+        print("Building ImageNet zero-shot weights (imported function)...")
+        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names, imagenet_templates, teacher).to(DEVICE)
 
-        # Optional: learnable logit scale
-        logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
-
-        # Precompute text features once (chunked) for ImageNet val
-        print("Precomputing ImageNet zero-shot text features (chunked)...")
-        text_features_imagenet = precompute_text_features(teacher, imagenet_class_names, templates, DEVICE, chunk_size=256)
-        torch.cuda.empty_cache()
-
-        # Optional: Oxford-IIIT Pet zero-shot evaluation setup
         if EVAL_OXFORD_PET:
             print(f"Loading Oxford-IIIT Pet validation dataset from: {OXFORD_PET_VAL_DIR}")
             pet_val_dataset = ImageFolder(root=OXFORD_PET_VAL_DIR, transform=val_transform)
             pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
             pet_class_names = imagefolder_human_names(pet_val_dataset)
-            print(f"Found {len(pet_class_names)} pet classes.")
-            print("Precomputing Pet zero-shot text features (custom prompts)...")
-            text_features_pet = precompute_text_features(teacher, pet_class_names, OXFORD_PET_PROMPTS, DEVICE, chunk_size=256)
-            torch.cuda.empty_cache()
+            pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
+            print(f"Loaded Pet templates from CLIP/dataloaders/templates/pets.txt (count={len(pet_templates)})")
+            print("Building Pet zero-shot weights...")
+            pet_zs_weights = zeroshot_classifier(pet_class_names, pet_templates, teacher).to(DEVICE)
         else:
-            pet_val_loader, text_features_pet = None, None
+            pet_val_loader, pet_zs_weights = None, None
 
         print("\nStarting logit distillation...")
         total_start_time = time.time()
@@ -261,17 +236,13 @@ def run_distillation():
 
         scaler = GradScaler()
 
-        # Initial zero-shot validation before training
-        print("\nInitial zero-shot validation before training:")
-        top1, top5 = zeroshot_validate_student(
-            backbone, projector, val_loader_subset, text_features_imagenet, logit_scale, DEVICE
-        )
+        # Initial zero-shot evaluation
+        print("\nInitial zero-shot evaluation (student projected into CLIP space):")
+        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
         print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_top1, pet_top5 = zeroshot_validate_student(
-                backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
-            )
-        print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+            pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
@@ -326,29 +297,19 @@ def run_distillation():
 
             # Validation after each epoch
             if EVAL_FULL_VAL_EACH_EPOCH:
-                # ImageNet: only on subset
-                top1, top5 = zeroshot_validate_student(
-                    backbone, projector, val_loader_subset, text_features_imagenet, logit_scale, DEVICE
-                )
+                top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
                 print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-                # Oxford Pet: on full val set
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
-                    pet_top1, pet_top5 = zeroshot_validate_student(
-                        backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
-                    )
+                    pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
             print("---------------------------------")
 
         # After training: evaluate both on full val sets
-        print("\nFinal validation on full sets...")
-        top1, top5 = zeroshot_validate_student(
-            backbone, projector, val_loader, text_features_imagenet, logit_scale, DEVICE
-        )
+        print("\nFinal validation:")
+        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, imagenet_zs_weights, DEVICE)
         print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_top1, pet_top5 = zeroshot_validate_student(
-                backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
-            )
+            pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
         print("\nDistillation training finished.")
 
