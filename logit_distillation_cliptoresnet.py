@@ -240,10 +240,10 @@ def run_distillation():
     # ==== DataLoader ====
     batch_size_per_gpu = BATCH_SIZE // world_size
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size_per_gpu, shuffle=False, NUM_WORKERS=0, pin_memory=True, sampler=train_sampler
+        train_dataset, batch_size=batch_size_per_gpu, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True, sampler=train_sampler
     )
     val_loader_subset = DataLoader(
-        val_subset_dataset, batch_size=512, shuffle=False, NUM_WORKERS=0, pin_memory=True, sampler=val_sampler
+        val_subset_dataset, batch_size=512, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True, sampler=val_sampler
     )
 
     # ==== DDP Wrap ====
