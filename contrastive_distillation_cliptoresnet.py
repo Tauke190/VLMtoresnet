@@ -46,7 +46,7 @@ OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
 # --- CRD configuration ---
 USE_CRD = True
-CRD_WEIGHT = 1.0  # weight for contrastive distillation loss term relative to other losses
+CRD_WEIGHT = 0.9  # weight for contrastive distillation loss term relative to other losses
 
 def get_teacher_features(model, images):
     with torch.no_grad():
@@ -311,8 +311,9 @@ def run_distillation():
             projector.train()
             running_loss = 0.0
 
-            # Train
+            batch_times = []
             for i, (images, labels) in enumerate(train_loader):
+                batch_start_time = time.time()
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
                 with autocast():
                     # Teacher image features for MSE distillation
@@ -328,7 +329,6 @@ def run_distillation():
                     # Distillation (MSE) in the normalized feature space
                     final_feature_loss = distill_loss_fn(projected_student_features, teacher_features)
 
-
                     # CRD: contrastive loss between student projected feats and CLIP text anchors
                     if USE_CRD:
                         loss_crd = contrastive_distill_loss(
@@ -338,7 +338,7 @@ def run_distillation():
                         loss_crd = torch.tensor(0.0, device=DEVICE)
 
                     # Total loss: keep original terms and add CRD
-                    total_loss = final_feature_loss + CRD_WEIGHT * loss_crd
+                    total_loss = 0.1 * final_feature_loss + CRD_WEIGHT * loss_crd
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
@@ -346,10 +346,21 @@ def run_distillation():
                 scaler.update()
                 running_loss += total_loss.item()
 
+                # --- Timing and ETA estimation ---
+                batch_time = time.time() - batch_start_time
+                batch_times.append(batch_time)
+                if i + 1 == 100 or i + 1 == 1000:
+                    avg_time = np.mean(batch_times)
+                    total_batches = len(train_loader)
+                    est_epoch_time = avg_time * total_batches
+                    est_total_time = est_epoch_time * NUM_EPOCHS
+                    print(f"Estimated time per epoch after {i+1} batches: {est_epoch_time/60:.2f} min")
+                    print(f"Estimated total training time after {i+1} batches: {est_total_time/3600:.2f} hr")
+
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
                     if USE_CRD:
-                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f} (MSE+CE+CRD)")
+                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f} (MSE+CRD)")
                     else:
                         print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
 
