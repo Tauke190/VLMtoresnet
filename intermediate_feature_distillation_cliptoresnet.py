@@ -19,7 +19,7 @@ import random
 import numpy as np
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.15
+TRAIN_SUBSET_RATIO = 0.3
 VAL_RATIO_WITHIN_SUBSET = 0.20  # 20% of the 15% subset for validation
 
 # For cluster server

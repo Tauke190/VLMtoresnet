@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.05
+TRAIN_SUBSET_RATIO = 0.3
 # For cluster server
 
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'

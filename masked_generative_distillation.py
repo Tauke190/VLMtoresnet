@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Tuple
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.15
+TRAIN_SUBSET_RATIO = 0.3
 
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
