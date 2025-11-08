@@ -160,6 +160,17 @@ def read_txt(file_location):
     except: pass
     return content
 
+def save_checkpoint(backbone, projector, epoch, project_root, script_path):
+    checkpoint_dir = project_root / "distilled_checkpoints"
+    checkpoint_dir.mkdir(exist_ok=True)
+    checkpoint_path = checkpoint_dir / (Path(script_path).stem + ".pt")
+    torch.save({
+        'backbone_state_dict': backbone.state_dict(),
+        'projector_state_dict': projector.state_dict(),
+        'epoch': epoch,
+    }, checkpoint_path)
+    print(f"Checkpoint saved to {checkpoint_path}")
+
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -277,6 +288,9 @@ def run_distillation():
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
+        # --- Save initial checkpoint before training ---
+        save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
 
@@ -373,15 +387,7 @@ def run_distillation():
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
             # --- Save checkpoint after each epoch ---
-            checkpoint_dir = PROJECT_ROOT / "distilled_checkpoints"
-            checkpoint_dir.mkdir(exist_ok=True)
-            checkpoint_path = checkpoint_dir / (Path(__file__).stem + ".pt")
-            torch.save({
-                'backbone_state_dict': backbone.state_dict(),
-                'projector_state_dict': projector.state_dict(),
-                'epoch': epoch + 1,
-            }, checkpoint_path)
-            print(f"Checkpoint saved to {checkpoint_path}")
+            save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
 
             print("---------------------------------")
 
