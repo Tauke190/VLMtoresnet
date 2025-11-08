@@ -48,6 +48,7 @@ WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 5
 EARLY_STOPPING_PATIENCE = 3
 EARLY_STOPPING_MIN_DELTA = 1e-4
+NUM_WORKERS = 0  # set to 0 to validate hang removal, then raise to 4 with spawn
 
 def setup_ddp():
     import datetime
@@ -239,10 +240,10 @@ def run_distillation():
     # ==== DataLoader ====
     batch_size_per_gpu = BATCH_SIZE // world_size
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size_per_gpu, shuffle=False, num_workers=2, pin_memory=True, sampler=train_sampler
+        train_dataset, batch_size=batch_size_per_gpu, shuffle=False, NUM_WORKERS=0, pin_memory=True, sampler=train_sampler
     )
     val_loader_subset = DataLoader(
-        val_subset_dataset, batch_size=512, shuffle=False, num_workers=2, pin_memory=True, sampler=val_sampler
+        val_subset_dataset, batch_size=512, shuffle=False, NUM_WORKERS=0, pin_memory=True, sampler=val_sampler
     )
 
     # ==== DDP Wrap ====
