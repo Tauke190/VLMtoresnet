@@ -1,8 +1,9 @@
-# Logit distillation + Supervised finetuning 
+# Logit distillation + Supervised finetuning + Contrastive Representational Distillation (CRD)
 # Description:
 # A script to perform knowledge distillation from a CLIP ViT-L/14 teacher to a
 # ResNet-50 student, with validation on a subset of the validation set
 # after each epoch. This version is configured for the Oxford-IIIT Pet Dataset.
+# CRD: uses CLIP text embeddings (class prototypes) as anchors and student image features as queries.
 #
 # Dependencies:
 # pip install torch torchvision timm git+https://github.com/openai/CLIP.git
@@ -43,6 +44,10 @@ EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
 OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
+# --- CRD configuration ---
+USE_CRD = True
+CRD_WEIGHT = 1.0  # weight for contrastive distillation loss term relative to other losses
+
 def get_teacher_features(model, images):
     with torch.no_grad():
         features = model.encode_image(images)
@@ -57,11 +62,14 @@ def load_prompts_from_file(filepath):
     try:
         with open(filepath, 'r') as f:
             templates = [line.strip() for line in f.readlines()]
+        # Fallback to default if empty
+        if len(templates) == 0:
+            templates = ["a photo of a {}"]
         print(f"Loaded {len(templates)} templates from {filepath}.")
         return templates
     except FileNotFoundError:
-        print(f"Error: Prompt file not found at {filepath}.")
-        return []
+        print(f"Error: Prompt file not found at {filepath}. Using a default template.")
+        return ["a photo of a {}"]
 
 # Replace zeroshot_validate_student with a version that uses precomputed text features
 def zeroshot_validate_student(backbone, projector, val_loader, text_features, logit_scale=None, device=DEVICE):
@@ -135,6 +143,17 @@ def precompute_text_features(teacher, class_names, templates, device=DEVICE, chu
             cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
             all_cls_feats.append(cls_feats)
     return torch.cat(all_cls_feats, dim=0)  # [num_classes, d]
+
+# CRD loss: student image features as queries, CLIP text features (class prototypes) as keys.
+# We compute InfoNCE-style loss across all class anchors (one positive = ground-truth class).
+def contrastive_distill_loss(student_features_norm, labels, class_text_features_norm, logit_scale=None):
+    # student_features_norm: [B, D], normalized
+    # class_text_features_norm: [C, D], normalized
+    logits = student_features_norm @ class_text_features_norm.t()  # [B, C]
+    if logit_scale is not None:
+        logits = logits * logit_scale.exp()
+    ce = nn.CrossEntropyLoss()
+    return ce(logits, labels)
 
 # Custom prompt templates for Oxford-IIIT Pet
 OXFORD_PET_PROMPTS = [
@@ -221,25 +240,36 @@ def run_distillation():
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
         ce_loss_fn = nn.CrossEntropyLoss()
+
         params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         prompt_file = "prompt/imagenet1k.txt"
         # For ImageNet, align names to ImageFolder's class order
-        imagenet_class_names = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
-        print("Prepared ImageNet human-readable class names aligned to dataset order.")
+        imagenet_class_names_val = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
+        print("Prepared ImageNet human-readable class names aligned to validation dataset order.")
+        # Also prepare class names aligned to TRAIN dataset order for CRD anchors
+        imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+        print("Prepared ImageNet human-readable class names aligned to training dataset order.")
 
         templates = load_prompts_from_file(prompt_file)
-        # Do not truncate templates; prompt ensembling helps zero-shot
-        # templates = templates[:2]
-
-        # Optional: learnable logit scale
+        # Optional: learnable/fixed logit scale (temperature). We keep it as a parameter but do not add to optimizer to preserve original behavior.
         logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
 
         # Precompute text features once (chunked) for ImageNet val
-        print("Precomputing ImageNet zero-shot text features (chunked)...")
-        text_features_imagenet = precompute_text_features(teacher, imagenet_class_names, templates, DEVICE, chunk_size=256)
+        print("Precomputing ImageNet zero-shot text features (chunked) for validation...")
+        text_features_imagenet = precompute_text_features(teacher, imagenet_class_names_val, templates, DEVICE, chunk_size=256)
         torch.cuda.empty_cache()
+
+        # Precompute text features for TRAIN classes (for CRD anchors)
+        if USE_CRD:
+            print("Precomputing ImageNet text features (chunked) for CRD anchors (train classes)...")
+            text_features_train = precompute_text_features(teacher, imagenet_class_names_train, templates, DEVICE, chunk_size=256).to(DEVICE)
+            # Ensure normalized
+            text_features_train = text_features_train / text_features_train.norm(dim=-1, keepdim=True)
+            torch.cuda.empty_cache()
+        else:
+            text_features_train = None
 
         # Optional: Oxford-IIIT Pet zero-shot evaluation setup
         if EVAL_OXFORD_PET:
@@ -254,7 +284,7 @@ def run_distillation():
         else:
             pet_val_loader, text_features_pet = None, None
 
-        print("\nStarting logit distillation...")
+        print("\nStarting logit distillation + CRD...")
         total_start_time = time.time()
         best_loss = float('inf')
         epochs_no_improve = 0
@@ -273,16 +303,33 @@ def run_distillation():
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
                 with autocast():
+                    # Teacher image features for MSE distillation
                     teacher_features = get_teacher_features(teacher, images).float()
+                    # Student features and projection to teacher dim
                     student_features = get_student_features(backbone, images)
                     projected_student_features = projector(student_features)
+
+                    # Normalize for cosine similarity-based losses
                     teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
-                    final_feature_distill = nn.MSELoss()(projected_student_features, teacher_features)
+
+                    # Distillation (MSE) in the normalized feature space
+                    loss_distill = distill_loss_fn(projected_student_features, teacher_features)
+
+                    # Supervised classification loss on student features
                     logits_cls = classifier(student_features)
-                    # loss_ce = nn.CrossEntropyLoss()(final_feature_distill, labels)
-                    # total_loss = final_feature_distill + 0.5 * loss_ce
-                    total_loss = final_feature_distill
+                    loss_ce = ce_loss_fn(logits_cls, labels)
+
+                    # CRD: contrastive loss between student projected feats and CLIP text anchors
+                    if USE_CRD:
+                        loss_crd = contrastive_distill_loss(
+                            projected_student_features, labels, text_features_train, logit_scale=logit_scale
+                        )
+                    else:
+                        loss_crd = torch.tensor(0.0, device=DEVICE)
+
+                    # Total loss: keep original terms and add CRD
+                    total_loss = loss_distill + 0.5 * loss_ce + CRD_WEIGHT * loss_crd
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
@@ -292,7 +339,10 @@ def run_distillation():
 
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
-                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
+                    if USE_CRD:
+                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f} (MSE+CE+CRD)")
+                    else:
+                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f}")
 
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
