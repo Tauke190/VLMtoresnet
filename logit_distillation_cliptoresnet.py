@@ -261,6 +261,18 @@ def run_distillation():
 
         scaler = GradScaler()
 
+        # Initial zero-shot validation before training
+        print("\nInitial zero-shot validation before training:")
+        top1, top5 = zeroshot_validate_student(
+            backbone, projector, val_loader_subset, text_features_imagenet, logit_scale, DEVICE
+        )
+        print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+        if EVAL_OXFORD_PET and pet_val_loader is not None:
+            pet_top1, pet_top5 = zeroshot_validate_student(
+                backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
+            )
+            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
 
