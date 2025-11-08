@@ -21,10 +21,11 @@ from torch.cuda.amp import autocast, GradScaler
 import json
 from pathlib import Path
 import sys
+import os  # Add this at the top if not already imported
 
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.3
+TRAIN_SUBSET_RATIO = 0.15
 # For cluster server
 
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
@@ -73,14 +74,20 @@ def load_prompts_from_file(filepath):
         return []
 
 
-def zeroshot_classifier(classnames, templates, model):
+def zeroshot_classifier(classnames, templates, model, show_progress=True):
     """ 
-    Creating zero-shot classifier weights. This is taken form CLIP official codebase.
-    Please refer to .
+    Creating zero-shot classifier weights. This is taken from CLIP official codebase.
     """
     with torch.no_grad():
         zeroshot_weights = []
-        for classname in classnames:
+        iterator = classnames
+        if show_progress:
+            try:
+                from tqdm import tqdm
+                iterator = tqdm(classnames, desc="Building zero-shot weights", total=len(classnames))
+            except Exception:
+                iterator = classnames
+        for classname in iterator:
             texts = [template.format(classname) for template in templates]
             tokens = clip.tokenize(texts).to(DEVICE)
             class_embeddings = model.encode_text(tokens)
@@ -364,6 +371,18 @@ def run_distillation():
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+
+            # --- Save checkpoint after each epoch ---
+            checkpoint_dir = PROJECT_ROOT / "distilled_checkpoints"
+            checkpoint_dir.mkdir(exist_ok=True)
+            checkpoint_path = checkpoint_dir / (Path(__file__).stem + ".pt")
+            torch.save({
+                'backbone_state_dict': backbone.state_dict(),
+                'projector_state_dict': projector.state_dict(),
+                'epoch': epoch + 1,
+            }, checkpoint_path)
+            print(f"Checkpoint saved to {checkpoint_path}")
+
             print("---------------------------------")
 
         # After training: evaluate both on full val sets
