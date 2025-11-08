@@ -22,7 +22,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u logit_distillation_cliptoresnet.py
+python -u finalfeature_distillation_cliptoresnet.py
 
 # Optional cleanup
 conda deactivate

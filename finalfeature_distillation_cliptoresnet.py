@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.15
+TRAIN_SUBSET_RATIO = 0.05
 # For cluster server
 
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
@@ -271,7 +271,7 @@ def run_distillation():
             pet_top1, pet_top5 = zeroshot_validate_student(
                 backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
             )
-            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+        print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
