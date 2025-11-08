@@ -18,6 +18,7 @@ import time
 import random
 import numpy as np
 from torch.cuda.amp import autocast, GradScaler
+import copy  # NEW
 
 # ==== DDP Imports ====
 import torch.distributed as dist
@@ -164,7 +165,20 @@ def run_distillation():
 
     if rank == 0:
         print("Computing FLOPs and parameters for the student model...")
-        compute_flops(backbone, resolution=(3, 224, 224), device=DEVICE)
+        # RUN THOP ON A CPU CLONE SO IT DOESN'T POLLUTE THE TRAINING MODEL WITH CPU BUFFERS
+        _model_for_flops = copy.deepcopy(backbone).cpu()
+        compute_flops(_model_for_flops, resolution=(3, 224, 224), device='cpu')
+        del _model_for_flops
+        torch.cuda.empty_cache()
+    # (backbone is still on DEVICE and clean here)
+
+    # Remove THOP’s temporary buffers if they were added
+    for m in backbone.modules():
+        for name in ("total_ops", "total_params"):
+            if hasattr(m, name):
+                delattr(m, name)
+    # And ensure everything is on the correct GPU
+    backbone = backbone.to(DEVICE, non_blocking=True)
 
     # ==== Data Augmentation (A1) ====
     train_transform = transforms.Compose([
@@ -322,3 +336,8 @@ def run_distillation():
 
 if __name__ == '__main__':
     run_distillation()
+
+    # dev = torch.device(DEVICE)
+    # for n, t in list(backbone.named_parameters()) + list(backbone.named_buffers()):
+    #     if t is not None and (not t.is_cuda or t.device != dev):
+    #         raise RuntimeError(f"{n} is on {t.device}, expected {dev}")
