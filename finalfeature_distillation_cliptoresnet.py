@@ -21,7 +21,6 @@ from torch.cuda.amp import autocast, GradScaler
 import json
 from pathlib import Path
 import sys
-from CLIP.resolution_zero_shot import zeroshot_classifier, read_txt  # importing existing functions
 
 
 # --- Configuration ---
@@ -73,8 +72,24 @@ def load_prompts_from_file(filepath):
         print(f"Error: Prompt file not found at {filepath}.")
         return []
 
-# REMOVE old zero-shot and text feature functions
-# (zeroshot_validate_student and precompute_text_features are no longer used)
+
+def zeroshot_classifier(classnames, templates, model):
+    """ 
+    Creating zero-shot classifier weights. This is taken form CLIP official codebase.
+    Please refer to .
+    """
+    with torch.no_grad():
+        zeroshot_weights = []
+        for classname in tqdm(classnames):
+            texts = [template.format(classname) for template in templates] # format with class
+            texts = clip.tokenize(texts).cuda() # tokenize
+            class_embeddings = model.encode_text(texts) # embed with text encoder
+            class_embeddings /= class_embeddings.norm(dim=-1, keepdim=True)
+            class_embedding = class_embeddings.mean(dim=0)
+            class_embedding /= class_embedding.norm()
+            zeroshot_weights.append(class_embedding)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).cuda()
+    return zeroshot_weights
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
@@ -126,6 +141,13 @@ def imagenet_aligned_classnames(dataset, json_path="imagenet_class_index.json"):
 
 def imagefolder_human_names(dataset):
     return [c.replace('_', ' ') for c in dataset.classes]
+
+def read_txt(file_location):
+    with open(file_location, 'r') as file:
+        content = file.read(); content = str(content); content = content.split('\n', -1)
+    try: content.remove("")
+    except: pass
+    return content
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
