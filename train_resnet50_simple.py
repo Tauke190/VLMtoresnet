@@ -22,11 +22,11 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
 EPOCHS = 50
 
@@ -231,7 +231,11 @@ if __name__ == "__main__":
         start_epoch = checkpoint["epoch"] + 1
         optimizer.load_state_dict(checkpoint["optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        assert params == checkpoint["params"]
+        # Compare params as dicts for checkpoint compatibility
+        if hasattr(checkpoint["params"], "__dict__"):
+            assert params.__dict__ == checkpoint["params"].__dict__
+        else:
+            assert params.__dict__ == checkpoint["params"]
 
     # from torch.utils.tensorboard import SummaryWriter
     from pathlib import Path
