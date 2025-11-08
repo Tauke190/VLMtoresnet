@@ -18,6 +18,8 @@ import time
 import random
 import numpy as np
 from torch.cuda.amp import autocast, GradScaler
+import json
+from pathlib import Path
 
 # --- Configuration ---
 TRAIN_SUBSET_RATIO = 0.15
@@ -124,6 +126,12 @@ def compute_flops(model, resolution=(3, 224, 224)):
     print(f"***** Model Parameters: {params:,} *****\n")
     return flops / 10 ** 9, params
 
+def load_imagenet_classnames(json_path="imagenet_class_index.json"):
+    with open(json_path, "r") as f:
+        idx_to_data = json.load(f)
+    # Returns list indexed by class idx: human-readable name
+    return [idx_to_data[str(i)][1].replace('_', ' ') for i in range(len(idx_to_data))]
+
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
@@ -200,13 +208,22 @@ def run_distillation():
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
         classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
+        ce_loss_fn = nn.CrossEntropyLoss()
         params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         prompt_file = "prompt/imagenet1k.txt"
+        try:
+            class_names = load_imagenet_classnames("imagenet_class_index.json")
+            print("Loaded human-readable class names for prompts.")
+        except Exception as e:
+            print("Falling back to folder names; zero-shot accuracy will be poor.", e)
+            class_names = base_train.classes
+
         templates = load_prompts_from_file(prompt_file)
-        templates = templates[:2]
-        class_names = base_train.classes
+
+        # Optional: add learnable logit scale
+        logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
 
         print("\nStarting logit distillation...")
         total_start_time = time.time()
@@ -227,8 +244,8 @@ def run_distillation():
 
             # top1, top5 = validate_student(backbone, projector, teacher, val_loader_subset)
             # print(f"Validation Accuracy (Logits) after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-            # zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
-            # print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
+            zeroshot_top1, zeroshot_top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader_subset, teacher, templates, DEVICE)
+            print(f"Validation Accuracy (Zero-shot) after Epoch {epoch+1}: Top-1: {zeroshot_top1:.2f}%, Top-5: {zeroshot_top5:.2f}%")
 
             for i, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -238,8 +255,12 @@ def run_distillation():
                     projected_student_features = projector(student_features)
                     teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+                    # Distill loss (image->image)
                     loss_distill = distill_loss_fn(projected_student_features, teacher_features)
-                    total_loss = loss_distill
+                    # Supervised classification
+                    logits_cls = classifier(student_features)
+                    loss_ce = ce_loss_fn(logits_cls, labels)
+                    total_loss = loss_distill + 0.5 * loss_ce  # weight as needed
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
