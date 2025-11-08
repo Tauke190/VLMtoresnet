@@ -1,11 +1,15 @@
 import os, sys, torch, torch.distributed as dist, traceback, datetime
 
+# Debug/diagnostic env
 os.environ.setdefault("NCCL_DEBUG","INFO")
 os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING","1")
 os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG","DETAIL")
-# Optional: make NCCL avoid problematic interconnects/NICs
-# os.environ.setdefault("NCCL_IB_DISABLE","1")
-# os.environ.setdefault("NCCL_SOCKET_IFNAME","eth0")  # set to your NIC
+os.environ.setdefault("NCCL_BLOCKING_WAIT","1")
+# Temporarily disable potentially-problematic paths; remove once stable
+os.environ.setdefault("NCCL_IB_DISABLE","1")
+os.environ.setdefault("NCCL_P2P_DISABLE","1")     # try 1; if it fixes, P2P/IPC is the issue
+os.environ.setdefault("NCCL_SHM_DISABLE","1")     # try 1; if it fixes, /dev/shm/IPC is the issue
+os.environ.setdefault("NCCL_SOCKET_IFNAME","enp212s0")  # adjust to your NIC
 
 def fail(msg):
     print(msg, file=sys.stderr, flush=True)
@@ -31,25 +35,28 @@ if dev_count and local_rank >= dev_count:
 
 # Choose backend
 backend = "nccl" if (dev_count > 0 and sys.platform != "win32") else "gloo"
+print(f"[rank {rank}] backend={backend}", flush=True)
 
 if dev_count:
     torch.cuda.set_device(local_rank)
     print(f"[rank {rank}] set_device ok current_device={torch.cuda.current_device()}", flush=True)
 
-# Init process group with shorter timeout to avoid endless hang
 print(f"[rank {rank}] initializing process group with backend={backend} ...", flush=True)
 dist.init_process_group(backend=backend, timeout=datetime.timedelta(seconds=120))
 print(f"[rank {rank}] process group initialized", flush=True)
 
-# Rendezvous sanity barrier
 dist.barrier()
 print(f"[rank {rank}] passed first barrier", flush=True)
 
-# Simple all-reduce test BEFORE DDP
 device = f"cuda:{local_rank}" if dev_count else "cpu"
+
+print(f"[rank {rank}] about to do pre-DDP all_reduce", flush=True)
 t = torch.full((1,), rank, device=device)
 dist.all_reduce(t)
-print(f"[rank {rank}] pre-DDP all_reduce sum={t.item()}", flush=True)
+print(f"[rank {rank}] pre-DDP all_reduce done sum={t.item()}", flush=True)
+
+dist.barrier()
+print(f"[rank {rank}] passed second barrier", flush=True)
 
 model = torch.nn.Linear(10, 10).to(device)
 print(f"[rank {rank}] model param device {next(model.parameters()).device}", flush=True)
@@ -57,11 +64,11 @@ print(f"[rank {rank}] model param device {next(model.parameters()).device}", flu
 if backend == "nccl":
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], broadcast_buffers=False)
 else:
-    # gloo/CPU or Windows
     model = torch.nn.parallel.DistributedDataParallel(model)
 
 print(f"[rank {rank}] DDP wrap done", flush=True)
 
+print(f"[rank {rank}] about to do post-DDP all_reduce", flush=True)
 x = torch.ones(1, device=device) * rank
 dist.all_reduce(x)
 print(f"[rank {rank}] post-DDP all_reduce sum={x.item()}", flush=True)

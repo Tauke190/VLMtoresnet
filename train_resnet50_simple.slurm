@@ -22,7 +22,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u train_resnet50.py
+python -u train_resnet50_simple.py
 
 # Optional cleanup
 conda deactivate
