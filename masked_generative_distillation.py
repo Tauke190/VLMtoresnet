@@ -1,12 +1,3 @@
-# Logit distillation + Supervised finetuning + Masked Generative Distillation (MGD)
-# Description:
-# Distills CLIP ViT-L/14 teacher into ResNet-50 student:
-# - Final feature (global) pathway kept (commented out as in prior version)
-# - Zero-shot evaluation now uses zeroshot_classifier + evaluate_zero_shot (no precompute_text_features)
-# - Masked Generative Distillation (MGD) reconstructs teacher deep tokens
-#
-# Dependencies:
-# pip install torch torchvision timm git+https://github.com/openai/CLIP.git thop
 
 import torch
 import torch.nn as nn

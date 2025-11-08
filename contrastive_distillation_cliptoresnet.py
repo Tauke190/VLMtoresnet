@@ -1,12 +1,3 @@
-# Logit distillation + Supervised finetuning + Contrastive Representational Distillation (CRD)
-# Description:
-# A script to perform knowledge distillation from a CLIP ViT-L/14 teacher to a
-# ResNet-50 student, with validation on a subset of the validation set
-# after each epoch. This version is configured for the Oxford-IIIT Pet Dataset.
-# CRD: uses CLIP text embeddings (class prototypes) as anchors and student image features as queries.
-#
-# Dependencies:
-# pip install torch torchvision timm git+https://github.com/openai/CLIP.git
 
 import torch
 import torch.nn as nn
@@ -57,55 +48,6 @@ CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
 
-def get_teacher_features(model, images):
-    with torch.no_grad():
-        features = model.encode_image(images)
-    return features
-
-def get_student_features(backbone, images):
-    feature_map = backbone.forward_features(images)
-    pooled_features = backbone.global_pool(feature_map)
-    return pooled_features
-
-def load_prompts_from_file(filepath):
-    try:
-        with open(filepath, 'r') as f:
-            templates = [line.strip() for line in f.readlines()]
-        # Fallback to default if empty
-        if len(templates) == 0:
-            templates = ["a photo of a {}"]
-        print(f"Loaded {len(templates)} templates from {filepath}.")
-        return templates
-    except FileNotFoundError:
-        print(f"Error: Prompt file not found at {filepath}. Using a default template.")
-        return ["a photo of a {}"]
-
-# Replace zeroshot_validate_student with a version that uses precomputed text features
-def zeroshot_classifier(classnames, templates, model, show_progress=True):
-    """ 
-    Creating zero-shot classifier weights. This is taken from CLIP official codebase.
-    """
-    with torch.no_grad():
-        zeroshot_weights = []
-        iterator = classnames
-        if show_progress:
-            try:
-                from tqdm import tqdm
-                iterator = tqdm(classnames, desc="Building zero-shot weights", total=len(classnames))
-            except Exception:
-                iterator = classnames
-        for classname in iterator:
-            texts = [template.format(classname) for template in templates]
-            tokens = clip.tokenize(texts).to(DEVICE)
-            class_embeddings = model.encode_text(tokens)
-            class_embeddings = class_embeddings.float()  # force FP32 to match student/projection
-            class_embeddings /= class_embeddings.norm(dim=-1, keepdim=True)
-            class_embedding = class_embeddings.mean(dim=0)
-            class_embedding /= class_embedding.norm()
-            zeroshot_weights.append(class_embedding)
-        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(device=DEVICE, dtype=torch.float32)
-    return zeroshot_weights
-
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
@@ -140,32 +82,8 @@ def compute_flops(model, resolution=(3, 224, 224)):
     print(f"***** Model Parameters: {params:,} *****\n")
     return flops / 10 ** 9, params
 
-def load_imagenet_classnames(json_path="imagenet_class_index.json"):
-    with open(json_path, "r") as f:
-        idx_to_data = json.load(f)
-    # Returns list indexed by class idx: human-readable name
-    return [idx_to_data[str(i)][1].replace('_', ' ') for i in range(len(idx_to_data))]
 
-# New: map synset -> readable name, then align to ImageFolder class order
-def load_imagenet_synset_to_name(json_path="imagenet_class_index.json"):
-    with open(json_path, "r") as f:
-        idx_to_data = json.load(f)
-    # idx -> (synset, name)
-    return {idx_to_data[str(i)][0]: idx_to_data[str(i)][1].replace('_', ' ') for i in range(len(idx_to_data))}
 
-def imagenet_aligned_classnames(dataset, json_path="imagenet_class_index.json"):
-    syn_to_name = load_imagenet_synset_to_name(json_path)
-    return [syn_to_name.get(syn, syn) for syn in dataset.classes]
-
-def imagefolder_human_names(dataset):
-    return [c.replace('_', ' ') for c in dataset.classes]
-
-def read_txt(file_location):
-    with open(file_location, 'r') as file:
-        content = file.read(); content = str(content); content = content.split('\n', -1)
-    try: content.remove("")
-    except: pass
-    return content
 
 
 # CRD loss: student image features as queries, CLIP text features (class prototypes) as keys.
