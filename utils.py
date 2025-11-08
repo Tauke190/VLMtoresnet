@@ -108,7 +108,7 @@ def save_checkpoint(backbone, projector, epoch, project_root, script_path):
     checkpoint_dir = project_root / "distilled_checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     # Avoid overwriting by including epoch in filename
-    checkpoint_path = checkpoint_dir / f"{Path(script_path).stem}_epoch{epoch}.pt"
+    checkpoint_path = checkpoint_dir / f"{Path(script_path).stem}.pt"
     torch.save({
         'backbone_state_dict': backbone.state_dict(),
         'projector_state_dict': projector.state_dict(),

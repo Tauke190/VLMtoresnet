@@ -39,8 +39,6 @@ OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 USE_CRD = True
 CRD_WEIGHT = 0.9  # weight for contrastive distillation loss term relative to other losses
 
-
-
 # Add path setup for importing zero-shot utilities and templates
 PROJECT_ROOT = Path(__file__).parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
