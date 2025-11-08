@@ -237,11 +237,10 @@ def run_distillation():
         print(f"Found {num_classes} classes in the dataset.")
 
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
-        classifier = nn.Linear(student_feature_dim, num_classes).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
         ce_loss_fn = nn.CrossEntropyLoss()
 
-        params_to_train = list(backbone.parameters()) + list(projector.parameters()) + list(classifier.parameters())
+        params_to_train = list(backbone.parameters()) + list(projector.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
         prompt_file = "prompt/imagenet1k.txt"
@@ -291,12 +290,25 @@ def run_distillation():
 
         scaler = GradScaler()
 
+
+        # Initial zero-shot validation before training
+        print("\nInitial zero-shot validation before training:")
+        top1, top5 = zeroshot_validate_student(
+            backbone, projector, val_loader_subset, text_features_imagenet, logit_scale, DEVICE
+        )
+        print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+        if EVAL_OXFORD_PET and pet_val_loader is not None:
+            pet_top1, pet_top5 = zeroshot_validate_student(
+                backbone, projector, pet_val_loader, text_features_pet, logit_scale, DEVICE
+            )
+        print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
 
             backbone.train()
             projector.train()
-            classifier.train()
             running_loss = 0.0
 
             # Train
@@ -314,11 +326,8 @@ def run_distillation():
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
 
                     # Distillation (MSE) in the normalized feature space
-                    loss_distill = distill_loss_fn(projected_student_features, teacher_features)
+                    final_feature_loss = distill_loss_fn(projected_student_features, teacher_features)
 
-                    # Supervised classification loss on student features
-                    logits_cls = classifier(student_features)
-                    loss_ce = ce_loss_fn(logits_cls, labels)
 
                     # CRD: contrastive loss between student projected feats and CLIP text anchors
                     if USE_CRD:
@@ -329,7 +338,7 @@ def run_distillation():
                         loss_crd = torch.tensor(0.0, device=DEVICE)
 
                     # Total loss: keep original terms and add CRD
-                    total_loss = loss_distill + 0.5 * loss_ce + CRD_WEIGHT * loss_crd
+                    total_loss = final_feature_loss + CRD_WEIGHT * loss_crd
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
