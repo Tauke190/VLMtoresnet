@@ -233,17 +233,9 @@ if __name__ == "__main__":
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         # Compare params as dicts for checkpoint compatibility
         if hasattr(checkpoint["params"], "__dict__"):
-            if params.__dict__ != checkpoint["params"].__dict__:
-                print("Current params:", params.__dict__)
-                print("Checkpoint params:", checkpoint["params"].__dict__)
-                raise AssertionError("Params mismatch between current run and checkpoint!")
-            # assert params.__dict__ == checkpoint["params"].__dict__
+            params = checkpoint["params"]
         else:
-            if params.__dict__ != checkpoint["params"]:
-                print("Current params:", params.__dict__)
-                print("Checkpoint params:", checkpoint["params"])
-                raise AssertionError("Params mismatch between current run and checkpoint!")
-            # assert params.__dict__ == checkpoint["params"]
+            params.__dict__.update(checkpoint["params"])
 
     # from torch.utils.tensorboard import SummaryWriter
     from pathlib import Path
