@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:2
 #SBATCH --mem=48G
-#SBATCH --time=48:00:00
+#SBATCH --time=72:00:00
 #SBATCH --constraint=ampere        # ✅ request Ampere GPUs only
 
 # Load necessary modules
