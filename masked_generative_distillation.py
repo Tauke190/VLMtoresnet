@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, Subset
 import timm
@@ -11,37 +10,44 @@ import random
 import numpy as np
 from torch.cuda.amp import autocast, GradScaler
 from pathlib import Path
-from typing import Tuple
 import sys
 import os
 
-# --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.2
+# --- Configuration (match overall logic with finalfeature_..., keep CRD strategy) ---
+TRAIN_SUBSET_RATIO = 0.1
+TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05  # Used for validation accuracy in each epoch
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
-VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-EARLY_STOPPING_PATIENCE = 3
-EARLY_STOPPING_MIN_DELTA = 1e-4
 
+# Early stopping (copy behavior from finalfeature_)
+VAL_ACC_DROP_THRESHOLD = 10.0  # Early stopping if val accuracy drops by more than this %
+EARLY_STOPPING_PATIENCE = 3       # Not used but kept for parity
+EARLY_STOPPING_MIN_DELTA = 1e-4   # Not used but kept for parity
+
+# New eval config
 EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
-OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'
+OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
+# --- CRD configuration (keep original distillation strategy) ---
+USE_CRD = True
+CRD_WEIGHT = 0.9  # weight for contrastive distillation loss term relative to other losses
+
+# Paths and utils
 PROJECT_ROOT = Path(__file__).parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
 sys.path.append(str(PROJECT_ROOT))
 
-# --- Import shared helpers (style copied from finalfeature) ---
 from utils import (
     zeroshot_classifier,
     get_teacher_features,
@@ -51,28 +57,12 @@ from utils import (
     read_txt,
     save_checkpoint,
     compute_flops,
+    plot_and_save_losses,
 )
 
-# --- MGD configuration ---
-USE_MGD = True
-MGD_MASK_RATIO = 0.4
-MGD_WEIGHT = 1.0
-MGD_CONV_EXPANSION = 1.0
-
-# New: embedding-level MGD config (on 768-d CLIP image embedding)
-USE_EMB_MGD = True
-EMB_MGD_MASK_RATIO = 0.4
-EMB_MGD_WEIGHT = 1.0
-EMB_MGD_MLP_EXP = 2.0
-# New: use generator output for zero-shot evaluation
-USE_GEN_FOR_ZS = True
-
-
-def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE, logit_scale=100.0, emb_gen_block: nn.Module=None, use_gen: bool=False):
+def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
-    if use_gen and emb_gen_block is not None:
-        emb_gen_block.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
 
     top1_correct, top5_correct, total = 0, 0, 0
@@ -82,11 +72,7 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE, l
             student_feats = get_student_features(backbone, images)
             proj_feats = projector(student_feats).float()
             proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
-            if use_gen and emb_gen_block is not None:
-                # inference: no masking; treat generator as a refinement head
-                proj_feats = emb_gen_block(proj_feats)
-                proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
-            logits = float(logit_scale) * (proj_feats @ zs_weights)
+            logits = 100.0 * (proj_feats @ zs_weights)
             _, top5 = logits.topk(5, dim=1)
             total += labels.size(0)
             top1_correct += (top5[:, 0] == labels).sum().item()
@@ -95,134 +81,82 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE, l
     top5 = 100.0 * top5_correct / total
     return top1, top5
 
+# Clean ImageNet dataloader pipeline (copied from finalfeature_)
+def build_imagenet_loaders(
+    train_dir,
+    val_dir,
+    transform,
+    batch_size=32,
+    subset_ratio=0.2,
+    eval_ratio_within_subset=0.2,
+    num_workers=2,
+    seed=42,
+):
+    train_dir = os.path.expanduser(train_dir)
+    val_dir = os.path.expanduser(val_dir)
 
-def get_vit_token_width_from_visual(visual) -> int:
-    if hasattr(visual, "width"):
-        return int(visual.width)
-    if hasattr(visual, "positional_embedding") and visual.positional_embedding is not None:
-        return int(visual.positional_embedding.shape[-1])
-    if hasattr(visual, "ln_post") and hasattr(visual.ln_post, "weight"):
-        return int(visual.ln_post.weight.shape[0])
-    if hasattr(visual, "conv1") and hasattr(visual.conv1, "out_channels"):
-        return int(visual.conv1.out_channels)
-    raise AttributeError("Cannot infer ViT token width from CLIP visual module.")
+    base_train = ImageFolder(root=train_dir, transform=transform)
+    base_val = ImageFolder(root=val_dir, transform=transform)
 
+    print(f"Loaded ImageNet train from: {train_dir} ({len(base_train)} images, {len(base_train.classes)} classes)")
+    print(f"Loaded ImageNet val   from: {val_dir} ({len(base_val)} images, {len(base_val.classes)} classes)")
 
-def get_teacher_vit_tokens(teacher, images) -> Tuple[torch.Tensor, int, int, int]:
-    visual = teacher.visual
-    B = images.shape[0]
-    x = visual.conv1(images)
-    x = x.reshape(B, x.shape[1], -1).permute(0, 2, 1)
-    cls = visual.class_embedding.to(x.dtype)
-    cls = cls + torch.zeros(B, 1, cls.shape[-1], dtype=x.dtype, device=x.device)
-    x = torch.cat([cls, x], dim=1)
-    x = x + visual.positional_embedding.to(x.dtype)
-    x = visual.ln_pre(x)
-    x = x.permute(1, 0, 2)
-    x = visual.transformer(x)
-    x = x.permute(1, 0, 2)
-    x = visual.ln_post(x)
-    tokens = x[:, 1:, :]
-    Dt = tokens.shape[-1]
-    Nt = tokens.shape[1]
-    Ht = Wt = int((Nt) ** 0.5)
-    return tokens, Nt, Ht, Wt
+    # Stratified per-class subset from train
+    class_to_indices = {}
+    for idx, cls in enumerate(base_train.targets):
+        class_to_indices.setdefault(cls, []).append(idx)
 
+    g = torch.Generator().manual_seed(seed)
+    selected_indices = []
+    for cls, idxs in class_to_indices.items():
+        k_subset = max(1, int(len(idxs) * subset_ratio))
+        perm = torch.randperm(len(idxs), generator=g).tolist()
+        selected = [idxs[p] for p in perm[:k_subset]]
+        selected_indices.extend(selected)
 
-class GenerativeBlock(nn.Module):
-    def __init__(self, channels: int, expansion: float = 1.0):
-        super().__init__()
-        hidden = int(channels * expansion)
-        self.net = nn.Sequential(
-            nn.Conv2d(channels, hidden, kernel_size=3, padding=1, bias=True),
-            nn.GELU(),
-            nn.Conv2d(hidden, channels, kernel_size=1, bias=True)
-        )
+    # Split the selected subset into train/eval (stratified, per-class)
+    train_split_indices, eval_split_indices = [], []
+    selected_set = set(selected_indices)
+    for cls, idxs in class_to_indices.items():
+        selected_cls = [i for i in idxs if i in selected_set]
+        if not selected_cls:
+            continue
+        perm = torch.randperm(len(selected_cls), generator=g).tolist()
+        selected_cls = [selected_cls[p] for p in perm]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        if len(selected_cls) == 1:
+            train_split_indices.extend(selected_cls)
+            continue
 
+        k_eval = max(1, int(round(len(selected_cls) * eval_ratio_within_subset)))
+        k_eval = min(k_eval, len(selected_cls) - 1)
+        eval_split_indices.extend(selected_cls[:k_eval])
+        train_split_indices.extend(selected_cls[k_eval:])
 
-def compute_mgd_loss(student_feat_map: torch.Tensor,
-                     align_conv: nn.Conv2d,
-                     gen_block: nn.Module,
-                     masked_token: torch.nn.Parameter,
-                     teacher_tokens: torch.Tensor,
-                     Ht: int, Wt: int,
-                     mask_ratio: float = 0.4) -> torch.Tensor:
-    B, _, Hs, Ws = student_feat_map.shape
-    Dt = teacher_tokens.shape[-1]
-    Nt = Ht * Wt
+    train_subset = Subset(base_train, train_split_indices)
+    eval_subset = Subset(base_train, eval_split_indices)
 
-    # Align student map to teacher token width and spatial size
-    s = align_conv(student_feat_map)
-    s = F.interpolate(s, size=(Ht, Wt), mode='bilinear', align_corners=False)
-    s_tokens = s.flatten(2).transpose(1, 2).contiguous()  # [B, Nt, Dt]
+    print(
+        f"Using train subset (for training): {len(train_split_indices)} images "
+        f"and train-eval subset (for validation during training): {len(eval_split_indices)} images "
+        f"(subset_ratio={subset_ratio:.2f}, eval_within_subset={eval_ratio_within_subset:.2f})"
+    )
 
-    # Random mask for each sample
-    num_mask = max(1, int(mask_ratio * Nt))
-    mask = torch.zeros(B, Nt, dtype=torch.bool, device=s_tokens.device)
-    for b in range(B):
-        idx = torch.randperm(Nt, device=s_tokens.device)[:num_mask]
-        mask[b, idx] = True
+    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    train_eval_loader = DataLoader(eval_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    full_val_loader = DataLoader(base_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
 
-    # Replace masked tokens with learned vector
-    s_tokens_masked = s_tokens.clone()
-    s_tokens_masked[mask] = masked_token.to(s_tokens_masked.dtype)
-    s_masked_map = s_tokens_masked.transpose(1, 2).reshape(B, Dt, Ht, Wt)
+    return train_loader, train_eval_loader, full_val_loader, base_train, base_val
 
-    # Generate/reconstruct masked tokens
-    s_gen_map = gen_block(s_masked_map)
-    s_gen_tokens = s_gen_map.flatten(2).transpose(1, 2).contiguous()
-
-    pred_masked = s_gen_tokens[mask]
-    target_masked = teacher_tokens[mask]
-    loss = F.mse_loss(pred_masked, target_masked)
-    return loss
-# ----------------------------------------------
-
-class EmbGenerativeBlock(nn.Module):
-    """Tiny MLP to reconstruct masked embedding dims"""
-    def __init__(self, dim: int, expansion: float = 2.0):
-        super().__init__()
-        hidden = int(dim * expansion)
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden, bias=True),
-            nn.GELU(),
-            nn.Linear(hidden, dim, bias=True),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-def compute_emb_mgd_loss(projected_student: torch.Tensor,
-                         teacher_embed: torch.Tensor,
-                         gen_block: nn.Module,
-                         masked_dim_vec: torch.nn.Parameter,
-                         mask_ratio: float = 0.4) -> torch.Tensor:
-    """
-    Mask a subset of embedding dimensions of the projected student embedding with a single
-    learnable vector and reconstruct masked dims via a small MLP. Loss is computed only
-    on masked dimensions against the teacher embedding.
-    """
-    B, D = projected_student.shape
-    num_mask = max(1, int(mask_ratio * D))
-
-    # Build a per-sample boolean mask over dimensions
-    mask = torch.zeros(B, D, dtype=torch.bool, device=projected_student.device)
-    for b in range(B):
-        idx = torch.randperm(D, device=projected_student.device)[:num_mask]
-        mask[b, idx] = True
-
-    # Replace masked dims with a single learnable vector value (shared across batch)
-    template = masked_dim_vec.view(1, D).expand(B, -1).to(projected_student.dtype)
-    s_masked = torch.where(mask, template, projected_student)
-
-    # Reconstruct and supervise only masked dims
-    pred = gen_block(s_masked)
-    loss = F.mse_loss(pred[mask], teacher_embed[mask])
-    return loss
-
+# CRD loss (keep original)
+def contrastive_distill_loss(student_features_norm, labels, class_text_features_norm, logit_scale=None):
+    # student_features_norm: [B, D], normalized
+    # class_text_features_norm: [C, D], normalized
+    logits = student_features_norm @ class_text_features_norm.t()  # [B, C]
+    if logit_scale is not None:
+        logits = logits * logit_scale.exp()
+    ce = nn.CrossEntropyLoss()
+    return ce(logits, labels)
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -237,104 +171,56 @@ def run_distillation():
     print("Loading student model (ResNet-50)...")
     backbone = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
     teacher_feature_dim = teacher.visual.output_dim
-    teacher_token_width = get_vit_token_width_from_visual(teacher.visual)
     student_feature_dim = backbone.num_features
 
     print("Computing FLOPs and parameters for the student model...")
     compute_flops(backbone, resolution=(3, 224, 224))
 
-    train_transform = preprocess
-    val_transform = preprocess
+    # --- Datasets and loaders (copied structure) ---
+    print("Building datasets and dataloaders (subset train, small train-eval split, full val)...")
+    train_loader, train_eval_loader, val_loader, base_train, base_val = build_imagenet_loaders(
+        TRAIN_DIR,
+        VAL_DIR,
+        transform=preprocess,
+        batch_size=BATCH_SIZE,
+        subset_ratio=TRAIN_SUBSET_RATIO,
+        eval_ratio_within_subset=TRAIN_EVAL_WITHIN_SUBSET_RATIO,
+        num_workers=2,
+        seed=42,
+    )
+    num_classes = len(base_train.classes)
+    print(f"Found {num_classes} classes in ImageNet.")
 
     try:
-        total_start_time = time.time()
-        print(f"Loading training dataset from: {TRAIN_DIR}")
-        base_train = ImageFolder(root=os.path.expanduser(TRAIN_DIR), transform=train_transform)
-
-        # Balanced per-class subset
-        targets = base_train.targets
-        class_to_indices = {}
-        for idx, t in enumerate(targets):
-            class_to_indices.setdefault(t, []).append(idx)
-        selected_indices = []
-        g = torch.Generator().manual_seed(42)
-        for cls, idxs in class_to_indices.items():
-            k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
-            perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
-            for p in perm:
-                selected_indices.append(idxs[p])
-        trainval_subset = Subset(base_train, selected_indices)
-        print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
-
-        # Split subset into train/val (80/20)
-        val_ratio_within_subset = 0.20
-        num_subset = len(selected_indices)
-        num_val = int(num_subset * val_ratio_within_subset)
-        num_train = num_subset - num_val
-
-        indices = list(range(num_subset))
-        random.seed(42)
-        random.shuffle(indices)
-        train_indices = indices[:num_train]
-        val_indices = indices[num_train:]
-
-        train_dataset = Subset(trainval_subset, train_indices)
-        train_subset_val_dataset = Subset(trainval_subset, val_indices)
-
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        train_subset_val_loader = DataLoader(train_subset_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        print(f"Train subset: {len(train_dataset)} images, Internal val subset: {len(train_subset_val_dataset)} images.")
-
-        print(f"Loading full validation dataset from: {VAL_DIR}")
-        full_val_dataset = ImageFolder(root=os.path.expanduser(VAL_DIR), transform=val_transform)
-        val_loader_full = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Full validation set: {len(full_val_dataset)} images.")
-
-        # Fixed validation subset for quick eval per epoch
-        val_indices_fixed = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
-        val_subset_fixed = Subset(full_val_dataset, val_indices_fixed)
-        val_loader_subset = DataLoader(val_subset_fixed, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        num_classes = len(base_train.classes)
-        print(f"Found {num_classes} classes.")
-
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
-        # classifier removed; we use projector for zero-shot space
-        distill_loss_fn = nn.MSELoss()  # kept if needed later (not used for MGD-only)
+        distill_loss_fn = nn.MSELoss()
+        params_to_train = list(backbone.parameters()) + list(projector.parameters())
+        optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
-        # MGD modules (token-level; keep optional)
-        student_align = nn.Conv2d(student_feature_dim, teacher_token_width, kernel_size=1, bias=True).to(DEVICE)
-        gen_block = GenerativeBlock(teacher_token_width, expansion=MGD_CONV_EXPANSION).to(DEVICE)
-        masked_token = nn.Parameter(torch.zeros(teacher_token_width, device=DEVICE))
-        nn.init.normal_(masked_token, std=0.02)
-
-        # New: embedding-level MGD modules
-        emb_gen_block = EmbGenerativeBlock(teacher_feature_dim, expansion=EMB_MGD_MLP_EXP).to(DEVICE)
-        masked_dim_vec = nn.Parameter(torch.zeros(teacher_feature_dim, device=DEVICE))
-        nn.init.normal_(masked_dim_vec, std=0.02)
-
-        params = list(backbone.parameters()) + \
-                 list(projector.parameters()) + \
-                 list(student_align.parameters()) + \
-                 list(gen_block.parameters()) + \
-                 [masked_token] + \
-                 list(emb_gen_block.parameters()) + \
-                 [masked_dim_vec]
-        optimizer = optim.AdamW(params, lr=LEARNING_RATE)
-
-        # Templates and zero-shot weights (style from finalfeature)
+        # Templates and zero-shot weights (copied pattern; aligned per dataset)
         imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
-        imagenet_class_names_val = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
         print("Loaded ImageNet templates from CLIP/dataloaders/templates/imagenet1k.txt")
         print(f"Templates count: {len(imagenet_templates)}")
 
-        print("Building ImageNet zero-shot weights...")
-        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names_val, imagenet_templates, teacher).to(DEVICE)
+        print("Building ImageNet zero-shot weights for train-eval loader...")
+        imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+        imagenet_zs_weights_train = zeroshot_classifier(
+            imagenet_class_names_train, imagenet_templates, teacher
+        ).to(DEVICE)  # [D, C_train]
+        # For CRD anchors (class text features): [C, D], normalized
+        text_features_train = imagenet_zs_weights_train.t().contiguous()
+        text_features_train = text_features_train / text_features_train.norm(dim=-1, keepdim=True)
 
+        print("Building ImageNet zero-shot weights for full val loader...")
+        imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
+        imagenet_zs_weights_val = zeroshot_classifier(
+            imagenet_class_names_val, imagenet_templates, teacher
+        ).to(DEVICE)  # [D, C_val]
+
+        # Optional: Oxford-IIIT Pet zero-shot eval
         if EVAL_OXFORD_PET:
             print(f"Loading Oxford-IIIT Pet validation dataset from: {OXFORD_PET_VAL_DIR}")
-            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=val_transform)
+            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=preprocess)
             pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
             pet_class_names = imagefolder_human_names(pet_val_dataset)
             pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
@@ -344,40 +230,38 @@ def run_distillation():
         else:
             pet_val_loader, pet_zs_weights = None, None
 
-        print("\nStarting distillation (MGD only)...")
-        best_loss = float('inf')
-        epochs_no_improve = 0
+        # Optional learnable/fixed logit scale for CRD
+        logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
+
+        print("\nStarting logit distillation + CRD...")
+        total_start_time = time.time()
+
         scaler = GradScaler()
 
-        # Initial zero-shot evaluation
+        # Initial zero-shot evaluation on the small held-out train-eval subset
         print("\nInitial zero-shot evaluation (student projected into CLIP space):")
-        t_logit_scale = float(teacher.logit_scale.exp().item())
-        top1_init, top5_init = evaluate_zero_shot(
-            backbone, projector, val_loader_subset, imagenet_zs_weights,
-            DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-        )
-        print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1_init:.2f}%, Top-5: {top5_init:.2f}%")
+        top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+        print(f"[Train-Eval SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_t1_init, pet_t5_init = evaluate_zero_shot(
-                backbone, projector, pet_val_loader, pet_zs_weights,
-                DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-            )
-            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_t1_init:.2f}%, Top-5: {pet_t5_init:.2f}%")
+            pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
         # Save initial checkpoint
         save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
+        train_losses = []
+        val_accuracies = []
+
+        # Early stopping baseline (match finalfeature_ behavior)
+        best_val_acc = None
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
+
             backbone.train()
             projector.train()
-            student_align.train()
-            gen_block.train()
-            emb_gen_block.train()  # ensure generator trains
-
             running_loss = 0.0
 
-            # ETA timing like finalfeature
             first_100_time = 0.0
             first_1000_time = 0.0
             eta_100_printed = False
@@ -385,139 +269,123 @@ def run_distillation():
 
             for i, (images, labels) in enumerate(train_loader):
                 batch_start = time.time()
+
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
-
                 with autocast():
-                    # Forward student features
+                    # Teacher image features for MSE distillation
+                    teacher_features = get_teacher_features(teacher, images).float()
                     student_features = get_student_features(backbone, images)
-                    projected_student = projector(student_features)
-                    projected_student = projected_student / projected_student.norm(dim=-1, keepdim=True)
+                    projected_student_features = projector(student_features)
 
-                    # New: embedding-level MGD on CLIP image embedding (768-d)
-                    if USE_EMB_MGD:
-                        with torch.no_grad():
-                            t_img = teacher.encode_image(images).float()
-                            t_img = F.normalize(t_img, dim=-1)
-                        loss_emb_mgd = compute_emb_mgd_loss(
-                            projected_student,
-                            t_img,
-                            emb_gen_block,
-                            masked_dim_vec,
-                            mask_ratio=EMB_MGD_MASK_RATIO
+                    # Normalize for cosine space losses
+                    teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
+                    projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+
+                    # MSE feature distillation
+                    final_feature_loss = distill_loss_fn(projected_student_features, teacher_features)
+
+                    # CRD term
+                    if USE_CRD:
+                        loss_crd = contrastive_distill_loss(
+                            projected_student_features, labels, text_features_train, logit_scale=logit_scale
                         )
                     else:
-                        loss_emb_mgd = torch.tensor(0.0, device=DEVICE)
+                        loss_crd = torch.tensor(0.0, device=DEVICE)
 
-                    # Optional: token-level MGD (original)
-                    if USE_MGD:
-                        with torch.no_grad():
-                            teacher_tokens, Nt, Ht, Wt = get_teacher_vit_tokens(teacher, images)
-                        student_feat_map = backbone.forward_features(images)
-                        loss_mgd = compute_mgd_loss(
-                            student_feat_map,
-                            student_align,
-                            gen_block,
-                            masked_token,
-                            teacher_tokens,
-                            Ht, Wt,
-                            mask_ratio=MGD_MASK_RATIO
-                        )
-                    else:
-                        loss_mgd = torch.tensor(0.0, device=DEVICE)
+                    # Total loss (CRD + MSE, as requested)
+                    total_loss = 0.1 * final_feature_loss + CRD_WEIGHT * loss_crd
 
-                    total_loss = (EMB_MGD_WEIGHT * loss_emb_mgd) + (MGD_WEIGHT * loss_mgd)
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-                running_loss += float(total_loss.detach().item())
+                running_loss += total_loss.item()
 
-                # ETA estimation in first epoch
+                # ETA logging (first epoch only)
                 if epoch == 0:
-                    bt = time.time() - batch_start
+                    batch_time = time.time() - batch_start
                     if i < 100:
-                        first_100_time += bt
+                        first_100_time += batch_time
                         if i == 99 and not eta_100_printed:
                             avg_bt_100 = first_100_time / 100
                             total_batches_all_epochs = NUM_EPOCHS * len(train_loader)
-                            est_hours = (avg_bt_100 * total_batches_all_epochs) / 3600
-                            est_min_per_epoch = (avg_bt_100 * len(train_loader)) / 60
+                            est_total_seconds_100 = avg_bt_100 * total_batches_all_epochs
+                            est_hours_100 = est_total_seconds_100 / 3600
+                            est_minutes_per_epoch_100 = (avg_bt_100 * len(train_loader)) / 60
                             print(f"[ETA-100] Avg batch {avg_bt_100*1000:.1f} ms -> "
-                                  f"Estimated total training time: {est_hours:.2f} h "
-                                  f"(~{est_min_per_epoch:.1f} min/epoch).")
+                                  f"Estimated total training time: {est_hours_100:.2f} h "
+                                  f"(~{est_minutes_per_epoch_100:.1f} min/epoch based on first 100 batches).")
                             eta_100_printed = True
                     if i < 1000:
-                        first_1000_time += bt
+                        first_1000_time += batch_time
                         if i == 999 and not eta_1000_printed:
                             avg_bt_1000 = first_1000_time / 1000
                             total_batches_all_epochs = NUM_EPOCHS * len(train_loader)
-                            est_hours = (avg_bt_1000 * total_batches_all_epochs) / 3600
-                            est_min_per_epoch = (avg_bt_1000 * len(train_loader)) / 60
+                            est_total_seconds_1000 = avg_bt_1000 * total_batches_all_epochs
+                            est_hours_1000 = est_total_seconds_1000 / 3600
+                            est_minutes_per_epoch_1000 = (avg_bt_1000 * len(train_loader)) / 60
                             print(f"[ETA-1000] Avg batch {avg_bt_1000*1000:.1f} ms -> "
-                                  f"Estimated total training time: {est_hours:.2f} h "
-                                  f"(~{est_min_per_epoch:.1f} min/epoch).")
+                                  f"Estimated total training time: {est_hours_1000:.2f} h "
+                                  f"(~{est_minutes_per_epoch_1000:.1f} min/epoch based on first 1000 batches).")
                             eta_1000_printed = True
 
                 if (i + 1) % 100 == 0:
                     avg_loss_so_far = running_loss / (i + 1)
-                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] Step [{i+1}/{len(train_loader)}] Avg Loss: {avg_loss_so_far:.4f}")
+                    if USE_CRD:
+                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] Step [{i+1}/{len(train_loader)}] Avg Loss: {avg_loss_so_far:.4f} (MSE+CRD)")
+                    else:
+                        print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] Step [{i+1}/{len(train_loader)}] Avg Loss: {avg_loss_so_far:.4f}")
 
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
+            train_losses.append(epoch_loss)
 
-            # Early stopping on train loss
-            if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
-                best_loss = epoch_loss
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-                print(f"Early stopping patience: {epochs_no_improve}/{EARLY_STOPPING_PATIENCE}")
-                if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
-                    print("Early stopping triggered.")
-                    break
+            epoch_time = time.time() - epoch_start_time
+            print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
-            print(f"Time taken for Epoch {epoch+1}: {(time.time() - epoch_start_time) / 60:.2f} minutes")
-
-            # Per-epoch validation (zero-shot)
+            # Evaluate on the small held-out split from the train subset
             if EVAL_FULL_VAL_EACH_EPOCH:
-                top1_e, top5_e = evaluate_zero_shot(
-                    backbone, projector, val_loader_subset, imagenet_zs_weights,
-                    DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-                )
-                print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1_e:.2f}%, Top-5: {top5_e:.2f}%")
+                top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+                print(f"[Train-Eval SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+                val_accuracies.append(top1)
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
-                    pet_t1_e, pet_t5_e = evaluate_zero_shot(
-                        backbone, projector, pet_val_loader, pet_zs_weights,
-                        DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-                    )
-                    print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_t1_e:.2f}%, Top-5: {pet_t5_e:.2f}%")
+                    pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+                    print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
-            # Save checkpoint after epoch
-            save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
-            print("---------------------------------")
+            # Overwrite the plot after each epoch
+            plot_and_save_losses(train_losses, val_accuracies, __file__)
 
-        print("\nFinal validation on full sets...")
-        top1_final, top5_final = evaluate_zero_shot(
-            backbone, projector, val_loader_full, imagenet_zs_weights,
-            DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-        )
-        print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1_final:.2f}%, Top-5: {top5_final:.2f}%")
+            # Early stopping (match finalfeature_ behavior)
+            if best_val_acc is None:
+                best_val_acc = top1
+                save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
+            else:
+                if top1 < best_val_acc - VAL_ACC_DROP_THRESHOLD:
+                    print(f"Early stopping triggered: validation accuracy dropped by more than {VAL_ACC_DROP_THRESHOLD:.1f}% (from {best_val_acc:.2f}% to {top1:.2f}%).")
+                    break
+                if top1 > best_val_acc:
+                    best_val_acc = top1
+                    save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
+
+        print("---------------------------------")
+
+        # Final evaluation on full ImageNet val
+        print("\nFinal validation:")
+        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, imagenet_zs_weights_val, DEVICE)
+        print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_t1_f, pet_t5_f = evaluate_zero_shot(
-                backbone, projector, pet_val_loader, pet_zs_weights,
-                DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
-            )
-            print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_t1_f:.2f}%, Top-5: {pet_t5_f:.2f}%")
+            pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+            print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
         print("\nDistillation training finished.")
         total_time = time.time() - total_start_time
         print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
+        plot_and_save_losses(train_losses, val_accuracies, __file__)
 
     except FileNotFoundError as e:
-        print("Error: Dataset directory not found. Check paths.")
+        print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)
         return
-
 
 if __name__ == '__main__':
     run_distillation()

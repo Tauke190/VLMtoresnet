@@ -13,9 +13,9 @@ from pathlib import Path
 import sys
 import os
 
-# --- Configuration (copied from finalfeature_..., except distillation strategy remains CRD+MSE) ---
+# --- Configuration (match overall logic with finalfeature_..., keep CRD strategy) ---
 TRAIN_SUBSET_RATIO = 0.1
-TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05  # used for validation accuracy in each epoch
+TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05  # Used for validation accuracy in each epoch
 
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
@@ -27,10 +27,12 @@ LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Early stopping (copied)
+# Early stopping (copy behavior from finalfeature_)
 VAL_ACC_DROP_THRESHOLD = 10.0  # Early stopping if val accuracy drops by more than this %
+EARLY_STOPPING_PATIENCE = 3       # Not used but kept for parity
+EARLY_STOPPING_MIN_DELTA = 1e-4   # Not used but kept for parity
 
-# New eval config (copied)
+# New eval config
 EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
 OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
@@ -79,7 +81,7 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     top5 = 100.0 * top5_correct / total
     return top1, top5
 
-# Dataloader/build pipeline (copied)
+# Clean ImageNet dataloader pipeline (copied from finalfeature_)
 def build_imagenet_loaders(
     train_dir,
     val_dir,
@@ -228,7 +230,7 @@ def run_distillation():
         else:
             pet_val_loader, pet_zs_weights = None, None
 
-        # Optional learnable/fixed logit scale (keep original)
+        # Optional learnable/fixed logit scale for CRD
         logit_scale = torch.nn.Parameter(torch.ones([]) * np.log(1/0.07)).to(DEVICE)
 
         print("\nStarting logit distillation + CRD...")
@@ -249,7 +251,9 @@ def run_distillation():
 
         train_losses = []
         val_accuracies = []
-        best_val_acc = None  # for early stopping based on top1 on train-eval subset
+
+        # Early stopping baseline (match finalfeature_ behavior)
+        best_val_acc = None
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
@@ -278,9 +282,9 @@ def run_distillation():
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
 
                     # MSE feature distillation
-                    final_feature_loss = nn.MSELoss()(projected_student_features, teacher_features)
+                    final_feature_loss = distill_loss_fn(projected_student_features, teacher_features)
 
-                    # CRD
+                    # CRD term
                     if USE_CRD:
                         loss_crd = contrastive_distill_loss(
                             projected_student_features, labels, text_features_train, logit_scale=logit_scale
@@ -288,7 +292,7 @@ def run_distillation():
                     else:
                         loss_crd = torch.tensor(0.0, device=DEVICE)
 
-                    # Total loss (keep original CRD combo)
+                    # Total loss (CRD + MSE, as requested)
                     total_loss = 0.1 * final_feature_loss + CRD_WEIGHT * loss_crd
 
                 optimizer.zero_grad()
@@ -340,7 +344,7 @@ def run_distillation():
             epoch_time = time.time() - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
-            # Evaluate on the held-out split from the train subset
+            # Evaluate on the small held-out split from the train subset
             if EVAL_FULL_VAL_EACH_EPOCH:
                 top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
                 print(f"[Train-Eval SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
@@ -349,10 +353,10 @@ def run_distillation():
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
-            # Update plot
+            # Overwrite the plot after each epoch
             plot_and_save_losses(train_losses, val_accuracies, __file__)
 
-            # Early stopping (copied logic): stop if validation Top-1 drops > threshold; save best
+            # Early stopping (match finalfeature_ behavior)
             if best_val_acc is None:
                 best_val_acc = top1
                 save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
