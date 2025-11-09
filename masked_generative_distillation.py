@@ -16,12 +16,12 @@ import sys
 import os
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.2
+TRAIN_SUBSET_RATIO = 0.1
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
@@ -59,10 +59,20 @@ MGD_MASK_RATIO = 0.4
 MGD_WEIGHT = 1.0
 MGD_CONV_EXPANSION = 1.0
 
+# New: embedding-level MGD config (on 768-d CLIP image embedding)
+USE_EMB_MGD = True
+EMB_MGD_MASK_RATIO = 0.4
+EMB_MGD_WEIGHT = 1.0
+EMB_MGD_MLP_EXP = 2.0
+# New: use generator output for zero-shot evaluation
+USE_GEN_FOR_ZS = True
 
-def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+
+def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE, logit_scale=100.0, emb_gen_block: nn.Module=None, use_gen: bool=False):
     backbone.eval()
     projector.eval()
+    if use_gen and emb_gen_block is not None:
+        emb_gen_block.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
 
     top1_correct, top5_correct, total = 0, 0, 0
@@ -72,7 +82,11 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
             student_feats = get_student_features(backbone, images)
             proj_feats = projector(student_feats).float()
             proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
-            logits = 100.0 * (proj_feats @ zs_weights)
+            if use_gen and emb_gen_block is not None:
+                # inference: no masking; treat generator as a refinement head
+                proj_feats = emb_gen_block(proj_feats)
+                proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
+            logits = float(logit_scale) * (proj_feats @ zs_weights)
             _, top5 = logits.topk(5, dim=1)
             total += labels.size(0)
             top1_correct += (top5[:, 0] == labels).sum().item()
@@ -82,7 +96,6 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     return top1, top5
 
 
-# ----- MGD-specific helpers (kept intact) -----
 def get_vit_token_width_from_visual(visual) -> int:
     if hasattr(visual, "width"):
         return int(visual.width)
@@ -168,6 +181,48 @@ def compute_mgd_loss(student_feat_map: torch.Tensor,
     return loss
 # ----------------------------------------------
 
+class EmbGenerativeBlock(nn.Module):
+    """Tiny MLP to reconstruct masked embedding dims"""
+    def __init__(self, dim: int, expansion: float = 2.0):
+        super().__init__()
+        hidden = int(dim * expansion)
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden, bias=True),
+            nn.GELU(),
+            nn.Linear(hidden, dim, bias=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+def compute_emb_mgd_loss(projected_student: torch.Tensor,
+                         teacher_embed: torch.Tensor,
+                         gen_block: nn.Module,
+                         masked_dim_vec: torch.nn.Parameter,
+                         mask_ratio: float = 0.4) -> torch.Tensor:
+    """
+    Mask a subset of embedding dimensions of the projected student embedding with a single
+    learnable vector and reconstruct masked dims via a small MLP. Loss is computed only
+    on masked dimensions against the teacher embedding.
+    """
+    B, D = projected_student.shape
+    num_mask = max(1, int(mask_ratio * D))
+
+    # Build a per-sample boolean mask over dimensions
+    mask = torch.zeros(B, D, dtype=torch.bool, device=projected_student.device)
+    for b in range(B):
+        idx = torch.randperm(D, device=projected_student.device)[:num_mask]
+        mask[b, idx] = True
+
+    # Replace masked dims with a single learnable vector value (shared across batch)
+    template = masked_dim_vec.view(1, D).expand(B, -1).to(projected_student.dtype)
+    s_masked = torch.where(mask, template, projected_student)
+
+    # Reconstruct and supervise only masked dims
+    pred = gen_block(s_masked)
+    loss = F.mse_loss(pred[mask], teacher_embed[mask])
+    return loss
+
 
 def run_distillation():
     print(f"Using device: {DEVICE}")
@@ -247,17 +302,24 @@ def run_distillation():
         # classifier removed; we use projector for zero-shot space
         distill_loss_fn = nn.MSELoss()  # kept if needed later (not used for MGD-only)
 
-        # MGD modules
+        # MGD modules (token-level; keep optional)
         student_align = nn.Conv2d(student_feature_dim, teacher_token_width, kernel_size=1, bias=True).to(DEVICE)
         gen_block = GenerativeBlock(teacher_token_width, expansion=MGD_CONV_EXPANSION).to(DEVICE)
         masked_token = nn.Parameter(torch.zeros(teacher_token_width, device=DEVICE))
         nn.init.normal_(masked_token, std=0.02)
 
+        # New: embedding-level MGD modules
+        emb_gen_block = EmbGenerativeBlock(teacher_feature_dim, expansion=EMB_MGD_MLP_EXP).to(DEVICE)
+        masked_dim_vec = nn.Parameter(torch.zeros(teacher_feature_dim, device=DEVICE))
+        nn.init.normal_(masked_dim_vec, std=0.02)
+
         params = list(backbone.parameters()) + \
                  list(projector.parameters()) + \
                  list(student_align.parameters()) + \
                  list(gen_block.parameters()) + \
-                 [masked_token]
+                 [masked_token] + \
+                 list(emb_gen_block.parameters()) + \
+                 [masked_dim_vec]
         optimizer = optim.AdamW(params, lr=LEARNING_RATE)
 
         # Templates and zero-shot weights (style from finalfeature)
@@ -288,10 +350,17 @@ def run_distillation():
 
         # Initial zero-shot evaluation
         print("\nInitial zero-shot evaluation (student projected into CLIP space):")
-        top1_init, top5_init = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
+        t_logit_scale = float(teacher.logit_scale.exp().item())
+        top1_init, top5_init = evaluate_zero_shot(
+            backbone, projector, val_loader_subset, imagenet_zs_weights,
+            DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+        )
         print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1_init:.2f}%, Top-5: {top5_init:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_t1_init, pet_t5_init = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+            pet_t1_init, pet_t5_init = evaluate_zero_shot(
+                backbone, projector, pet_val_loader, pet_zs_weights,
+                DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+            )
             print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_t1_init:.2f}%, Top-5: {pet_t5_init:.2f}%")
 
         # Save initial checkpoint
@@ -303,6 +372,7 @@ def run_distillation():
             projector.train()
             student_align.train()
             gen_block.train()
+            emb_gen_block.train()  # ensure generator trains
 
             running_loss = 0.0
 
@@ -322,7 +392,22 @@ def run_distillation():
                     projected_student = projector(student_features)
                     projected_student = projected_student / projected_student.norm(dim=-1, keepdim=True)
 
-                    # MGD loss (teacher tokens)
+                    # New: embedding-level MGD on CLIP image embedding (768-d)
+                    if USE_EMB_MGD:
+                        with torch.no_grad():
+                            t_img = teacher.encode_image(images).float()
+                            t_img = F.normalize(t_img, dim=-1)
+                        loss_emb_mgd = compute_emb_mgd_loss(
+                            projected_student,
+                            t_img,
+                            emb_gen_block,
+                            masked_dim_vec,
+                            mask_ratio=EMB_MGD_MASK_RATIO
+                        )
+                    else:
+                        loss_emb_mgd = torch.tensor(0.0, device=DEVICE)
+
+                    # Optional: token-level MGD (original)
                     if USE_MGD:
                         with torch.no_grad():
                             teacher_tokens, Nt, Ht, Wt = get_teacher_vit_tokens(teacher, images)
@@ -339,8 +424,7 @@ def run_distillation():
                     else:
                         loss_mgd = torch.tensor(0.0, device=DEVICE)
 
-                    total_loss = MGD_WEIGHT * loss_mgd
-
+                    total_loss = (EMB_MGD_WEIGHT * loss_emb_mgd) + (MGD_WEIGHT * loss_mgd)
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
                 scaler.step(optimizer)
@@ -396,10 +480,16 @@ def run_distillation():
 
             # Per-epoch validation (zero-shot)
             if EVAL_FULL_VAL_EACH_EPOCH:
-                top1_e, top5_e = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
+                top1_e, top5_e = evaluate_zero_shot(
+                    backbone, projector, val_loader_subset, imagenet_zs_weights,
+                    DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+                )
                 print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1_e:.2f}%, Top-5: {top5_e:.2f}%")
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
-                    pet_t1_e, pet_t5_e = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+                    pet_t1_e, pet_t5_e = evaluate_zero_shot(
+                        backbone, projector, pet_val_loader, pet_zs_weights,
+                        DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+                    )
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_t1_e:.2f}%, Top-5: {pet_t5_e:.2f}%")
 
             # Save checkpoint after epoch
@@ -407,10 +497,16 @@ def run_distillation():
             print("---------------------------------")
 
         print("\nFinal validation on full sets...")
-        top1_final, top5_final = evaluate_zero_shot(backbone, projector, val_loader_full, imagenet_zs_weights, DEVICE)
+        top1_final, top5_final = evaluate_zero_shot(
+            backbone, projector, val_loader_full, imagenet_zs_weights,
+            DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+        )
         print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1_final:.2f}%, Top-5: {top5_final:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_t1_f, pet_t5_f = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+            pet_t1_f, pet_t5_f = evaluate_zero_shot(
+                backbone, projector, pet_val_loader, pet_zs_weights,
+                DEVICE, logit_scale=t_logit_scale, emb_gen_block=emb_gen_block, use_gen=USE_GEN_FOR_ZS
+            )
             print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_t1_f:.2f}%, Top-5: {pet_t5_f:.2f}%")
         print("\nDistillation training finished.")
 
