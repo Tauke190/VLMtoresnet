@@ -119,17 +119,30 @@ def save_checkpoint(backbone, projector, epoch, project_root, script_path):
 
 def plot_and_save_losses(train_losses, val_accuracy, script_path):
     """
-    Plots and saves training and validation loss curves.
+    Plots and saves training loss and validation accuracy as two subplots in the same image.
     The plot is saved as <script_name>.png in the current directory.
     """
-    plt.figure()
-    plt.plot(train_losses, label='Training Loss')
-    plt.plot(val_accuracy, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
-    plt.legend()
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Training Loss subplot
+    axs[0].plot(train_losses, label='Training Loss', color='blue')
+    axs[0].set_xlabel('Epoch')
+    axs[0].set_ylabel('Loss')
+    axs[0].set_title('Training Loss')
+    axs[0].legend()
+
+    # Validation Accuracy subplot
+    axs[1].plot(val_accuracy, label='Validation Accuracy', color='orange')
+    axs[1].set_xlabel('Epoch')
+    axs[1].set_ylabel('Accuracy (%)')
+    axs[1].set_title('Validation Accuracy')
+    axs[1].legend()
+
+    plt.tight_layout()
     plot_path = f"{Path(script_path).stem}.png"
     plt.savefig(plot_path)
     plt.close()
-    print(f"Saved loss plot as {plot_path}")
+    print(f"Saved loss and accuracy plot as {plot_path}")

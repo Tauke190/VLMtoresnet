@@ -139,8 +139,8 @@ def build_imagenet_loaders(
     eval_subset = Subset(base_train, eval_split_indices)
 
     print(
-        f"Using train subset: {len(train_split_indices)} images "
-        f"and train-eval subset: {len(eval_split_indices)} images "
+        f"Using train subset (for training): {len(train_split_indices)} images "
+        f"and train-eval subset (for validation during training): {len(eval_split_indices)} images "
         f"(subset_ratio={subset_ratio:.2f}, eval_within_subset={eval_ratio_within_subset:.2f})"
     )
 
