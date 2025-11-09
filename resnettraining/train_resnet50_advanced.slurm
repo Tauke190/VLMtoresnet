@@ -23,7 +23,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-torchrun --nproc_per_node=2 train_resnet50_advanced.py
+python train_resnet50_advanced.py
 
 # 🧠 Log GPU info before training
 echo "===== GPU Information ====="

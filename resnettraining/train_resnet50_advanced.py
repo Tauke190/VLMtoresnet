@@ -1,8 +1,6 @@
 import os
 import time
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from torchvision import models, transforms, datasets
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -55,14 +53,17 @@ def main():
     val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True
+        train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True
+        val_dataset, batch_size=512, shuffle=False, num_workers=2, pin_memory=True
     )
 
+    total_batches_per_epoch = len(train_loader)
+    total_batches_all_epochs = total_batches_per_epoch * EPOCHS
+
     print("Initializing model...")
-    model = models.resnet50(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
+    model = models.resnet50(weights=None, num_classes=NUM_CLASSES).to(DEVICE)
 
     # ==== Optimizer & Scheduler ====
     optimizer = Lamb(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
@@ -85,7 +86,7 @@ def main():
         top5_correct = 0.0
         total = 0
         with torch.no_grad():
-            for i, (images, targets) in enumerate(dataloader):
+            for images, targets in dataloader:
                 images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
                 outputs = model(images)
                 _, pred = outputs.topk(max(topk), 1, True, True)
@@ -99,15 +100,20 @@ def main():
         return top1, top5
 
     # ==== Training Loop ====
-    epoch_durations = []
     global_start = time.time()
 
     for epoch in range(EPOCHS):
         epoch_start = time.time()
         model.train()
         running_loss = 0.0
+        window_loss = 0.0
+        window_batches = 0
+        epoch0_start_time = None  # will be set at first batch of epoch 0
 
         for batch_idx, (images, targets) in enumerate(train_loader):
+            if epoch == 0 and batch_idx == 0:
+                epoch0_start_time = time.time()
+
             images, targets = images.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
             images, targets = mixup_fn(images, targets)
 
@@ -120,45 +126,46 @@ def main():
             scaler.update()
 
             ema.update(model)
+
             running_loss += loss.item()
+            window_loss += loss.item()
+            window_batches += 1
 
-            if (batch_idx + 1) == 1:
-                avg_loss = running_loss
-                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Loss: {avg_loss:.4f}")
-                running_loss = 0.0
+            # First batch loss
+            if batch_idx == 0:
+                print(f"[Epoch {epoch+1} Batch 1] Loss: {loss.item():.4f}")
 
+            # Window average every 100 batches
             if (batch_idx + 1) % 100 == 0:
-                avg_loss = running_loss / 100
-                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss: {avg_loss:.4f}")
-                running_loss = 0.0
+                avg_window = window_loss / window_batches
+                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss (last {window_batches}): {avg_window:.4f}")
+                window_loss = 0.0
+                window_batches = 0
+
+            # Time estimate after first 5 batches of first epoch
+            if epoch == 0 and (batch_idx + 1) == 5:
+                elapsed_5 = time.time() - epoch0_start_time
+                avg_batch_5 = elapsed_5 / 5.0
+                est_total_time_5 = avg_batch_5 * total_batches_all_epochs
+                remaining_5 = est_total_time_5 - elapsed_5
+                print(f"[Time Estimate @5 batches] Avg batch: {avg_batch_5:.4f}s | "
+                      f"Est total: {format_seconds(est_total_time_5)} | "
+                      f"Remaining: {format_seconds(remaining_5)}")
+
+            # Time estimate after first 10 batches of first epoch
+            if epoch == 0 and (batch_idx + 1) == 10:
+                elapsed_10 = time.time() - epoch0_start_time
+                avg_batch_10 = elapsed_10 / 10.0
+                est_total_time_10 = avg_batch_10 * total_batches_all_epochs
+                remaining_10 = est_total_time_10 - elapsed_10
+                print(f"[Time Estimate @10 batches] Avg batch: {avg_batch_10:.4f}s | "
+                      f"Est total: {format_seconds(est_total_time_10)} | "
+                      f"Remaining: {format_seconds(remaining_10)}")
 
         scheduler.step()
 
         top1, top5 = evaluate(ema.module, val_loader, DEVICE)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
-
-        epoch_time = time.time() - epoch_start
-        epoch_durations.append(epoch_time)
-
-        # Estimate after 100 epochs
-        if (epoch + 1) == 100:
-            avg_100 = sum(epoch_durations[:100]) / 100.0
-            est_total_100 = avg_100 * EPOCHS
-            elapsed_so_far = time.time() - global_start
-            remaining_100 = est_total_100 - elapsed_so_far
-            print(f"[Epoch 100 Time Estimate] Avg epoch time: {avg_100:.2f}s | "
-                  f"Est total: {format_seconds(est_total_100)} | "
-                  f"Remaining: {format_seconds(remaining_100)}")
-
-        # Estimate after 1000 epochs (only if reached)
-        if (epoch + 1) == 1000:
-            avg_1000 = sum(epoch_durations[:1000]) / 1000.0
-            est_total_1000 = avg_1000 * EPOCHS
-            elapsed_so_far = time.time() - global_start
-            remaining_1000 = est_total_1000 - elapsed_so_far
-            print(f"[Epoch 1000 Time Estimate] Avg epoch time: {avg_1000:.2f}s | "
-                  f"Est total: {format_seconds(est_total_1000)} | "
-                  f"Remaining: {format_seconds(remaining_1000)}")
 
         checkpoint = {
             'epoch': epoch + 1,
@@ -167,6 +174,18 @@ def main():
         checkpoint_path = f"{script_name}_epoch{epoch+1}.pth"
         torch.save(checkpoint, checkpoint_path)
         print(f"Checkpoint saved: {checkpoint_path}")
+
+        # Epoch timing and ETA (includes training, validation, and checkpoint I/O)
+        epoch_time = time.time() - epoch_start
+        elapsed_total = time.time() - global_start
+        completed_epochs = epoch + 1
+        avg_epoch_time = elapsed_total / completed_epochs
+        remaining_epochs = EPOCHS - completed_epochs
+        est_remaining_time = avg_epoch_time * remaining_epochs
+        print(f"[Epoch {epoch+1}] Time: {format_seconds(epoch_time)} | "
+              f"Elapsed: {format_seconds(elapsed_total)} | "
+              f"ETA: {format_seconds(est_remaining_time)} "
+              f"(avg/epoch {avg_epoch_time:.2f}s)")
 
 if __name__ == "__main__":
     main()
