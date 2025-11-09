@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=intermediate_feature
-#SBATCH --output=intermediate_feature%j.out
-#SBATCH --error=intermediate_feature%j.err
+#SBATCH --job-name=contrastive
+#SBATCH --output=contrastive%j.out
+#SBATCH --error=contrastive%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
@@ -22,7 +22,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u intermediate_feature_distillation_cliptoresnet.py
+python -u contrastive_distillation_cliptoresnet.py
 
 # Optional cleanup
 conda deactivate
