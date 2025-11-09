@@ -22,14 +22,13 @@ from pathlib import Path
 import sys
 import os
 
-TRAIN_SUBSET_RATIO = 0.2            # from original intermediate script (can adjust)
+TRAIN_SUBSET_RATIO = 0.2            
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
-VAL_SUBSET_SIZE = 5000              # still used for a faster ImageNet subset eval
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
