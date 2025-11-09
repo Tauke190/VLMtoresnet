@@ -23,7 +23,7 @@ import sys
 import os
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.15
+TRAIN_SUBSET_RATIO = 0.2
 
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
