@@ -146,6 +146,13 @@ if __name__ == "__main__":
     training_folder_name = TRAIN_DIR
     val_folder_name = VAL_DIR
 
+    # Split controls
+    TRAIN_FRACTION = 0.2          # use 20% of the full training set
+    VAL_PER_CLASS = 5             # taken from within the 20% subset
+    SPLIT_SEED = 42
+    SPLIT_SAVE_DIR = os.path.join("splits", params.name)
+    os.makedirs(SPLIT_SAVE_DIR, exist_ok=True)
+
     train_transformation = transforms.Compose([
             transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BILINEAR),  # remove antialias for compatibility
             transforms.RandomHorizontalFlip(0.5),
@@ -153,38 +160,99 @@ if __name__ == "__main__":
             transforms.Normalize(mean=[0.485, 0.485, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-    train_dataset = torchvision.datasets.ImageFolder(
-        root=training_folder_name,
-        transform=train_transformation
-    )
-    train_sampler = torch.utils.data.RandomSampler(train_dataset)
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=params.batch_size,
-        sampler=train_sampler,
-        num_workers = params.workers,
-        pin_memory=True,
-    )
-
     val_transformation = transforms.Compose([
             transforms.Resize(size=256),  # avoid antialias kw for wider compatibility
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.485, 0.406], std=[0.229, 0.224, 0.225])
         ])
-    val_dataset = torchvision.datasets.ImageFolder(
-        root=val_folder_name,
+
+    # Build datasets pointing to the same training folder (we'll split indices)
+    train_dataset_full = torchvision.datasets.ImageFolder(
+        root=training_folder_name,
+        transform=train_transformation
+    )
+    val_view_full = torchvision.datasets.ImageFolder(
+        root=training_folder_name,
         transform=val_transformation
     )
 
+    split_train_path = os.path.join(SPLIT_SAVE_DIR, "train_indices.npy")
+    split_val_path = os.path.join(SPLIT_SAVE_DIR, "val_indices.npy")
+
+    if os.path.exists(split_train_path) and os.path.exists(split_val_path):
+        train_indices = np.load(split_train_path).tolist()
+        val_indices = np.load(split_val_path).tolist()
+    else:
+        # Stratified split: first choose 20% per class; then pick VAL_PER_CLASS per class for validation from within that 20%
+        targets = train_dataset_full.targets
+        num_classes = len(train_dataset_full.classes)
+
+        cls_to_indices = [[] for _ in range(num_classes)]
+        for idx, c in enumerate(targets):
+            cls_to_indices[c].append(idx)
+
+        g = torch.Generator().manual_seed(SPLIT_SEED)
+
+        subset_indices = []
+        for c in range(num_classes):
+            cls_idx = cls_to_indices[c]
+            if not cls_idx:
+                continue
+            perm = torch.randperm(len(cls_idx), generator=g).tolist()
+            take = max(VAL_PER_CLASS, int(len(cls_idx) * TRAIN_FRACTION))  # ensure we can draw VAL_PER_CLASS
+            take = min(take, len(cls_idx))
+            subset_indices.extend([cls_idx[i] for i in perm[:take]])
+
+        # From the 20% subset, carve out a small fixed val set per class
+        subset_set = set(subset_indices)
+        # Rebuild per-class buckets but limited to subset
+        subset_cls_to_indices = [[] for _ in range(num_classes)]
+        for idx in subset_indices:
+            subset_cls_to_indices[targets[idx]].append(idx)
+
+        val_indices = []
+        train_indices = []
+        for c in range(num_classes):
+            cls_sub = subset_cls_to_indices[c]
+            if not cls_sub:
+                continue
+            perm = torch.randperm(len(cls_sub), generator=g).tolist()
+            v_take = min(VAL_PER_CLASS, len(cls_sub))
+            v_idxs = [cls_sub[perm[i]] for i in range(v_take)]
+            t_idxs = [cls_sub[perm[i]] for i in range(v_take, len(cls_sub))]
+            val_indices.extend(v_idxs)
+            train_indices.extend(t_idxs)
+
+        np.save(split_train_path, np.array(train_indices, dtype=np.int64))
+        np.save(split_val_path, np.array(val_indices, dtype=np.int64))
+
+    # Wrap subsets for transforms and correct lengths
+    train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
+    val_dataset = torch.utils.data.Subset(val_view_full, val_indices)
+
+    # DataLoaders
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=params.batch_size,
+        shuffle=True,
+        num_workers=params.workers,
+        pin_memory=True,
+        persistent_workers=True if params.workers > 0 else False
+    )
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=32,
-        num_workers=params.workers,
         shuffle=False,
-        pin_memory=True
+        num_workers=params.workers,
+        pin_memory=True,
+        persistent_workers=True if params.workers > 0 else False
     )
+
+    print(f"Classes: {len(train_dataset_full.classes)} | "
+          f"20% subset size: {len(train_indices) + len(val_indices)} | "
+          f"Train: {len(train_indices)} | Val: {len(val_indices)}")
+    sys.stdout.flush()
 
     # device
     print("Libraries imported - ready to use PyTorch", torch.__version__)
@@ -195,18 +263,10 @@ if __name__ == "__main__":
     print(f"Using {device} device")
     sys.stdout.flush()
 
-    ## Testing with pre-trained model : only to be done once
-    ## testing a pretrained model to validate correctness of our dataset, transform and metrics code
-    # pretrained_model = torchvision.models.resnet18(weights='ResNet18_Weights.DEFAULT').to(device)
-    # start = time.time()
-    # loss_fn = nn.CrossEntropyLoss()
-    # test(val_loader, pretrained_model, loss_fn, epoch=0, writer=None, train_dataloader=train_loader, calc_acc5=True)
-    # print("Elapsed: ", time.time() - start)
-
     # resume training options
     resume_training = True
 
-    num_classes = len(train_dataset.classes)
+    num_classes = len(train_dataset_full.classes)  # use full class list
     model = ResNet50(num_classes=num_classes)
     model.to(device)
 

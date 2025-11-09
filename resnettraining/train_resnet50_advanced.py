@@ -142,7 +142,7 @@ def main():
             # Time estimate after first 5 batches of first epoch
             if epoch == 0 and (batch_idx + 1) == 100:
                 elapsed_5 = time.time() - epoch0_start_time
-                avg_batch_5 = elapsed_5 / 5.0
+                avg_batch_5 = elapsed_5 / 100
                 est_total_time_5 = avg_batch_5 * total_batches_all_epochs
                 remaining_5 = est_total_time_5 - elapsed_5
                 print(f"[Time Estimate @5 batches] Avg batch: {avg_batch_5:.4f}s | "
@@ -152,7 +152,7 @@ def main():
             # Time estimate after first 10 batches of first epoch
             if epoch == 0 and (batch_idx + 1) == 1000:
                 elapsed_10 = time.time() - epoch0_start_time
-                avg_batch_10 = elapsed_10 / 10.0
+                avg_batch_10 = elapsed_10 / 1000.0
                 est_total_time_10 = avg_batch_10 * total_batches_all_epochs
                 remaining_10 = est_total_time_10 - elapsed_10
                 print(f"[Time Estimate @10 batches] Avg batch: {avg_batch_10:.4f}s | "
