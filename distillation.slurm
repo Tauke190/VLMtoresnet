@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=masked
-#SBATCH --output=masked%j.out
-#SBATCH --error=masked%j.err
+#SBATCH --job-name=finalfeature
+#SBATCH --output=finalfeature%j.out
+#SBATCH --error=finalfeature%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
@@ -22,7 +22,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u masked_generative_distillation.py
+python -u finalfeature_distillation_cliptoresnet.py
 
 # Optional cleanup
 conda deactivate
