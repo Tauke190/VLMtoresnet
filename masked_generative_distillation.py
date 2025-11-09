@@ -247,6 +247,7 @@ def run_distillation():
     val_transform = preprocess
 
     try:
+        total_start_time = time.time()
         print(f"Loading training dataset from: {TRAIN_DIR}")
         base_train = ImageFolder(root=os.path.expanduser(TRAIN_DIR), transform=train_transform)
 
@@ -509,6 +510,8 @@ def run_distillation():
             )
             print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_t1_f:.2f}%, Top-5: {pet_t5_f:.2f}%")
         print("\nDistillation training finished.")
+        total_time = time.time() - total_start_time
+        print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
 
     except FileNotFoundError as e:
         print("Error: Dataset directory not found. Check paths.")

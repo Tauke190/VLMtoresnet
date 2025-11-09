@@ -30,6 +30,7 @@ NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 EARLY_STOPPING_PATIENCE = 3
 EARLY_STOPPING_MIN_DELTA = 1e-4
+VAL_ACC_DROP_THRESHOLD = 10.0  # Early stopping if val accuracy drops by more than this %
 
 # New eval config
 EVAL_FULL_VAL_EACH_EPOCH = True
@@ -54,6 +55,7 @@ from utils import (
     read_txt,
     save_checkpoint,
     compute_flops,
+    plot_and_save_losses,
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
@@ -201,6 +203,9 @@ def run_distillation():
         # --- Save initial checkpoint before training ---
         save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
+        train_losses = []
+        val_accuracies = []  # Add this line
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
 
@@ -274,16 +279,7 @@ def run_distillation():
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
 
-            # Early stopping on train loss
-            if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
-                best_loss = epoch_loss
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-                print(f"Early stopping patience: {epochs_no_improve}/{EARLY_STOPPING_PATIENCE}")
-                if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
-                    print("Early stopping triggered: training loss has converged.")
-                    break
+            train_losses.append(epoch_loss)  # Track training loss
 
             epoch_time = time.time() - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
@@ -292,9 +288,24 @@ def run_distillation():
             if EVAL_FULL_VAL_EACH_EPOCH:
                 top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
                 print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+                val_accuracies.append(top1)  # Track validation accuracy
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+
+            # Overwrite the plot after each epoch
+            plot_and_save_losses(train_losses, val_accuracies, __file__)
+
+            # --- Early stopping based on validation Top-1 accuracy ---
+            # --- Early stopping: stop if validation Top-1 accuracy drops by more than 10% ---
+            if epoch == 0:
+                best_val_acc = top1
+            else:
+                if top1 < best_val_acc - VAL_ACC_DROP_THRESHOLD:
+                    print(f"Early stopping triggered: validation accuracy dropped by more than {VAL_ACC_DROP_THRESHOLD:.1f}% (from {best_val_acc:.2f}% to {top1:.2f}%).")
+                    break
+                if top1 > best_val_acc:
+                    best_val_acc = top1
 
             # --- Save checkpoint after each epoch ---
             save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
@@ -309,6 +320,9 @@ def run_distillation():
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
         print("\nDistillation training finished.")
+        total_time = time.time() - total_start_time
+        print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
+        plot_and_save_losses(train_losses, val_accuracies, __file__)  # Update this call
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")

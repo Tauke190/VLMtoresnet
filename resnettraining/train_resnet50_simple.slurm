@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=resnettrain
-#SBATCH --output=resnettrain%j.out
-#SBATCH --error=resnettrain%j.err
+#SBATCH --job-name=simple_resnet
+#SBATCH --output=simple_resnet%j.out
+#SBATCH --error=simple_resnet%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
-#SBATCH --mem=80G
+#SBATCH --mem=8G
 #SBATCH --time=72:00:00
 
 # Load necessary modules

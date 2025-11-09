@@ -2,6 +2,7 @@ import torch
 import json
 from pathlib import Path
 import clip
+import matplotlib.pyplot as plt
 
 def zeroshot_classifier(classnames, templates, model, show_progress=True):
     """Creating zero-shot classifier weights (CLIP-style)."""
@@ -115,3 +116,20 @@ def save_checkpoint(backbone, projector, epoch, project_root, script_path):
         'epoch': epoch,
     }, checkpoint_path)
     print(f"Checkpoint saved to {checkpoint_path}")
+
+def plot_and_save_losses(train_losses, val_accuracy, script_path):
+    """
+    Plots and saves training and validation loss curves.
+    The plot is saved as <script_name>.png in the current directory.
+    """
+    plt.figure()
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(val_accuracy, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
+    plt.legend()
+    plot_path = f"{Path(script_path).stem}.png"
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"Saved loss plot as {plot_path}")

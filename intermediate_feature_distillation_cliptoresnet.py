@@ -216,6 +216,8 @@ def run_distillation():
         # Save initial checkpoint
         save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
+        total_start_time = time.time()
+
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
             backbone.train()
@@ -335,6 +337,9 @@ def run_distillation():
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
         print("\nDistillation training finished.")
+        total_time = time.time() - total_start_time
+        print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
+    
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
