@@ -20,8 +20,8 @@ def format_seconds(seconds):
 
 def main():
     # ==== Paths ====
-    TRAIN_DIR = os.path.expanduser('~/data/datasets/imagenet/train')
-    VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
+    TRAIN_DIR = os.path.expanduser('/home/c3-0/datasets/ImageNet/train')
+    VAL_DIR = os.path.expanduser('/home/c3-0/datasets/ImageNet/validation')
 
     # ==== Config ====
     BATCH_SIZE = 256
