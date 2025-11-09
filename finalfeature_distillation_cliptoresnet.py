@@ -329,17 +329,16 @@ def run_distillation():
             # --- Early stopping: stop if validation Top-1 accuracy drops by more than 10% ---
             if epoch == 0:
                 best_val_acc = top1
+                save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
             else:
                 if top1 < best_val_acc - VAL_ACC_DROP_THRESHOLD:
                     print(f"Early stopping triggered: validation accuracy dropped by more than {VAL_ACC_DROP_THRESHOLD:.1f}% (from {best_val_acc:.2f}% to {top1:.2f}%).")
                     break
                 if top1 > best_val_acc:
                     best_val_acc = top1
+                    save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
 
-            # --- Save checkpoint after each epoch ---
-            save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
-
-            print("---------------------------------")
+        print("---------------------------------")
 
         # Final evaluation on full ImageNet val
         print("\nFinal validation:")

@@ -22,32 +22,34 @@ from pathlib import Path
 import sys
 import os
 
-# --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.2
+# --- Configuration (kept + extended) ---
+TRAIN_SUBSET_RATIO = 0.2            # from original intermediate script (can adjust)
+TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.20
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
-
-VAL_SUBSET_SIZE = 5000
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
+VAL_SUBSET_SIZE = 5000              # still used for a faster ImageNet subset eval
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-EARLY_STOPPING_PATIENCE = 3
-EARLY_STOPPING_MIN_DELTA = 1e-4
+
+# Early stopping (borrowed logic from finalfeature script)
+VAL_ACC_DROP_THRESHOLD = 10.0  # stop if Top-1 drops by more than this percentage from best
+# (Removed train-loss patience early stopping in favor of this)
 
 # Eval config
 EVAL_FULL_VAL_EACH_EPOCH = True
 EVAL_OXFORD_PET = True
-OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
+OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'
 
-# Loss weights
+# Loss weights (keep original distillation strategy)
 FINAL_FEATURE_WEIGHT = 1.0
 INTERMEDIATE_FEATURE_WEIGHT = 1.0
 
-# Project paths and utils
+# Paths / utils
 PROJECT_ROOT = Path(__file__).parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
@@ -62,13 +64,13 @@ from utils import (
     read_txt,
     save_checkpoint,
     compute_flops,
+    plot_and_save_losses,
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
-
     top1_correct, top5_correct, total = 0, 0, 0
     with torch.no_grad():
         for images, labels in loader:
@@ -85,9 +87,67 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     top5 = 100.0 * top5_correct / total
     return top1, top5
 
+# New: shared loader builder (adapted from finalfeature script)
+def build_imagenet_loaders(
+    train_dir,
+    val_dir,
+    transform,
+    batch_size=32,
+    subset_ratio=0.2,
+    eval_ratio_within_subset=0.2,
+    num_workers=2,
+    seed=42,
+):
+    train_dir = os.path.expanduser(train_dir)
+    val_dir = os.path.expanduser(val_dir)
+    base_train = ImageFolder(root=train_dir, transform=transform)
+    base_val = ImageFolder(root=val_dir, transform=transform)
+
+    print(f"Loaded ImageNet train: {len(base_train)} images, {len(base_train.classes)} classes")
+    print(f"Loaded ImageNet val:   {len(base_val)} images, {len(base_val.classes)} classes")
+
+    class_to_indices = {}
+    for idx, cls in enumerate(base_train.targets):
+        class_to_indices.setdefault(cls, []).append(idx)
+
+    g = torch.Generator().manual_seed(seed)
+    selected_indices = []
+    for cls, idxs in class_to_indices.items():
+        k_subset = max(1, int(len(idxs) * subset_ratio))
+        perm = torch.randperm(len(idxs), generator=g).tolist()
+        selected_cls = [idxs[p] for p in perm[:k_subset]]
+        selected_indices.extend(selected_cls)
+
+    train_split_indices, eval_split_indices = [], []
+    selected_set = set(selected_indices)
+    for cls, idxs in class_to_indices.items():
+        cls_selected = [i for i in idxs if i in selected_set]
+        if not cls_selected:
+            continue
+        perm = torch.randperm(len(cls_selected), generator=g).tolist()
+        cls_selected = [cls_selected[p] for p in perm]
+        if len(cls_selected) == 1:
+            train_split_indices.extend(cls_selected)
+            continue
+        k_eval = max(1, int(round(len(cls_selected) * eval_ratio_within_subset)))
+        k_eval = min(k_eval, len(cls_selected) - 1)
+        eval_split_indices.extend(cls_selected[:k_eval])
+        train_split_indices.extend(cls_selected[k_eval:])
+
+    train_subset = Subset(base_train, train_split_indices)
+    eval_subset = Subset(base_train, eval_split_indices)
+
+    print(f"Train subset size: {len(train_split_indices)}; Train-eval subset size: {len(eval_split_indices)} "
+          f"(subset_ratio={subset_ratio:.2f}, eval_ratio={eval_ratio_within_subset:.2f})")
+
+    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    train_eval_loader = DataLoader(eval_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    full_val_loader = DataLoader(base_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+
+    return train_loader, train_eval_loader, full_val_loader, base_train, base_val
+
 def register_hook(module, name, feature_dict):
     def hook_fn(module, input, output):
-        # For CLIP resblocks, output is typically [seq, batch, width]; standardize to [batch, seq, width]
         if output.dim() == 3 and output.shape[0] > output.shape[1]:
             output = output.permute(1, 0, 2)
         feature_dict[name] = output
@@ -96,7 +156,6 @@ def register_hook(module, name, feature_dict):
 def run_distillation():
     print(f"Using device: {DEVICE}")
 
-    # --- Setup Models ---
     print("Loading teacher model (CLIP ViT-L/14)...")
     teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
@@ -108,174 +167,134 @@ def run_distillation():
     teacher_feature_dim = teacher.visual.output_dim
     student_feature_dim = backbone.num_features
 
-    print("Computing FLOPs and parameters for the student model...")
+    print("Computing FLOPs / params for student...")
     compute_flops(backbone, resolution=(3, 224, 224))
 
-    train_transform = preprocess
-    val_transform = preprocess
+    # Build loaders (new logic)
+    print("Building ImageNet dataloaders with subset + train-eval split...")
+    train_loader, train_eval_loader, full_val_loader, base_train, base_val = build_imagenet_loaders(
+        TRAIN_DIR,
+        VAL_DIR,
+        transform=preprocess,
+        batch_size=BATCH_SIZE,
+        subset_ratio=TRAIN_SUBSET_RATIO,
+        eval_ratio_within_subset=TRAIN_EVAL_WITHIN_SUBSET_RATIO,
+        num_workers=2,
+        seed=42,
+    )
 
-    # --- Register hooks for intermediate features ---
+
+    # Distillation heads
+    projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
+    student_intermediate_proj = None
+    final_feature_loss_fn = nn.MSELoss()
+    intermediate_feature_loss_fn = nn.MSELoss()
+
+    optimizer = optim.AdamW(list(backbone.parameters()) + list(projector.parameters()), lr=LEARNING_RATE)
+    scaler = GradScaler()
+
+    # Zero-shot weights (train-eval subset ordering and full val ordering)
+    imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
+    print("Building zero-shot weights (train-eval subset ordering)...")
+    imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+    imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
+
+    print("Building zero-shot weights (full val ordering)...")
+    imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
+    imagenet_zs_weights_val = zeroshot_classifier(imagenet_class_names_val, imagenet_templates, teacher).to(DEVICE)
+
+    # Optional Oxford Pet eval
+    if EVAL_OXFORD_PET:
+        print(f"Loading Oxford-IIIT Pet validation from: {OXFORD_PET_VAL_DIR}")
+        pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=preprocess)
+        pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+        pet_class_names = imagefolder_human_names(pet_val_dataset)
+        pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
+        print("Building Pet zero-shot weights...")
+        pet_zs_weights = zeroshot_classifier(pet_class_names, pet_templates, teacher).to(DEVICE)
+    else:
+        pet_val_loader, pet_zs_weights = None, None
+
+    # Feature dicts + hooks (keep intermediate distillation strategy)
     teacher_features_dict = {}
     student_features_dict = {}
-
-    # Example: 6th transformer block for CLIP, 2nd block of layer2 for ResNet
     teacher_handle = register_hook(teacher.visual.transformer.resblocks[5], 'clip_block6', teacher_features_dict)
     student_handle = register_hook(backbone.layer2[1], 'resnet_layer2_1', student_features_dict)
 
+    print("\nStarting final + intermediate feature distillation...")
+    train_losses = []
+    val_accuracies = []
+    best_val_acc = None
+
+    # Initial zero-shot eval
+    print("\nInitial zero-shot evaluation (train-eval subset):")
+    init_top1, init_top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+    print(f"[Train-Eval SUBSET] Initial Zero-shot: Top-1: {init_top1:.2f}%, Top-5: {init_top5:.2f}%")
+    if EVAL_OXFORD_PET and pet_val_loader is not None:
+        pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+        print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+
+    save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
+    total_start = time.time()
+
     try:
-        print(f"Loading training dataset from: {TRAIN_DIR}")
-        base_train = ImageFolder(root=os.path.expanduser(TRAIN_DIR), transform=train_transform)
-
-        # --- Take 15% subset from training set (class-balanced) ---
-        targets = base_train.targets
-        class_to_indices = {}
-        for idx, t in enumerate(targets):
-            class_to_indices.setdefault(t, []).append(idx)
-        selected_indices = []
-        g = torch.Generator().manual_seed(42)
-        for cls, idxs in class_to_indices.items():
-            k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
-            perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
-            for p in perm:
-                selected_indices.append(idxs[p])
-        trainval_subset = Subset(base_train, selected_indices)
-        print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
-
-        # --- Split 15% subset into train/val (80/20) ---
-        val_ratio_within_subset = 0.20
-        num_subset = len(selected_indices)
-        num_val = int(num_subset * val_ratio_within_subset)
-        num_train = num_subset - num_val
-
-        indices = list(range(num_subset))
-        random.seed(42)
-        random.shuffle(indices)
-        train_indices = indices[:num_train]
-        val_indices = indices[num_train:]
-
-        train_dataset = Subset(trainval_subset, train_indices)
-        val_subset_dataset = Subset(trainval_subset, val_indices)
-
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        train_subset_val_loader = DataLoader(val_subset_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        print(f"Train subset: {len(train_dataset)} images, Validation subset: {len(val_subset_dataset)} images.")
-
-        print(f"Loading full validation dataset from: {VAL_DIR}")
-        full_val_dataset = ImageFolder(root=os.path.expanduser(VAL_DIR), transform=val_transform)
-        val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Full validation set: {len(full_val_dataset)} images.")
-
-        # Fixed validation subset for faster eval
-        fixed_val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
-        val_subset = Subset(full_val_dataset, fixed_val_indices)
-        val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        num_classes = len(base_train.classes)
-        print(f"Found {num_classes} classes in the dataset.")
-
-        # Heads
-        projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
-        student_intermediate_proj = None  # will be created lazily based on observed dims
-        distill_loss_fn = nn.MSELoss()
-        feature_distill_loss_fn = nn.MSELoss()
-
-        params_to_train = list(backbone.parameters()) + list(projector.parameters())
-        optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
-
-        # Zero-shot weights (ImageNet) and optional Pets
-        imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
-        imagenet_class_names = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
-        print("Building ImageNet zero-shot weights...")
-        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names, imagenet_templates, teacher).to(DEVICE)
-
-        if EVAL_OXFORD_PET:
-            print(f"Loading Oxford-IIIT Pet validation dataset from: {OXFORD_PET_VAL_DIR}")
-            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=val_transform)
-            pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-            pet_class_names = imagefolder_human_names(pet_val_dataset)
-            pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
-            print(f"Building Pet zero-shot weights (classes={len(pet_class_names)}, templates={len(pet_templates)})...")
-            pet_zs_weights = zeroshot_classifier(pet_class_names, pet_templates, teacher).to(DEVICE)
-        else:
-            pet_val_loader, pet_zs_weights = None, None
-
-        print("\nStarting final+intermediate feature distillation...")
-        best_loss = float('inf')
-        epochs_no_improve = 0
-        scaler = GradScaler()
-
-        # Initial zero-shot evaluation
-        print("\nInitial zero-shot evaluation:")
-        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
-        print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-        if EVAL_OXFORD_PET and pet_val_loader is not None:
-            pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
-            print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
-
-        # Save initial checkpoint
-        save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
-
-        total_start_time = time.time()
-
         for epoch in range(NUM_EPOCHS):
-            epoch_start_time = time.time()
+            epoch_start = time.time()
             backbone.train()
             projector.train()
             if student_intermediate_proj is not None:
                 student_intermediate_proj.train()
 
             running_loss = 0.0
-            batch_times = []
+
+            # Timing estimation (first epoch only, similar logic)
+            first_100_time, first_1000_time = 0.0, 0.0
+            eta_100_printed = False
+            eta_1000_printed = False
 
             for i, (images, labels) in enumerate(train_loader):
-                batch_start = time.time()
+                batch_t0 = time.time()
                 images, labels = images.to(DEVICE), labels.to(DEVICE)
 
-                # clear feature caches for hooks
                 teacher_features_dict.clear()
                 student_features_dict.clear()
 
                 with autocast():
-                    # Teacher final features (also triggers teacher hooks)
-                    teacher_features = get_teacher_features(teacher, images).float()
+                    # Teacher final features
+                    teacher_final = get_teacher_features(teacher, images).float()
                     # Student final features
-                    student_features = get_student_features(backbone, images)
-                    projected_student_features = projector(student_features)
+                    student_final = get_student_features(backbone, images)
+                    projected_student_final = projector(student_final)
 
-                    # Normalize final features
-                    teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
-                    projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
+                    # Normalize
+                    teacher_final = teacher_final / teacher_final.norm(dim=-1, keepdim=True)
+                    projected_student_final = projected_student_final / projected_student_final.norm(dim=-1, keepdim=True)
 
-                    # Final feature distillation loss
-                    final_feature_loss = distill_loss_fn(projected_student_features, teacher_features)
+                    final_loss = final_feature_loss_fn(projected_student_final, teacher_final)
 
                     # Intermediate feature distillation
-                    # Expect teacher block features as [B, seq, C]; use CLS token at index 0
-                    if 'clip_block6' not in teacher_features_dict or 'resnet_layer2_1' not in student_features_dict:
-                        # If hooks didn't fire for some reason, skip this batch's intermediate loss
-                        intermediate_loss = torch.tensor(0.0, device=DEVICE)
-                    else:
-                        t_block = teacher_features_dict['clip_block6']  # [B, seq, C]
-                        teacher_cls_token = t_block[:, 0].float()  # [B, C_t]
+                    if 'clip_block6' in teacher_features_dict and 'resnet_layer2_1' in student_features_dict:
+                        t_block = teacher_features_dict['clip_block6']     # [B, seq, C_t]
+                        teacher_cls = t_block[:, 0].float()                # [B, C_t]
 
-                        s_block = student_features_dict['resnet_layer2_1']  # [B, C_s, H, W]
-                        student_pooled = nn.functional.adaptive_avg_pool2d(s_block, (1, 1)).flatten(1)  # [B, C_s]
+                        s_block = student_features_dict['resnet_layer2_1'] # [B, C_s, H, W]
+                        student_pooled = nn.functional.adaptive_avg_pool2d(s_block, (1, 1)).flatten(1)
 
-                        # Create the student intermediate projector lazily and add to optimizer
                         if student_intermediate_proj is None:
-                            student_intermediate_proj = nn.Linear(student_pooled.shape[1], teacher_cls_token.shape[1]).to(DEVICE)
+                            student_intermediate_proj = nn.Linear(student_pooled.shape[1], teacher_cls.shape[1]).to(DEVICE)
                             optimizer.add_param_group({'params': student_intermediate_proj.parameters()})
 
                         student_pooled_proj = student_intermediate_proj(student_pooled)
 
-                        # Normalize intermediate features
-                        teacher_cls_token = teacher_cls_token / teacher_cls_token.norm(dim=-1, keepdim=True)
+                        # Normalize
+                        teacher_cls = teacher_cls / teacher_cls.norm(dim=-1, keepdim=True)
                         student_pooled_proj = student_pooled_proj / student_pooled_proj.norm(dim=-1, keepdim=True)
 
-                        intermediate_loss = feature_distill_loss_fn(student_pooled_proj, teacher_cls_token)
+                        intermediate_loss = intermediate_feature_loss_fn(student_pooled_proj, teacher_cls)
+                    else:
+                        intermediate_loss = torch.zeros((), device=DEVICE)
 
-                    total_loss = FINAL_FEATURE_WEIGHT * final_feature_loss + INTERMEDIATE_FEATURE_WEIGHT * intermediate_loss
+                    total_loss = FINAL_FEATURE_WEIGHT * final_loss + INTERMEDIATE_FEATURE_WEIGHT * intermediate_loss
 
                 optimizer.zero_grad()
                 scaler.scale(total_loss).backward()
@@ -284,69 +303,78 @@ def run_distillation():
 
                 running_loss += total_loss.item()
 
-                # ETA prints
-                batch_time = time.time() - batch_start
-                batch_times.append(batch_time)
-                if i + 1 == 100 or i + 1 == 1000:
-                    avg_time = np.mean(batch_times)
-                    total_batches = len(train_loader)
-                    est_epoch_time = avg_time * total_batches
-                    est_total_time = est_epoch_time * NUM_EPOCHS
-                    print(f"Estimated time per epoch after {i+1} batches: {est_epoch_time/60:.2f} min")
-                    print(f"Estimated total training time after {i+1} batches: {est_total_time/3600:.2f} hr")
+                if epoch == 0:
+                    bt = time.time() - batch_t0
+                    if i < 100:
+                        first_100_time += bt
+                        if i == 99 and not eta_100_printed:
+                            avg_bt = first_100_time / 100
+                            est_epoch_min = (avg_bt * len(train_loader)) / 60
+                            est_total_hours = (avg_bt * len(train_loader) * NUM_EPOCHS) / 3600
+                            print(f"[ETA-100] Avg batch {avg_bt*1000:.1f} ms -> ~{est_epoch_min:.1f} min/epoch, {est_total_hours:.2f} h total.")
+                            eta_100_printed = True
+                    if i < 1000:
+                        first_1000_time += bt
+                        if i == 999 and not eta_1000_printed:
+                            avg_bt = first_1000_time / 1000
+                            est_epoch_min = (avg_bt * len(train_loader)) / 60
+                            est_total_hours = (avg_bt * len(train_loader) * NUM_EPOCHS) / 3600
+                            print(f"[ETA-1000] Avg batch {avg_bt*1000:.1f} ms -> ~{est_epoch_min:.1f} min/epoch, {est_total_hours:.2f} h total.")
+                            eta_1000_printed = True
 
                 if (i + 1) % 100 == 0:
-                    avg_loss_so_far = running_loss / (i + 1)
-                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{i+1}/{len(train_loader)}], Avg Loss: {avg_loss_so_far:.4f} (final+intermediate)")
+                    print(f"Epoch [{epoch+1}/{NUM_EPOCHS}] Step [{i+1}/{len(train_loader)}] "
+                          f"Avg Loss: {running_loss / (i + 1):.4f}")
 
             epoch_loss = running_loss / len(train_loader)
+            train_losses.append(epoch_loss)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
+            print(f"Time: {(time.time() - epoch_start)/60:.2f} min")
 
-            # Early stopping on train loss
-            if epoch_loss < best_loss - EARLY_STOPPING_MIN_DELTA:
-                best_loss = epoch_loss
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-                print(f"Early stopping patience: {epochs_no_improve}/{EARLY_STOPPING_PATIENCE}")
-                if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
-                    print("Early stopping triggered: training loss has converged.")
-                    break
-
-            epoch_time = time.time() - epoch_start_time
-            print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
-
-            # Validation after each epoch
+            # Validation / zero-shot each epoch (train-eval subset)
             if EVAL_FULL_VAL_EACH_EPOCH:
-                top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
-                print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+                top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+                print(f"[Train-Eval SUBSET] Zero-shot Epoch {epoch+1}: Top-1 {top1:.2f}%, Top-5 {top5:.2f}%")
+                val_accuracies.append(top1)
+
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
-                    print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+                    print(f"[Oxford-Pet] Zero-shot Epoch {epoch+1}: Top-1 {pet_top1:.2f}%, Top-5 {pet_top5:.2f}%")
 
-            # Save checkpoint each epoch
-            save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
+            plot_and_save_losses(train_losses, val_accuracies, __file__)
+
+            # Early stopping logic (drop threshold)
+            if best_val_acc is None:
+                best_val_acc = top1
+                save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
+            else:
+                if top1 < best_val_acc - VAL_ACC_DROP_THRESHOLD:
+                    print(f"Early stopping: val Top-1 dropped > {VAL_ACC_DROP_THRESHOLD:.1f}% "
+                          f"(from {best_val_acc:.2f} to {top1:.2f}).")
+                    break
+                if top1 > best_val_acc:
+                    best_val_acc = top1
+                    save_checkpoint(backbone, projector, epoch + 1, PROJECT_ROOT, __file__)
+
             print("---------------------------------")
 
-        # Final validation
-        print("\nFinal validation on full sets...")
-        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, imagenet_zs_weights, DEVICE)
-        print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+        # Final evaluation on full val
+        print("\nFinal evaluation on full ImageNet validation:")
+        final_top1, final_top5 = evaluate_zero_shot(backbone, projector, full_val_loader, imagenet_zs_weights_val, DEVICE)
+        print(f"[ImageNet FULL] Final Zero-shot: Top-1 {final_top1:.2f}%, Top-5 {final_top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
-            print(f"[Oxford-Pet] Final Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
-        print("\nDistillation training finished.")
-        total_time = time.time() - total_start_time
-        print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
-    
+            print(f"[Oxford-Pet] Final Zero-shot: Top-1 {pet_top1:.2f}%, Top-5 {pet_top5:.2f}%")
+
+        total_time = time.time() - total_start
+        print(f"\nDistillation finished. Total time: {total_time/60:.2f} min ({total_time/3600:.2f} h)")
+        plot_and_save_losses(train_losses, val_accuracies, __file__)
 
     except FileNotFoundError as e:
-        print(f"Error: Dataset directory not found. Please check your paths.")
+        print("Error: dataset directory not found.")
         print(e)
-        return
     finally:
-        # Remove hooks
         try:
             teacher_handle.remove()
             student_handle.remove()
