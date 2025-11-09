@@ -16,12 +16,12 @@ import sys
 import os
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.1
+TRAIN_SUBSET_RATIO = 0.2
 
-# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-TRAIN_DIR = '~/data/datasets/imagenet/train'
-VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '~/data/datasets/imagenet/train'
+# VAL_DIR = '~/data/datasets/imagenet/val'
 
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
