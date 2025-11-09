@@ -100,7 +100,7 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
         if batch % 100 == 0:
             batch_loss = running_loss / total_samples if total_samples > 0 else 0.0
             batch_acc = 100.0 * running_correct / total_samples if total_samples > 0 else 0.0
-            logger.info(f"Epoch {epoch+1} Batch {batch}: loss={batch_loss:.6f}, acc={batch_acc:.2f}%")
+            logger.info(f"Epoch {epoch+1} Batch {batch}: loss={batch_loss:.6f}")
             sys.stdout.flush()
 
     epoch_loss = running_loss / total_samples if total_samples > 0 else 0.0
