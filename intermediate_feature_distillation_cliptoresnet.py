@@ -22,9 +22,8 @@ from pathlib import Path
 import sys
 import os
 
-# --- Configuration (kept + extended) ---
 TRAIN_SUBSET_RATIO = 0.2            # from original intermediate script (can adjust)
-TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.20
+TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
