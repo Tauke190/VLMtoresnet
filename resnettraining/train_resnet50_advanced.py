@@ -101,15 +101,15 @@ def main():
 
     # ==== Training Loop ====
     global_start = time.time()
+    best_top1 = -1.0
+    epochs_no_improve = 0
+    PATIENCE = 10
 
     for epoch in range(EPOCHS):
         epoch_start = time.time()
         model.train()
         running_loss = 0.0
-        window_loss = 0.0
-        window_batches = 0
-        epoch0_start_time = None  # will be set at first batch of epoch 0
-
+        accum_batches = 0
         for batch_idx, (images, targets) in enumerate(train_loader):
             if epoch == 0 and batch_idx == 0:
                 epoch0_start_time = time.time()
@@ -128,22 +128,19 @@ def main():
             ema.update(model)
 
             running_loss += loss.item()
-            window_loss += loss.item()
-            window_batches += 1
+            accum_batches += 1
 
-            # First batch loss
             if batch_idx == 0:
                 print(f"[Epoch {epoch+1} Batch 1] Loss: {loss.item():.4f}")
 
-            # Window average every 100 batches
             if (batch_idx + 1) % 100 == 0:
-                avg_window = window_loss / window_batches
-                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss (last {window_batches}): {avg_window:.4f}")
-                window_loss = 0.0
-                window_batches = 0
+                avg_loss = running_loss / accum_batches
+                print(f"[Epoch {epoch+1} Batch {batch_idx+1}] Avg Loss (last {accum_batches}): {avg_loss:.4f}")
+                running_loss = 0.0
+                accum_batches = 0
 
             # Time estimate after first 5 batches of first epoch
-            if epoch == 0 and (batch_idx + 1) == 5:
+            if epoch == 0 and (batch_idx + 1) == 100:
                 elapsed_5 = time.time() - epoch0_start_time
                 avg_batch_5 = elapsed_5 / 5.0
                 est_total_time_5 = avg_batch_5 * total_batches_all_epochs
@@ -153,7 +150,7 @@ def main():
                       f"Remaining: {format_seconds(remaining_5)}")
 
             # Time estimate after first 10 batches of first epoch
-            if epoch == 0 and (batch_idx + 1) == 10:
+            if epoch == 0 and (batch_idx + 1) == 1000:
                 elapsed_10 = time.time() - epoch0_start_time
                 avg_batch_10 = elapsed_10 / 10.0
                 est_total_time_10 = avg_batch_10 * total_batches_all_epochs
@@ -166,6 +163,21 @@ def main():
 
         top1, top5 = evaluate(ema.module, val_loader, DEVICE)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
+
+        # Early stopping check (based on Top-1)
+        if top1 > best_top1:
+            best_top1 = top1
+            epochs_no_improve = 0
+            best_ckpt_path = f"{script_name}_best.pth"
+            torch.save({'epoch': epoch + 1,
+                        'model_state_dict': model.state_dict(),
+                        'top1': top1}, best_ckpt_path)
+            print(f"New best Top-1 {top1:.2f}% — saved: {best_ckpt_path}")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= PATIENCE:
+                print(f"Early stopping triggered (no Top-1 improvement for {PATIENCE} epochs).")
+                break
 
         checkpoint = {
             'epoch': epoch + 1,
