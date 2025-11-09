@@ -15,14 +15,15 @@ import sys
 import os  # Add this at the top if not already imported
 
 # --- Configuration ---
-TRAIN_SUBSET_RATIO = 0.2
+TRAIN_SUBSET_RATIO = 0.1
+TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05 # Used for validation accuracy in each epoch
 # For cluster server
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 VAL_SUBSET_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
@@ -80,6 +81,75 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     top5 = 100.0 * top5_correct / total
     return top1, top5
 
+# NEW: clean ImageNet dataloader pipeline
+def build_imagenet_loaders(
+    train_dir,
+    val_dir,
+    transform,
+    batch_size=32,
+    subset_ratio=0.2,
+    eval_ratio_within_subset=0.2,
+    num_workers=2,
+    seed=42,
+):
+    train_dir = os.path.expanduser(train_dir)
+    val_dir = os.path.expanduser(val_dir)
+
+    base_train = ImageFolder(root=train_dir, transform=transform)
+    base_val = ImageFolder(root=val_dir, transform=transform)
+
+    print(f"Loaded ImageNet train from: {train_dir} ({len(base_train)} images, {len(base_train.classes)} classes)")
+    print(f"Loaded ImageNet val   from: {val_dir} ({len(base_val)} images, {len(base_val.classes)} classes)")
+
+    # Stratified per-class subset from train
+    class_to_indices = {}
+    for idx, cls in enumerate(base_train.targets):
+        class_to_indices.setdefault(cls, []).append(idx)
+
+    g = torch.Generator().manual_seed(seed)
+    selected_indices = []
+    for cls, idxs in class_to_indices.items():
+        k_subset = max(1, int(len(idxs) * subset_ratio))
+        perm = torch.randperm(len(idxs), generator=g).tolist()
+        selected = [idxs[p] for p in perm[:k_subset]]
+        selected_indices.extend(selected)
+
+    # Split the selected subset into train/eval (stratified, per-class)
+    train_split_indices, eval_split_indices = [], []
+    selected_set = set(selected_indices)
+    for cls, idxs in class_to_indices.items():
+        # Keep only selected indices for this class
+        selected_cls = [i for i in idxs if i in selected_set]
+        if not selected_cls:
+            continue
+        perm = torch.randperm(len(selected_cls), generator=g).tolist()
+        selected_cls = [selected_cls[p] for p in perm]
+
+        if len(selected_cls) == 1:
+            # Put single-sample classes into train
+            train_split_indices.extend(selected_cls)
+            continue
+
+        k_eval = max(1, int(round(len(selected_cls) * eval_ratio_within_subset)))
+        k_eval = min(k_eval, len(selected_cls) - 1)  # ensure at least 1 train
+        eval_split_indices.extend(selected_cls[:k_eval])
+        train_split_indices.extend(selected_cls[k_eval:])
+
+    train_subset = Subset(base_train, train_split_indices)
+    eval_subset = Subset(base_train, eval_split_indices)
+
+    print(
+        f"Using train subset: {len(train_split_indices)} images "
+        f"and train-eval subset: {len(eval_split_indices)} images "
+        f"(subset_ratio={subset_ratio:.2f}, eval_within_subset={eval_ratio_within_subset:.2f})"
+    )
+
+    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    train_eval_loader = DataLoader(eval_subset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    full_val_loader = DataLoader(base_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+
+    return train_loader, train_eval_loader, full_val_loader, base_train, base_val
+
 # Compute FLOPs on CPU to save VRAM
 
 
@@ -101,81 +171,44 @@ def run_distillation():
     print("Computing FLOPs and parameters for the student model...")
     compute_flops(backbone, resolution=(3, 224, 224))
 
-    train_transform = preprocess
-    val_transform = preprocess
+    # --- New, clean ImageNet loaders ---
+    print("Building datasets and dataloaders (subset train, small train-eval split, full val)...")
+    train_loader, train_eval_loader, val_loader, base_train, base_val = build_imagenet_loaders(
+        TRAIN_DIR,
+        VAL_DIR,
+        transform=preprocess,
+        batch_size=BATCH_SIZE,
+        subset_ratio=TRAIN_SUBSET_RATIO,
+        eval_ratio_within_subset=TRAIN_EVAL_WITHIN_SUBSET_RATIO,
+        num_workers=2,
+        seed=42,
+    )
+    num_classes = len(base_train.classes)
+    print(f"Found {num_classes} classes in ImageNet.")
 
     try:
-        print(f"Loading training dataset from: {TRAIN_DIR}")
-        # NEW: expand '~' if present
-        base_train = ImageFolder(root=os.path.expanduser(TRAIN_DIR), transform=train_transform)
-
-        # --- Take 15% subset from training set ---
-        targets = base_train.targets
-        class_to_indices = {}
-        for idx, t in enumerate(targets):
-            class_to_indices.setdefault(t, []).append(idx)
-        selected_indices = []
-        g = torch.Generator().manual_seed(42)
-        for cls, idxs in class_to_indices.items():
-            k = max(1, int(len(idxs) * TRAIN_SUBSET_RATIO))
-            perm = torch.randperm(len(idxs), generator=g)[:k].tolist()
-            for p in perm:
-                selected_indices.append(idxs[p])
-        trainval_subset = Subset(base_train, selected_indices)
-        print(f"Using {len(selected_indices)} images (~{TRAIN_SUBSET_RATIO*100:.1f}% per class) from {len(class_to_indices)} classes.")
-
-        # --- Split 15% subset into train/val (e.g., 80/20 split) ---
-        val_ratio_within_subset = 0.20  # Change to 0.10 for 10%
-        num_subset = len(selected_indices)
-        num_val = int(num_subset * val_ratio_within_subset)
-        num_train = num_subset - num_val
-
-        indices = list(range(num_subset))
-        random.seed(42)
-        random.shuffle(indices)
-        train_indices = indices[:num_train]
-        val_indices = indices[num_train:]
-
-        train_dataset = Subset(trainval_subset, train_indices)
-        val_subset_dataset = Subset(trainval_subset, val_indices)
-
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
-        # RENAMED: avoid clobbering the later 'val_loader_subset' for ImageNet val
-        train_subset_val_loader = DataLoader(val_subset_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        print(f"Train subset: {len(train_dataset)} images, Validation subset: {len(val_subset_dataset)} images.")
-
-        print(f"Loading full validation dataset from: {VAL_DIR}")
-        full_val_dataset = ImageFolder(root=os.path.expanduser(VAL_DIR), transform=val_transform)
-        val_loader = DataLoader(full_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-        print(f"Full validation set: {len(full_val_dataset)} images.")
-
-        # Sample a fixed validation subset ONCE
-        val_indices = random.sample(range(len(full_val_dataset)), min(VAL_SUBSET_SIZE, len(full_val_dataset)))
-        val_subset = Subset(full_val_dataset, val_indices)
-        val_loader_subset = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-
-        # --- After loading datasets and creating loaders ---
-        num_classes = len(base_train.classes)
-        print(f"Found {num_classes} classes in the dataset.")
-
         projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
         distill_loss_fn = nn.MSELoss()
         params_to_train = list(backbone.parameters()) + list(projector.parameters())
         optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
 
-        # Load templates from CLIP/dataloaders/templates
+        # Load templates and build zero-shot weights aligned to each dataset's class ordering
         imagenet_templates = read_txt(str(TEMPLATES_DIR / "imagenet1k.txt"))
-        imagenet_class_names = imagenet_aligned_classnames(full_val_dataset, "imagenet_class_index.json")
         print("Loaded ImageNet templates from CLIP/dataloaders/templates/imagenet1k.txt")
         print(f"Templates count: {len(imagenet_templates)}")
 
-        print("Building ImageNet zero-shot weights (imported function)...")
-        imagenet_zs_weights = zeroshot_classifier(imagenet_class_names, imagenet_templates, teacher).to(DEVICE)
+        print("Building ImageNet zero-shot weights for train-eval loader...")
+        imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+        imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
 
+        print("Building ImageNet zero-shot weights for full val loader...")
+        imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
+        imagenet_zs_weights_val = zeroshot_classifier(imagenet_class_names_val, imagenet_templates, teacher).to(DEVICE)
+
+        # Optional: Oxford-IIIT Pet zero-shot eval (unchanged)
         if EVAL_OXFORD_PET:
             print(f"Loading Oxford-IIIT Pet validation dataset from: {OXFORD_PET_VAL_DIR}")
-            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=val_transform)
+            pet_val_dataset = ImageFolder(root=os.path.expanduser(OXFORD_PET_VAL_DIR), transform=preprocess)
             pet_val_loader = DataLoader(pet_val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
             pet_class_names = imagefolder_human_names(pet_val_dataset)
             pet_templates = read_txt(str(TEMPLATES_DIR / "pets.txt"))
@@ -192,29 +225,27 @@ def run_distillation():
 
         scaler = GradScaler()
 
-        # Initial zero-shot evaluation
+        # Initial zero-shot evaluation on the small held-out train-eval subset
         print("\nInitial zero-shot evaluation (student projected into CLIP space):")
-        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
-        print(f"[ImageNet SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+        top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+        print(f"[Train-Eval SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
             print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
-        # --- Save initial checkpoint before training ---
+        # Save initial checkpoint
         save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
         train_losses = []
-        val_accuracies = []  # Add this line
+        val_accuracies = []
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
 
             backbone.train()
             projector.train()
-            # classifier.train()  # remove
             running_loss = 0.0
 
-            # Timing accumulators for ETA estimation (only first epoch)
             first_100_time = 0.0
             first_1000_time = 0.0
             eta_100_printed = False
@@ -231,7 +262,6 @@ def run_distillation():
                     teacher_features = teacher_features / teacher_features.norm(dim=-1, keepdim=True)
                     projected_student_features = projected_student_features / projected_student_features.norm(dim=-1, keepdim=True)
                     final_feature_distill = distill_loss_fn(projected_student_features, teacher_features)
-                    # logits_cls = classifier(student_features)  # remove
                     total_loss = final_feature_distill
 
                 optimizer.zero_grad()
@@ -278,17 +308,16 @@ def run_distillation():
             epoch_loss = running_loss / len(train_loader)
             print(f"\n--- End of Epoch {epoch+1} ---")
             print(f"Average Training Loss: {epoch_loss:.4f}")
-
-            train_losses.append(epoch_loss)  # Track training loss
+            train_losses.append(epoch_loss)
 
             epoch_time = time.time() - epoch_start_time
             print(f"Time taken for Epoch {epoch+1}: {epoch_time / 60:.2f} minutes")
 
-            # Validation after each epoch
+            # Evaluate on the small held-out split from the train subset
             if EVAL_FULL_VAL_EACH_EPOCH:
-                top1, top5 = evaluate_zero_shot(backbone, projector, val_loader_subset, imagenet_zs_weights, DEVICE)
-                print(f"[ImageNet SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-                val_accuracies.append(top1)  # Track validation accuracy
+                top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+                print(f"[Train-Eval SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+                val_accuracies.append(top1)
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
@@ -312,9 +341,9 @@ def run_distillation():
 
             print("---------------------------------")
 
-        # After training: evaluate both on full val sets
+        # Final evaluation on full ImageNet val
         print("\nFinal validation:")
-        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, imagenet_zs_weights, DEVICE)
+        top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, imagenet_zs_weights_val, DEVICE)
         print(f"[ImageNet FULL] Final Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
         if EVAL_OXFORD_PET and pet_val_loader is not None:
             pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
@@ -322,7 +351,7 @@ def run_distillation():
         print("\nDistillation training finished.")
         total_time = time.time() - total_start_time
         print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
-        plot_and_save_losses(train_losses, val_accuracies, __file__)  # Update this call
+        plot_and_save_losses(train_losses, val_accuracies, __file__)
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
