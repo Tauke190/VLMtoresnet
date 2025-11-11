@@ -117,15 +117,16 @@ def save_checkpoint(backbone, projector, epoch, project_root, script_path):
     }, checkpoint_path)
     print(f"Checkpoint saved to {checkpoint_path}")
 
-def plot_and_save_losses(train_losses, val_accuracy, script_path):
+def plot_and_save_losses(train_losses, imagenet_val_accuracies, oxfordpet_val_accuracies, script_path, fig_title="Training Progress"):
     """
-    Plots and saves training loss and validation accuracy as two subplots in the same image.
+    Plots and saves training loss and validation accuracies (ImageNet and Oxford-IIIT Pet) as two subplots side by side.
     The plot is saved as <script_name>.png in the current directory.
     """
     import matplotlib.pyplot as plt
     from pathlib import Path
 
-    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    fig, axs = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle(fig_title)
 
     # Training Loss subplot
     axs[0].plot(train_losses, label='Training Loss', color='blue')
@@ -134,14 +135,21 @@ def plot_and_save_losses(train_losses, val_accuracy, script_path):
     axs[0].set_title('Training Loss')
     axs[0].legend()
 
-    # Validation Accuracy subplot
-    axs[1].plot(val_accuracy, label='Validation Accuracy', color='orange')
+    # ImageNet Validation Accuracy subplot
+    axs[1].plot(imagenet_val_accuracies, label='ImageNet Val Accuracy', color='orange')
     axs[1].set_xlabel('Epoch')
     axs[1].set_ylabel('Accuracy (%)')
-    axs[1].set_title('Validation Accuracy')
+    axs[1].set_title('ImageNet Validation Accuracy')
     axs[1].legend()
 
-    plt.tight_layout()
+    # Oxford-IIIT Pet Validation Accuracy subplot
+    axs[2].plot(oxfordpet_val_accuracies, label='Oxford-IIIT Pet Val Accuracy', color='green')
+    axs[2].set_xlabel('Epoch')
+    axs[2].set_ylabel('Accuracy (%)')
+    axs[2].set_title('Oxford-IIIT Pet Validation Accuracy')
+    axs[2].legend()
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plot_path = f"{Path(script_path).stem}.png"
     plt.savefig(plot_path)
     plt.close()

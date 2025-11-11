@@ -340,7 +340,7 @@ def run_distillation():
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot Epoch {epoch+1}: Top-1 {pet_top1:.2f}%, Top-5 {pet_top5:.2f}%")
 
-            plot_and_save_losses(train_losses, val_accuracies, __file__)
+            plot_and_save_losses(train_losses, val_accuracies, __file__, fig_title="Intermediate feature distillation")
 
             # Early stopping logic (drop threshold)
             if best_val_acc is None:

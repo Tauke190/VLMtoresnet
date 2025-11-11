@@ -236,7 +236,8 @@ def run_distillation():
         save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
 
         train_losses = []
-        val_accuracies = []
+        imagenet_val_accuracies = []
+        oxfordpet_val_accuracies = []
 
         for epoch in range(NUM_EPOCHS):
             epoch_start_time = time.time()
@@ -316,14 +317,14 @@ def run_distillation():
             if EVAL_FULL_VAL_EACH_EPOCH:
                 top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
                 print(f"[Train-Eval SUBSET] Zero-shot after Epoch {epoch+1}: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-                val_accuracies.append(top1)
+                imagenet_val_accuracies.append(top1)
                 if EVAL_OXFORD_PET and pet_val_loader is not None:
                     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+                    oxfordpet_val_accuracies.append(pet_top1)
 
             # Overwrite the plot after each epoch
-            plot_and_save_losses(train_losses, val_accuracies, __file__)
-
+            plot_and_save_losses(train_losses, imagenet_val_accuracies, oxfordpet_val_accuracies, __file__, fig_title="Final feature distillation")
             # --- Early stopping based on validation Top-1 accuracy ---
             # --- Early stopping: stop if validation Top-1 accuracy drops by more than 10% ---
             if epoch == 0:
