@@ -7,7 +7,6 @@
 #SBATCH --output=L_contrastive%j.out
 #SBATCH --error=L_contrastive%j.err
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 module load anaconda3
 module load cuda
