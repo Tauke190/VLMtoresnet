@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=L_final
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=gpu32
+#SBATCH --constraint=gmem48
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=6:00:00
