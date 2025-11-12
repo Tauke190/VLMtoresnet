@@ -110,6 +110,11 @@ def main():
     train_feats, train_labels = extract_features(backbone, projector, train_ds, args.batch_size, args.workers)
     val_feats, val_labels = extract_features(backbone, projector, val_ds, args.batch_size, args.workers)
 
+    print(f"len(train_ds) = {len(train_ds)}")
+    print(f"train_feats.shape = {train_feats.shape}, train_labels.shape = {train_labels.shape}")
+    unique_labels = np.unique(train_labels)
+    print(f"#classes in labels = {len(unique_labels)} (expected {num_classes})")
+
     clf = LogisticRegression(random_state=0, C=args.C, max_iter=args.max_iter,
                              verbose=1, multi_class="auto", solver="lbfgs")
     clf.fit(train_feats, train_labels)
