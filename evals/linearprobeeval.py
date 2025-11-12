@@ -101,7 +101,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--dataset", choices=["imagenet", "oxfordpet"], required=True)
-    ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--C", type=float, default=0.316)
     ap.add_argument("--max-iter", type=int, default=1000)
