@@ -72,7 +72,7 @@ def load_datasets(name, tfm):
         va = ImageFolder(IMAGENET_VAL_DIR, transform=tfm)
         assert tr.class_to_idx == va.class_to_idx
         return tr, va, len(tr.classes)
-    if name == "oxford_pet":
+    if name == "oxfordpet":
         assert os.path.isdir(OXFORD_PET_TRAIN_DIR) and os.path.isdir(OXFORD_PET_VAL_DIR), "Oxford Pet paths invalid."
         tr = ImageFolder(OXFORD_PET_TRAIN_DIR, transform=tfm)
         va = ImageFolder(OXFORD_PET_VAL_DIR, transform=tfm)
