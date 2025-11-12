@@ -22,7 +22,7 @@ conda activate openmmlab
 cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -u linearprobeeval.py --checkpoint ../distilled_checkpoints/finalfeature_distillation_cliptoresnet.pt --dataset imagenet
+python -u evals/linearprobeeval.py --checkpoint distilled_checkpoints/finalfeature_distillation_cliptoresnet.pt --dataset imagenet
 
 
 # Optional cleanup
