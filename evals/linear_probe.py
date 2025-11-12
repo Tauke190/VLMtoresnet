@@ -27,8 +27,6 @@ if args.checkpoint:
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
     print("Checkpoint loaded.")
-else:
-    model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1).to(device)
 
 feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]).eval()
 
