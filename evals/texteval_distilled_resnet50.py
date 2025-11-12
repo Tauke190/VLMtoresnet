@@ -1,121 +1,122 @@
 import torch
 import torch.nn as nn
-from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
+from torchvision.datasets import ImageFolder
 import timm
 import clip
 import argparse
 import os
-from tqdm import tqdm  # <-- Add this import
+from pathlib import Path
+import sys
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 32
 
-# Hardcoded paths and parameters
-VAL_DIR = '~/data/datasets/imagenet/val'
-# For coding server
-# VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
-PROMPT_FILE = '../prompt/imagenet1k.txt'
-NUM_TEMPLATES = 2
+IMAGENET_VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
+OXFORD_PET_VAL_DIR = os.path.expanduser('~/data/datasets/oxford_pet/val')
 
-def get_student_features(backbone, images):
-    feature_map = backbone.forward_features(images)
-    pooled_features = backbone.global_pool(feature_map)
-    return pooled_features
+def find_project_root(start: Path, markers=('utils.py', 'CLIP')):
+    p = start.resolve()
+    for parent in [p] + list(p.parents):
+        utils_file = parent / 'utils.py'
+        clip_dir = parent / 'CLIP'
+        if utils_file.exists() and clip_dir.exists():
+            return parent
+    return start.resolve().parent  # fallback
 
-def load_prompts_from_file(filepath):
-    with open(filepath, 'r') as f:
-        templates = [line.strip() for line in f.readlines()]
-    print(f"Loaded {len(templates)} templates from {filepath}.")
-    return templates
+# Robust project root (works if folder is eval or evals)
+PROJECT_ROOT = find_project_root(Path(__file__).parent)
+CLIP_DIR = PROJECT_ROOT / "CLIP"
+TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 
-def zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, device=DEVICE):
-    prompts = [template.format(name) for name in class_names for template in templates]
-    with torch.no_grad():
-        text_tokens = clip.tokenize(prompts).to(device)
-        text_features = teacher.encode_text(text_tokens).float()
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-    num_templates = len(templates)
-    num_classes = len(class_names)
-    text_features = text_features.view(num_classes, num_templates, -1).mean(dim=1)
-    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-    top1_correct = 0
-    top5_correct = 0
-    total = 0
+sys.path.append(str(PROJECT_ROOT))
+sys.path.append(str(CLIP_DIR))
+
+from utils import (
+    zeroshot_classifier,
+    get_student_features,
+    imagenet_aligned_classnames,
+    imagefolder_human_names,
+    read_txt,
+)
+
+def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
     projector.eval()
-    # Add tqdm progress bar
-    for images, labels in tqdm(val_loader, desc="Validating", leave=True):
-        images, labels = images.to(device), labels.to(device)
-        with torch.no_grad():
-            features = get_student_features(backbone, images)
-            student_features = projector(features)
-            student_features = student_features / student_features.norm(dim=-1, keepdim=True)
-            logits = student_features @ text_features.t()
-            _, top5_preds = logits.topk(5, dim=1)
+    zs_weights = zs_weights.to(device=device, dtype=torch.float32)
+    top1_correct, top5_correct, total = 0, 0, 0
+    with torch.no_grad():
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            student_feats = get_student_features(backbone, images)
+            proj_feats = projector(student_feats).float()
+            proj_feats = proj_feats / proj_feats.norm(dim=-1, keepdim=True)
+            logits = 100.0 * (proj_feats @ zs_weights)
+            _, top5 = logits.topk(5, dim=1)
             total += labels.size(0)
-            top1_correct += (top5_preds[:, 0] == labels).sum().item()
-            top5_correct += (top5_preds == labels.view(-1, 1)).sum().item()
-    top1_accuracy = 100 * top1_correct / total
-    top5_accuracy = 100 * top5_correct / total
-    return top1_accuracy, top5_accuracy
+            top1_correct += (top5[:, 0] == labels).sum().item()
+            top5_correct += (top5 == labels.view(-1, 1)).sum().item()
+    top1 = 100.0 * top1_correct / total
+    top5 = 100.0 * top5_correct / total
+    return top1, top5
 
 def filter_state_dict(state_dict):
-    # Remove keys containing 'total_ops' or 'total_params'
     return {k: v for k, v in state_dict.items() if 'total_ops' not in k and 'total_params' not in k}
 
 def main():
-    parser = argparse.ArgumentParser(description="Zero-shot validation for distilled ResNet-50 student")
-    parser.add_argument('--checkpoint', type=str, required=True, help='Path to checkpoint file')
-    parser.add_argument('--dataset', type=str, choices=['imagenet', 'oxfordpet'], default='imagenet', help='Dataset to evaluate')
+    parser = argparse.ArgumentParser(description="Final-feature zero-shot evaluation (CLIP->ResNet student).")
+    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--dataset', type=str, choices=['imagenet', 'oxfordpet'], default='imagenet')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE)
+    parser.add_argument('--num_workers', type=int, default=2)
     args = parser.parse_args()
 
-    print(f"Using device: {DEVICE}")
+    print(f"Device: {DEVICE}")
+    print(f"Resolved PROJECT_ROOT: {PROJECT_ROOT}")
+    print(f"Templates dir: {TEMPLATES_DIR}")
 
-    # Set validation directory based on dataset
     if args.dataset == 'imagenet':
-        val_dir = os.path.expanduser('~/data/datasets/imagenet/val')
-        prompt_file = '../prompt/imagenet1k.txt'
-    elif args.dataset == 'oxfordpet':
-        val_dir = os.path.expanduser('~/data/datasets/oxford_pet/val')
-        prompt_file = '../prompt/oxfordpet.txt'
+        val_dir = IMAGENET_VAL_DIR
+        templates_file = TEMPLATES_DIR / "imagenet1k.txt"
+    else:
+        val_dir = OXFORD_PET_VAL_DIR
+        templates_file = TEMPLATES_DIR / "pets.txt"
 
-    # Load teacher model and preprocessing
+    print("Loading CLIP ViT-L/14 teacher...")
     teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
-    for param in teacher.parameters():
-        param.requires_grad = False
+    for p in teacher.parameters(): p.requires_grad = False
 
-    # Load validation dataset
-    print(f"Loading validation dataset from: {val_dir}")
-    val_dataset = ImageFolder(root=val_dir, transform=preprocess)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
-    class_names = val_dataset.classes
-    print(f"Found {len(class_names)} classes in validation set.")
+    print(f"Loading dataset from: {val_dir}")
+    val_dataset = ImageFolder(root=os.path.expanduser(val_dir), transform=preprocess)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
+                            num_workers=args.num_workers, pin_memory=True)
+    print(f"Found {len(val_dataset)} images over {len(val_dataset.classes)} classes.")
 
-    # Load prompt templates
-    templates = load_prompts_from_file(prompt_file)
-    templates = templates[:NUM_TEMPLATES]
+    templates = read_txt(str(templates_file))
+    if args.dataset == 'imagenet':
+        class_names = imagenet_aligned_classnames(val_dataset, "imagenet_class_index.json")
+    else:
+        class_names = imagefolder_human_names(val_dataset)
+    print(f"Building zero-shot weights: {len(class_names)} classes, {len(templates)} templates...")
+    zs_weights = zeroshot_classifier(class_names, templates, teacher).to(DEVICE)
 
-    # Load student backbone and projector
-    print("Loading student backbone (ResNet-50)...")
+    print("Instantiating student backbone (ResNet-50) and projector...")
     backbone = timm.create_model('resnet50', pretrained=False, num_classes=0).to(DEVICE)
-    teacher_feature_dim = teacher.visual.output_dim
-    student_feature_dim = backbone.num_features
-    projector = nn.Linear(student_feature_dim, teacher_feature_dim).to(DEVICE)
+    teacher_dim = teacher.visual.output_dim
+    student_dim = backbone.num_features
+    projector = nn.Linear(student_dim, teacher_dim).to(DEVICE)
 
-    # Load checkpoint and filter state_dict
-    print(f"Loading checkpoint from {args.checkpoint} ...")
-    checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
-    backbone_state_dict = filter_state_dict(checkpoint['backbone_state_dict'])
-    projector_state_dict = filter_state_dict(checkpoint['projector_state_dict'])
-    backbone.load_state_dict(backbone_state_dict,strict=False)
-    projector.load_state_dict(projector_state_dict,strict=False)
+    print(f"Loading checkpoint: {args.checkpoint}")
+    ckpt = torch.load(args.checkpoint, map_location=DEVICE)
+    backbone_sd = filter_state_dict(ckpt.get('backbone_state_dict', {}))
+    projector_sd = filter_state_dict(ckpt.get('projector_state_dict', {}))
+    backbone.load_state_dict(backbone_sd, strict=False)
+    projector.load_state_dict(projector_sd, strict=False)
 
-    # Run zero-shot validation
-    print("Running zero-shot validation...")
-    top1, top5 = zeroshot_validate_student(backbone, projector, class_names, val_loader, teacher, templates, DEVICE)
-    print(f"Zero-shot Validation Accuracy: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+    print("Running zero-shot evaluation (final feature space)...")
+    top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, zs_weights, DEVICE)
+    print(f"Zero-shot Accuracy: Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
 if __name__ == '__main__':
     main()

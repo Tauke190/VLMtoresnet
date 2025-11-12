@@ -350,7 +350,7 @@ def run_distillation():
         print("\nDistillation training finished.")
         total_time = time.time() - total_start_time
         print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
-        plot_and_save_losses(train_losses, val_accuracies, __file__)
+        plot_and_save_losses(train_losses, imagenet_val_accuracies, oxfordpet_val_accuracies, __file__, fig_title="Final feature distillation")
 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
