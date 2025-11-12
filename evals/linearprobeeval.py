@@ -12,8 +12,13 @@ import torch.nn as nn
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-IMAGENET_TRAIN_DIR = os.path.expanduser('~/data/datasets/imagenet/train')
-IMAGENET_VAL_DIR   = os.path.expanduser('~/data/datasets/imagenet/val')
+IMAGENET_TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+IMAGENET_VAL_DIR   = '/home/c3-0/datasets/ImageNet/validation'
+# IMAGENET_TRAIN_DIR = os.path.expanduser('~/data/datasets/imagenet/train')
+# IMAGENET_VAL_DIR   = os.path.expanduser('~/data/datasets/imagenet/val')
+
+
+
 OXFORD_PET_TRAIN_DIR = os.path.expanduser('~/data/datasets/oxford_pet/train')
 OXFORD_PET_VAL_DIR   = os.path.expanduser('~/data/datasets/oxford_pet/val')
 
