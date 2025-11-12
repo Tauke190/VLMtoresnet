@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=L_contrastive
-#SBATCH --output=L_contrastive%j.out
-#SBATCH --error=L_contrastive%j.err
+#SBATCH --job-name=L_masked
+#SBATCH --output=L_masked%j.out
+#SBATCH --error=L_masked%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
@@ -22,7 +22,7 @@ nvidia-smi
 cd /home/av354855/VLMtoresnet
 
 python -c "import torch; print('Torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
-python -u evals/linear_probe.py --checkpoint distilled_checkpoints/contrastive_distillation_cliptoresnet.pt
+python -u evals/linear_probe.py --checkpoint distilled_checkpoints/masked_generative_distillation.pt
 echo "Job finished at $(date)"
 
 #  SBATCH --constraint=gmem24
