@@ -95,7 +95,7 @@ def extract_features(backbone, projector, dataset, batch_size, workers):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
-    ap.add_argument("--dataset", choices=["imagenet", "oxford_pet"], required=True)
+    ap.add_argument("--dataset", choices=["imagenet", "oxfordpet"], required=True)
     ap.add_argument("--batch-size", type=int, default=128)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--C", type=float, default=0.316)
@@ -120,7 +120,16 @@ def main():
     clf.fit(train_feats, train_labels)
     preds = clf.predict(val_feats)
     acc = (val_labels == preds).mean() * 100
-    print(f"Linear probe accuracy (val) = {acc:.3f}")
+    print(f"Linear probe accuracy (val, top1) = {acc:.3f}")
+
+    # Top-5 accuracy
+    probs = clf.predict_proba(val_feats)  # shape (N, num_classes)
+    if probs.shape[1] >= 5:
+        top5_idx = np.argsort(probs, axis=1)[:, -5:]
+        acc5 = np.mean([lbl in row for lbl, row in zip(val_labels, top5_idx)]) * 100
+        print(f"Linear probe accuracy (val, top5) = {acc5:.3f}")
+    else:
+        print("Top-5 not computed (num_classes < 5).")
 
 if __name__ == "__main__":
     main()
