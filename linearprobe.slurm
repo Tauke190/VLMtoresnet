@@ -1,13 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=imagenet1k_probe
+#SBATCH --job-name=L_final
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=gpu32
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=6:00:00
-#SBATCH --output=imagenet1k_%j.out
-#SBATCH --error=imagenet1k_%j.err
-
+#SBATCH --output=L_final%j.out
+#SBATCH --error=L_final%j.err
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
