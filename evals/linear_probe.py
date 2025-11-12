@@ -11,7 +11,7 @@ import argparse
 DATA_ROOT ='/home/c3-0/datasets/ImageNet'
 
 BATCH_SIZE = 32
-NUM_WORKERS = 8
+NUM_WORKERS = 0
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
