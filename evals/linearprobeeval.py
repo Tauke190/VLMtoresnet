@@ -89,7 +89,7 @@ def load_datasets(name, tfm):
 def extract_features(backbone, projector, dataset, batch_size, workers):
     feats_all, labels_all = [], []
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
-                        num_workers=workers, pin_memory=(device == "cuda"))
+                        num_workers=workers)
     for imgs, labels in tqdm(loader, desc="Features"):
         imgs = imgs.to(device)
         feats = encode_images(backbone, projector, imgs).float().cpu()
@@ -101,8 +101,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--dataset", choices=["imagenet", "oxfordpet"], required=True)
-    ap.add_argument("--batch-size", type=int, default=32)
-    ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--C", type=float, default=0.316)
     ap.add_argument("--max-iter", type=int, default=1000)
     args = ap.parse_args()

@@ -350,7 +350,7 @@ def run_distillation():
                     print(f"[Oxford-Pet] Zero-shot after Epoch {epoch+1}: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
             # Update plot
-            plot_and_save_losses(train_losses, val_accuracies, __file__, fig_title="Contrastive distillation CLIP to ResNet")
+            plot_and_save_losses(train_losses, val_accuracies, __file__, fig_title="Contrastive distillation")
 
             # Early stopping (copied logic): stop if validation Top-1 drops > threshold; save best
             if best_val_acc is None:
