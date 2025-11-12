@@ -8,6 +8,8 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import json
+import urllib.request
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 32
@@ -39,6 +41,33 @@ from utils import (
     imagefolder_human_names,
     read_txt,
 )
+
+IMAGENET_INDEX_FILENAME = "imagenet_class_index.json"
+IMAGENET_INDEX_URL = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_class_index.json"
+
+def resolve_imagenet_index():
+    env_override = os.environ.get("IMAGENET_INDEX_PATH")
+    candidates = [
+        env_override,
+        str(PROJECT_ROOT / IMAGENET_INDEX_FILENAME),
+        str(CLIP_DIR / IMAGENET_INDEX_FILENAME),
+        str(Path(__file__).parent / IMAGENET_INDEX_FILENAME),
+        str(Path.cwd() / IMAGENET_INDEX_FILENAME),
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c)
+    # Attempt download (silent failure -> fallback)
+    target = PROJECT_ROOT / IMAGENET_INDEX_FILENAME
+    try:
+        print(f"imagenet_class_index.json not found. Attempting download to {target} ...")
+        urllib.request.urlretrieve(IMAGENET_INDEX_URL, target)
+        if target.is_file():
+            print("Downloaded imagenet_class_index.json.")
+            return target
+    except Exception as e:
+        print(f"Download failed: {e}")
+    return None  # signal fallback
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     backbone.eval()
@@ -95,9 +124,16 @@ def main():
 
     templates = read_txt(str(templates_file))
     if args.dataset == 'imagenet':
-        class_names = imagenet_aligned_classnames(val_dataset, "imagenet_class_index.json")
+        index_path = resolve_imagenet_index()
+        if index_path:
+            print(f"Using ImageNet index at: {index_path}")
+            class_names = imagenet_aligned_classnames(val_dataset, str(index_path))
+        else:
+            print("Warning: imagenet_class_index.json unavailable. Falling back to folder names.")
+            class_names = imagefolder_human_names(val_dataset)
     else:
         class_names = imagefolder_human_names(val_dataset)
+
     print(f"Building zero-shot weights: {len(class_names)} classes, {len(templates)} templates...")
     zs_weights = zeroshot_classifier(class_names, templates, teacher).to(DEVICE)
 
