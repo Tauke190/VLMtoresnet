@@ -7,7 +7,9 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 import argparse
 
-DATA_ROOT = "/mnt/SSD2/imagenet/"
+# DATA_ROOT = "/mnt/SSD2/imagenet/"
+DATA_ROOT ='/home/c3-0/datasets/ImageNet'
+
 BATCH_SIZE = 256
 NUM_WORKERS = 8
 
@@ -41,7 +43,7 @@ transform = transforms.Compose(
 )
 print("Loading datasets...")
 train = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
-val = datasets.ImageFolder(os.path.join(DATA_ROOT, "val"), transform=transform)
+val = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
 print(f"Train samples: {len(train):,}")
 print(f"Val samples: {len(val):,}")
 
