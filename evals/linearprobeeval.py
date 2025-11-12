@@ -102,7 +102,7 @@ def main():
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--dataset", choices=["imagenet", "oxfordpet"], required=True)
     ap.add_argument("--batch-size", type=int, default=128)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--C", type=float, default=0.316)
     ap.add_argument("--max-iter", type=int, default=1000)
     args = ap.parse_args()
