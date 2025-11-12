@@ -19,10 +19,10 @@ parser.add_argument('--checkpoint', type=str, default=None, help='Path to model 
 args = parser.parse_args()
 
 # Load ResNet50 and remove the final classifier
-print("Loading ResNet50...")
+print("Loading Distilled ResNet50...")
 
 if args.checkpoint:
-    model = models.resnet50(weights=None).to(device)
+    model = models.resnet50(pretrained=None).to(device)
     print(f"Loading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
