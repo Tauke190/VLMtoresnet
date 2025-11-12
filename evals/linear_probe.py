@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 import argparse
 
-DATA_ROOT = "/mnt/SSD2/ImageNet1k"
-# DATA_ROOT ='/home/c3-0/datasets/ImageNet'
+# DATA_ROOT = "/mnt/SSD2/ImageNet1k"
+DATA_ROOT ='/home/c3-0/datasets/ImageNet'
 
 BATCH_SIZE = 256
 NUM_WORKERS = 0
@@ -24,7 +24,7 @@ args = parser.parse_args()
 print("Loading Distilled ResNet50...")
 
 if args.checkpoint:
-    model = models.resnet50(pretrained=None).to(device)
+    model = models.resnet50(weights=None).to(device)
     print(f"Loading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
