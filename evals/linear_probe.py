@@ -10,7 +10,7 @@ import argparse
 # DATA_ROOT = "/mnt/SSD2/imagenet/"
 DATA_ROOT ='/home/c3-0/datasets/ImageNet'
 
-BATCH_SIZE = 256
+BATCH_SIZE = 32
 NUM_WORKERS = 8
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

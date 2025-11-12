@@ -2,7 +2,7 @@
 #SBATCH --job-name=L_contrastive
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=8G
+#SBATCH --mem-per-cpu=16G
 #SBATCH --time=10:00:00
 #SBATCH --output=L_contrastive%j.out
 #SBATCH --error=L_contrastive%j.err
