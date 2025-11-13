@@ -114,13 +114,13 @@ def main():
     print(f"Using device: {device}")
     print("Loading Distilled ResNet50...")
     if args.checkpoint:
-        model = models.resnet50(weights=None).to(device)
+        model = models.resnet50(pretrained=None).to(device)
         print(f"Loading checkpoint from {args.checkpoint}...")
         ckpt = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(ckpt["backbone_state_dict"], strict=False)
         print("Checkpoint loaded.")
     else:
-        model = models.resnet50(weights="IMAGENET1K_V2").to(device)
+        model = models.resnet50(pretrained="IMAGENET1K_V2").to(device)
         print("Loaded ImageNet pretrained backbone (no checkpoint provided).")
 
     feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]).eval()
