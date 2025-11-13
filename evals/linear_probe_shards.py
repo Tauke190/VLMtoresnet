@@ -8,8 +8,9 @@ from torchvision import models, datasets, transforms
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 
-DATA_ROOT = "/mnt/SSD2/ImageNet1k"
-BATCH_SIZE = 256
+# DATA_ROOT = "/mnt/SSD2/ImageNet1k"
+DATA_ROOT = "home/c3-0/datasets/ImageNet"
+BATCH_SIZE = 32
 NUM_WORKERS = 4  # increase for faster disk IO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
