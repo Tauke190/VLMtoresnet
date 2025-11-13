@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=L_masked
-#SBATCH --output=L_masked%j.out
-#SBATCH --error=L_masked%j.err
-#SBATCH --ntasks=1
+#SBATCH --job-name=imagenet1k_probe
 #SBATCH --gres=gpu:1
-#SBATCH --mem=64G
-#SBATCH --time=8:00:00
+#SBATCH --constraint=gmem48
+#SBATCH --cpus-per-task=8
+#SBATCH --mem-per-cpu=8G
+#SBATCH --time=6:00:00
+#SBATCH --output=imagenet1k_%j.out
+#SBATCH --error=imagenet1k_%j.err
 
 module load anaconda3
 module load cuda

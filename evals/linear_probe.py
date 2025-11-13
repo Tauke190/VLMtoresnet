@@ -23,7 +23,7 @@ args = parser.parse_args()
 DATA_ROOT = DATASET_PATHS[args.dataset]
 
 BATCH_SIZE = 256
-NUM_WORKERS = 0
+NUM_WORKERS = 8
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
