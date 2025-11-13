@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=L_masked
-#SBATCH --output=L_masked%j.out
-#SBATCH --error=L_masked%j.err
+#SBATCH --job-name=LS_masked
+#SBATCH --output=LS_masked%j.out
+#SBATCH --error=LS_masked%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
