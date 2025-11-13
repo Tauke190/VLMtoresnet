@@ -1,201 +1,97 @@
 import os
-import glob
-import argparse
 import torch
 import numpy as np
 from tqdm import tqdm
 from torchvision import models, datasets, transforms
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
+import argparse
 
 DATA_ROOT = "/mnt/SSD2/ImageNet1k"
+# DATA_ROOT ='/home/c3-0/datasets/ImageNet'
+
 BATCH_SIZE = 256
-NUM_WORKERS = 4  # increase for faster disk IO
+NUM_WORKERS = 0
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
+# Argument parser for checkpoint only
+parser = argparse.ArgumentParser(description="Linear probe on ResNet50 features")
+parser.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint with backbone_state_dict')
+args = parser.parse_args()
 
-# ------------------------------------------------------------------
-# Feature extraction (sharded to disk to avoid holding all in RAM)
-# ------------------------------------------------------------------
-@torch.no_grad()
-def extract_and_save_features(dataset, split, feature_extractor, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
-    loader = DataLoader(
-        dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=True,
-    )
-    shard_idx = 0
-    total = 0
-    feat_dim = None
-    for images, labels in tqdm(loader, desc=f"{split} feature shards"):
-        feats = feature_extractor(images.to(device))
-        feats = feats.view(feats.size(0), -1).cpu().numpy().astype("float32")
-        if feat_dim is None:
-            feat_dim = feats.shape[1]
-        labels = labels.numpy().astype("int32")
-        shard_path = os.path.join(out_dir, f"{split}_{shard_idx:06d}.npz")
-        np.savez_compressed(shard_path, X=feats, y=labels)
-        shard_idx += 1
-        total += feats.shape[0]
-    # metadata
-    meta = {
-        "split": split,
-        "count": total,
-        "feature_dim": int(feat_dim if feat_dim else -1),
-        "num_shards": shard_idx,
-    }
-    with open(os.path.join(out_dir, f"{split}_meta.txt"), "w") as f:
-        for k, v in meta.items():
-            f.write(f"{k}={v}\n")
-    print(f"[{split}] saved {total} samples, dim={feat_dim}, shards={shard_idx}")
+# Load ResNet50 and remove the final classifier
+print("Loading Distilled ResNet50...")
 
-def list_shards(out_dir, split):
-    return sorted(glob.glob(os.path.join(out_dir, f"{split}_*.npz")))
+if args.checkpoint:
+    model = models.resnet50(weights=None).to(device)
+    print(f"Loading checkpoint from {args.checkpoint}...")
+    checkpoint = torch.load(args.checkpoint, map_location=device)
+    model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
+    print("Checkpoint loaded.")
 
-def load_features(out_dir, split, use_memmap=False):
-    shards = list_shards(out_dir, split)
-    if not shards:
-        raise FileNotFoundError(f"No feature shards found for split '{split}' in {out_dir}")
-    # Determine total size & dim
-    sizes = []
-    feat_dim = None
-    for p in shards:
-        with np.load(p) as d:
-            X = d["X"]
-            sizes.append(X.shape[0])
-            if feat_dim is None:
-                feat_dim = X.shape[1]
-    total = sum(sizes)
-    if use_memmap:
-        mmap_feat_path = os.path.join(out_dir, f"{split}_features.memmap")
-        mmap_lab_path = os.path.join(out_dir, f"{split}_labels.memmap")
-        X_all = np.memmap(mmap_feat_path, mode="w+", dtype="float32", shape=(total, feat_dim))
-        y_all = np.memmap(mmap_lab_path, mode="w+", dtype="int32", shape=(total,))
-        offset = 0
-        for p in shards:
-            with np.load(p) as d:
-                X = d["X"]
-                y = d["y"]
-            n = X.shape[0]
-            X_all[offset:offset+n] = X
-            y_all[offset:offset+n] = y
-            offset += n
-        X_all.flush()
-        y_all.flush()
-        # reopen read-only
-        X_all = np.memmap(mmap_feat_path, mode="r", dtype="float32", shape=(total, feat_dim))
-        y_all = np.memmap(mmap_lab_path, mode="r", dtype="int32", shape=(total,))
-        return X_all, y_all
-    else:
-        feat_list = []
-        lab_list = []
-        for p in shards:
-            with np.load(p) as d:
-                feat_list.append(d["X"])
-                lab_list.append(d["y"])
-        X_all = np.concatenate(feat_list, axis=0)
-        y_all = np.concatenate(lab_list, axis=0)
-        return X_all, y_all
+feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]).eval()
 
-# ------------------------------------------------------------------
-# Original pipeline logic preserved (LogisticRegression identical)
-# ------------------------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser(description="Linear probe on ResNet50 features (sharded extraction)")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint with backbone_state_dict")
-    parser.add_argument("--features_dir", type=str, default="features_lp", help="Directory for feature shards")
-    parser.add_argument("--reuse_features", action="store_true", help="Skip extraction if shards exist")
-    parser.add_argument("--memmap", action="store_true", help="Assemble features into memmap arrays to reduce RAM")
-    parser.add_argument("--no_val", action="store_true", help="Skip validation (only needed for debugging)")
-    args = parser.parse_args()
-
-    print(f"Using device: {device}")
-    print("Loading Distilled ResNet50...")
-    if args.checkpoint:
-        model = models.resnet50(weights=None).to(device)
-        print(f"Loading checkpoint from {args.checkpoint}...")
-        ckpt = torch.load(args.checkpoint, map_location=device)
-        model.load_state_dict(ckpt["backbone_state_dict"], strict=False)
-        print("Checkpoint loaded.")
-    else:
-        model = models.resnet50(weights="IMAGENET1K_V2").to(device)
-        print("Loaded ImageNet pretrained backbone (no checkpoint provided).")
-
-    feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]).eval()
-
-    transform = transforms.Compose([
+# Data transforms
+transform = transforms.Compose(
+    [
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
-    ])
-    train_ds = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
-    val_ds   = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
-    print(f"Train samples: {len(train_ds):,}")
-    print(f"Val samples:   {len(val_ds):,}")
-
-    os.makedirs(args.features_dir, exist_ok=True)
-
-    # Extraction phase
-    need_train = not list_shards(args.features_dir, "train")
-    need_val = not list_shards(args.features_dir, "val") and not args.no_val
-    if args.reuse_features and not (need_train or need_val):
-        print("Reusing existing feature shards.")
-    else:
-        if need_train:
-            print("Extracting train features (sharded)...")
-            extract_and_save_features(train_ds, "train", feature_extractor, args.features_dir)
-        else:
-            print("Train feature shards already exist.")
-        if not args.no_val:
-            if need_val:
-                print("Extracting val features (sharded)...")
-                extract_and_save_features(val_ds, "val", feature_extractor, args.features_dir)
-            else:
-                print("Val feature shards already exist.")
-
-    # Load all features
-    print("Loading train feature shards into array...")
-    train_features, train_labels = load_features(args.features_dir, "train", use_memmap=args.memmap)
-    print(f"Train features shape: {train_features.shape}")
-    if not args.no_val:
-        print("Loading val feature shards into array...")
-        val_features, val_labels = load_features(args.features_dir, "val", use_memmap=args.memmap)
-        print(f"Val features shape:   {val_features.shape}")
-
-    # Logistic regression identical to original
-    print("\nTraining logistic regression classifier...")
-    classifier = LogisticRegression(
-        random_state=0,
-        C=0.316,
-        max_iter=1000,
-        verbose=1,
-        n_jobs=-1,
-    )
-    classifier.fit(train_features, train_labels)
-
-    if args.no_val:
-        print("Validation skipped (--no_val).")
-        return
-
-    print("\nEvaluating...")
-    probs = classifier.predict_proba(val_features)
-    top1_preds = np.argmax(probs, axis=1)
-    top1_acc = np.mean(classifier.classes_[top1_preds] == val_labels) * 100
-    top5_idx = np.argsort(probs, axis=1)[:, -5:]
-    top5_hits = [
-        val_labels[i] in classifier.classes_[top5_idx[i]]
-        for i in range(len(val_labels))
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]
-    top5_acc = np.mean(top5_hits) * 100
+)
+print("Loading datasets...")
+train = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
+val = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
+print(f"Train samples: {len(train):,}")
+print(f"Val samples: {len(val):,}")
 
-    print(f"\n{'='*60}")
-    print("ResNet50 Linear Probe Results:")
-    print(f"  Top-1 Accuracy: {top1_acc:.2f}%")
-    print(f"  Top-5 Accuracy: {top5_acc:.2f}%")
-    print(f"{'='*60}")
+def get_features(dataset, desc="Extracting"):
+    all_features = []
+    all_labels = []
+    dataloader = DataLoader(
+        dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True
+    )
+    with torch.no_grad():
+        for images, labels in tqdm(dataloader, desc=desc):
+            features = feature_extractor(images.to(device))
+            features = features.view(features.size(0), -1)  # flatten
+            all_features.append(features.cpu())
+            all_labels.append(labels)
+    return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
 
-if __name__ == "__main__":
-    main()
+# Extract features
+print("\nExtracting train features...")
+train_features, train_labels = get_features(train, desc="Train features")
+print(f"Train features shape: {train_features.shape}")
+print("\nExtracting val features...")
+val_features, val_labels = get_features(val, desc="Val features")
+print(f"Val features shape: {val_features.shape}")
+
+# Train logistic regression
+print("\nTraining logistic regression classifier...")
+classifier = LogisticRegression(
+    random_state=0, C=0.316, max_iter=1000, verbose=1, n_jobs=-1
+)
+classifier.fit(train_features, train_labels)
+print("\nEvaluating...")
+probs = classifier.predict_proba(val_features)
+# Top-1 accuracy
+top1_preds = np.argmax(probs, axis=1)
+top1_acc = np.mean(classifier.classes_[top1_preds] == val_labels) * 100
+top5_preds = np.argsort(probs, axis=1)[:, -5:]
+top5_acc = (
+    np.mean(
+        [
+            val_labels[i] in classifier.classes_[top5_preds[i]]
+            for i in range(len(val_labels))
+        ]
+    )
+    * 100
+)
+print(f"\n{'='*60}")
+print(f"ResNet50 Linear Probe Results:")
+print(f"  Top-1 Accuracy: {top1_acc:.2f}%")
+print(f"  Top-5 Accuracy: {top5_acc:.2f}%")
+print(f"{'='*60}")
