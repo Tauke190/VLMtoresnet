@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 import argparse
 
-# DATA_ROOT = "/mnt/SSD2/ImageNet1k"
-DATA_ROOT ='/home/c3-0/datasets/ImageNet'
+DATA_ROOT = "/mnt/SSD2/ImageNet1k"
+# DATA_ROOT ='/home/c3-0/datasets/ImageNet'
 
 BATCH_SIZE = 256
 NUM_WORKERS = 0
