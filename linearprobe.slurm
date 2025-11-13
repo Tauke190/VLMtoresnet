@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
-#SBATCH --time=6:00:00
+#SBATCH --time=8:00:00
 
 module load anaconda3
 module load cuda
