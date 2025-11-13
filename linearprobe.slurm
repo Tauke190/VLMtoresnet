@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=1_imagenet1k_probe
+#SBATCH --job-name=2_imagenet1k_probe
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=gmem48
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=8:00:00
-#SBATCH --output=1_imagenet1k_%j.out
-#SBATCH --error=1_imagenet1k_%j.err
+#SBATCH --output=2_imagenet1k_%j.out
+#SBATCH --error=2_imagenet1k_%j.err
 
 module load anaconda3
 module load cuda
