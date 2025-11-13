@@ -132,7 +132,7 @@ def main():
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
     ])
     train_ds = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
-    val_ds   = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
+    val_ds   = datasets.ImageFolder(os.path.join(DATA_ROOT, "val"), transform=transform)
     print(f"Train samples: {len(train_ds):,}")
     print(f"Val samples:   {len(val_ds):,}")
 
