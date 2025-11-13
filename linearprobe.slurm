@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=2_imagenet1k_probe
+#SBATCH --job-name=3_imagenet1k_probe
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=gmem48
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=8:00:00
-#SBATCH --output=2_imagenet1k_%j.out
-#SBATCH --error=2_imagenet1k_%j.err
+#SBATCH --output=3_imagenet1k_%j.out
+#SBATCH --error=3_imagenet1k_%j.err
 
 module load anaconda3
 module load cuda
@@ -22,5 +22,5 @@ nvidia-smi
 cd /home/av354855/VLMtoresnet
 
 python -c "import torch; print('Torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
-python -u evals/linear_probe.py --checkpoint distilled_checkpoints/intermediate_feature_distillation_cliptoresnet.pt --dataset imagenet
+python -u evals/linear_probe.py --checkpoint distilled_checkpoints/contrastive_distillation_cliptoresnet.pt --dataset imagenet
 echo "Job finished at $(date)"
