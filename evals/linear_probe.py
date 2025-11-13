@@ -8,7 +8,7 @@ from sklearn.linear_model import LogisticRegression
 import argparse
 
 IMAGE_NET = '/home/c3-0/datasets/ImageNet'
-OXFORD_PET = '~/data/datasets/oxford_pet/val'
+OXFORD_PET = '~/data/datasets/oxford_pet'
 
 DATASET_PATHS = {
     "imagenet": IMAGE_NET,
