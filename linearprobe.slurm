@@ -23,5 +23,5 @@ nvidia-smi
 cd /home/av354855/VLMtoresnet
 
 python -c "import torch; print('Torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
-python -u evals/linear_probe.py --checkpoint intermediate_feature_distillation_cliptoresnet.pt --dataset imagenet
+python -u evals/linear_probe.py --checkpoint distilled_checkpoints/intermediate_feature_distillation_cliptoresnet.pt --dataset imagenet
 echo "Job finished at $(date)"
