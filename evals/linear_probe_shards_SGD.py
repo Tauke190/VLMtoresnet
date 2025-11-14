@@ -56,6 +56,24 @@ def extract_and_save_features(dataset, split, feature_extractor, out_dir):
 def list_shards(out_dir, split):
     return sorted(glob.glob(os.path.join(out_dir, f"{split}_*.npz")))
 
+def filter_good_shards(shard_paths, preview=5):
+    good, bad = [], []
+    for p in shard_paths:
+        if not p.endswith(".npz"):
+            continue
+        try:
+            with np.load(p) as d:
+                _ = d["X"].shape; _ = d["y"].shape
+        except Exception as e:
+            bad.append((p, str(e)))
+            continue
+        good.append(p)
+    if bad:
+        print(f"[WARN] Skipping {len(bad)} corrupt shard(s). Showing up to {preview}:")
+        for p, e in bad[:preview]:
+            print(f"  - {os.path.basename(p)}: {e}")
+    return good
+
 def load_features(out_dir, split, use_memmap=False):
     shards = list_shards(out_dir, split)
     if not shards:
@@ -111,15 +129,21 @@ def stream_train_sgd(shard_paths, classes, epochs, shuffle, sgd_params):
         if shuffle:
             random.shuffle(shard_paths)
         pbar = tqdm(shard_paths, desc=f"SGD epoch {epoch+1}/{epochs}")
-        first = True
+        initialized = False
         for p in pbar:
-            with np.load(p) as d:
-                X = d["X"]; y = d["y"]
-            if first:
+            try:
+                with np.load(p) as d:
+                    X = d["X"]; y = d["y"]
+            except Exception as e:
+                print(f"[WARN] Skipping corrupt shard during train: {p} ({e})")
+                continue
+            if not initialized:
                 clf.partial_fit(X, y, classes=classes)
-                first = False
+                initialized = True
             else:
                 clf.partial_fit(X, y)
+        if not initialized:
+            raise RuntimeError("No valid shards found to initialize SGDClassifier.")
     return clf
 
 def stream_evaluate(clf, shard_paths):
@@ -127,8 +151,12 @@ def stream_evaluate(clf, shard_paths):
     top5_correct = 0
     total = 0
     for p in tqdm(shard_paths, desc="Eval (stream)"):
-        with np.load(p) as d:
-            X = d["X"]; y = d["y"]
+        try:
+            with np.load(p) as d:
+                X = d["X"]; y = d["y"]
+        except Exception as e:
+            print(f"[WARN] Skipping corrupt shard during eval: {p} ({e})")
+            continue
         probs = clf.predict_proba(X)
         top1 = np.argmax(probs, axis=1)
         top1_correct += np.sum(clf.classes_[top1] == y)
@@ -136,6 +164,8 @@ def stream_evaluate(clf, shard_paths):
         top5_labels = clf.classes_[top5_idx]
         top5_correct += np.sum((top5_labels == y[:, None]).any(axis=1))
         total += y.shape[0]
+    if total == 0:
+        raise RuntimeError("No valid validation samples after skipping corrupt shards.")
     top1_acc = 100.0 * top1_correct / total
     top5_acc = 100.0 * top5_correct / total
     return top1_acc, top5_acc
@@ -205,6 +235,15 @@ def main():
     train_shards = list_shards(args.features_dir, "train")
     val_shards = list_shards(args.features_dir, "val") if not args.no_val else []
 
+    # Filter out corrupt shards up front
+    train_shards = filter_good_shards(train_shards)
+    if not train_shards:
+        raise RuntimeError("No valid training shards found.")
+    if not args.no_val:
+        val_shards = filter_good_shards(val_shards)
+        if not val_shards:
+            print("[WARN] No valid validation shards found; skipping eval.")
+            args.no_val = True
     if args.sgd:
         print("\nStreaming SGDClassifier training (no full matrix load)...")
         classes = np.arange(len(train_ds.classes), dtype="int32")
