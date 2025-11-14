@@ -30,7 +30,7 @@ args = parser.parse_args()
 DATA_ROOT = DATASET_PATHS[args.dataset]
 
 BATCH_SIZE = 32
-NUM_WORKERS = 0
+NUM_WORKERS = 8
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
@@ -43,7 +43,7 @@ print(f"Using device: {device}")
 print("Loading Distilled ResNet50...")
 
 if args.checkpoint:
-    model = models.resnet50(pretrained=None).to(device)
+    model = models.resnet50(weights=None).to(device)
     print(f"Loading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
