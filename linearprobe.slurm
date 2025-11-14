@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=3_imagenet1k_probe
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=gmem48
+#   SBATCH --constraint=gmem48
 #   SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=72G
 #SBATCH --time=8:00:00
