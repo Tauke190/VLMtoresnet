@@ -59,7 +59,7 @@ def load_features(out_dir, split, use_memmap=False):
     shards = list_shards(out_dir, split)
     if not shards:
         raise FileNotFoundError(f"No feature shards found for split '{split}' in {out_dir}")
-    # Determine total size & dim
+    # first pass: sizes + dim
     sizes = []
     feat_dim = None
     for p in shards:
@@ -70,6 +70,7 @@ def load_features(out_dir, split, use_memmap=False):
                 feat_dim = X.shape[1]
     total = sum(sizes)
     if use_memmap:
+        # unchanged
         mmap_feat_path = os.path.join(out_dir, f"{split}_features.memmap")
         mmap_lab_path = os.path.join(out_dir, f"{split}_labels.memmap")
         X_all = np.memmap(mmap_feat_path, mode="w+", dtype="float32", shape=(total, feat_dim))
@@ -77,27 +78,22 @@ def load_features(out_dir, split, use_memmap=False):
         offset = 0
         for p in shards:
             with np.load(p) as d:
-                X = d["X"]
-                y = d["y"]
-            n = X.shape[0]
-            X_all[offset:offset+n] = X
-            y_all[offset:offset+n] = y
-            offset += n
-        X_all.flush()
-        y_all.flush()
-        # reopen read-only
+                X_all[offset:offset+d["X"].shape[0]] = d["X"]
+                y_all[offset:offset+d["y"].shape[0]] = d["y"]
+                offset += d["X"].shape[0]
+        X_all.flush(); y_all.flush()
         X_all = np.memmap(mmap_feat_path, mode="r", dtype="float32", shape=(total, feat_dim))
         y_all = np.memmap(mmap_lab_path, mode="r", dtype="int32", shape=(total,))
         return X_all, y_all
     else:
-        feat_list = []
-        lab_list = []
-        for p in shards:
+        X_all = np.empty((total, feat_dim), dtype="float32")
+        y_all = np.empty((total,), dtype="int32")
+        offset = 0
+        for p, n in zip(shards, sizes):
             with np.load(p) as d:
-                feat_list.append(d["X"])
-                lab_list.append(d["y"])
-        X_all = np.concatenate(feat_list, axis=0)
-        y_all = np.concatenate(lab_list, axis=0)
+                X_all[offset:offset+n] = d["X"]
+                y_all[offset:offset+n] = d["y"]
+            offset += n
         return X_all, y_all
 
 # ------------------------------------------------------------------
