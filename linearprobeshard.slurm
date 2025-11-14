@@ -4,8 +4,8 @@
 #SBATCH --error=LS_masked%j.err
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=10G
-#SBATCH --cpus-per-task=12
+#SBATCH --mem-per-cpu=10G
+#SBATCH --cpus-per-task=10
 #SBATCH --time=10:00:00
 
 module load anaconda3
@@ -22,7 +22,7 @@ nvidia-smi
 cd /home/av354855/VLMtoresnet
 
 python -c "import torch; print('Torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
-python -u evals/linear_probe_shards_SGD --checkpoint distilled_checkpoints/masked_generative_distillation.pt --reuse_features --sgd
+python -u evals/linear_probe_shards --checkpoint distilled_checkpoints/masked_generative_distillation.pt --reuse_features
 echo "Job finished at $(date)"
 
 #  SBATCH --constraint=gmem24
