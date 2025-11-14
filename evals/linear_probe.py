@@ -7,24 +7,36 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression
 import argparse
 
-# DATA_ROOT = "/mnt/SSD2/ImageNet1k"
-DATA_ROOT ='/home/c3-0/datasets/ImageNet'
+IMAGE_NET = '/home/c3-0/datasets/ImageNet'
+OXFORD_PET = '~/data/datasets/oxford_pet'
 
-BATCH_SIZE = 256
-NUM_WORKERS = 0
+DATASET_PATHS = {
+    "imagenet": IMAGE_NET,
+    "oxfordpet": OXFORD_PET,
+}
+
+parser = argparse.ArgumentParser(description="Linear probe on ResNet50 features")
+parser.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint with backbone_state_dict')
+parser.add_argument('--dataset', type=str, choices=DATASET_PATHS.keys(), default="imagenet", help='Dataset to use')
+args = parser.parse_args()
+
+DATA_ROOT = DATASET_PATHS[args.dataset]
+
+BATCH_SIZE = 64
+NUM_WORKERS = 8
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 # Argument parser for checkpoint only
-parser = argparse.ArgumentParser(description="Linear probe on ResNet50 features")
-parser.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint with backbone_state_dict')
-args = parser.parse_args()
+# parser = argparse.ArgumentParser(description="Linear probe on ResNet50 features")
+# parser.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint with backbone_state_dict')
+# args = parser.parse_args()
 
 # Load ResNet50 and remove the final classifier
 print("Loading Distilled ResNet50...")
 
 if args.checkpoint:
-    model = models.resnet50(weights=None).to(device)
+    model = models.resnet50(pretrained=None).to(device)
     print(f"Loading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(checkpoint['backbone_state_dict'], strict=False)
