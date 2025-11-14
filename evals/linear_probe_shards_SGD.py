@@ -12,7 +12,7 @@ import random
 # DATA_ROOT = "/mnt/SSD2/ImageNet1k"
 DATA_ROOT = "/home/c3-0/datasets/ImageNet"
 BATCH_SIZE = 32
-NUM_WORKERS = 4  # increase for faster disk IO
+NUM_WORKERS = 8  # increase for faster disk IO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ------------------------------------------------------------------

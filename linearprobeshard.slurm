@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem-per-cpu=10G
-#SBATCH --cpus-per-task=9
+#SBATCH --cpus-per-task=8
 #SBATCH --time=10:00:00
 
 module load anaconda3
