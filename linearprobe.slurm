@@ -4,9 +4,10 @@
 #   SBATCH --constraint=gmem48
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=10G
-#SBATCH --time=8:00:00
 #SBATCH --output=3_imagenet1k_%j.out
 #SBATCH --error=3_imagenet1k_%j.err
+#SBATCH --time=24:00:00
+
 
 module load anaconda3
 module load cuda

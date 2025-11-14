@@ -7,7 +7,8 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 import argparse
 
-IMAGE_NET = '/home/c3-0/datasets/ImageNet'
+IMAGE_NET = '~/data/datasets/imagenet'
+# IMAGE_NET = '/home/c3-0/datasets/ImageNet'
 OXFORD_PET = '~/data/datasets/oxford_pet'
 
 DATASET_PATHS = {
@@ -61,7 +62,7 @@ transform = transforms.Compose(
 )
 print("Loading datasets...")
 train = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
-val = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
+val = datasets.ImageFolder(os.path.join(DATA_ROOT, "val"), transform=transform)
 print(f"Train samples: {len(train):,}")
 print(f"Val samples: {len(val):,}")
 
