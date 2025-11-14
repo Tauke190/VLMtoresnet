@@ -26,7 +26,6 @@ def find_project_root(start: Path, markers=('utils.py', 'CLIP')):
             return parent
     return start.resolve().parent  # fallback
 
-# Robust project root (works if folder is eval or evals)
 PROJECT_ROOT = find_project_root(Path(__file__).parent)
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
@@ -111,7 +110,7 @@ def main():
         val_dir = OXFORD_PET_VAL_DIR
         templates_file = TEMPLATES_DIR / "pets.txt"
 
-    print("Loading CLIP ViT-L/14 teacher...")
+    print("Loading CLIP ViT-L/14 teacher text encoder only")
     teacher, preprocess = clip.load("ViT-L/14", device=DEVICE)
     teacher.eval()
     for p in teacher.parameters(): p.requires_grad = False
@@ -147,8 +146,8 @@ def main():
     ckpt = torch.load(args.checkpoint, map_location=DEVICE)
     backbone_sd = filter_state_dict(ckpt.get('backbone_state_dict', {}))
     projector_sd = filter_state_dict(ckpt.get('projector_state_dict', {}))
-    backbone.load_state_dict(backbone_sd, strict=False)
-    projector.load_state_dict(projector_sd, strict=False)
+    backbone.load_state_dict(backbone_sd, strict=True)
+    projector.load_state_dict(projector_sd, strict=True)
 
     print("Running zero-shot evaluation (final feature space)...")
     top1, top5 = evaluate_zero_shot(backbone, projector, val_loader, zs_weights, DEVICE)
