@@ -7,11 +7,12 @@ from tqdm import tqdm
 from torchvision import models, datasets, transforms
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression, SGDClassifier
+from sklearn.preprocessing import StandardScaler
 import random
 
 # DATA_ROOT = "/mnt/SSD2/ImageNet1k"
 DATA_ROOT = "/home/c3-0/datasets/ImageNet"
-BATCH_SIZE = 32
+BATCH_SIZE = 256
 NUM_WORKERS = 8  # increase for faster disk IO
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -116,15 +117,32 @@ def load_features(out_dir, split, use_memmap=False):
         return X_all, y_all
 
 def stream_train_sgd(shard_paths, classes, epochs, shuffle, sgd_params):
+    # 1) Fit a streaming scaler in a first pass
+    scaler = StandardScaler()
+    good_for_scale = 0
+    for p in tqdm(shard_paths, desc="Fitting scaler (pass 1)"):
+        try:
+            with np.load(p) as d:
+                X = d["X"]
+        except Exception:
+            continue
+        scaler.partial_fit(X)
+        good_for_scale += X.shape[0]
+    if good_for_scale == 0:
+        raise RuntimeError("No valid shards to fit StandardScaler.")
+
+    # 2) Train SGD with a constant LR and averaging
     clf = SGDClassifier(
         loss="log_loss",
         penalty="l2",
         alpha=sgd_params["alpha"],
-        learning_rate="optimal",
+        learning_rate="constant",   # use eta0 below
         eta0=sgd_params["lr"],
+        average=True,
         random_state=0,
         verbose=1,
     )
+
     for epoch in range(epochs):
         if shuffle:
             random.shuffle(shard_paths)
@@ -137,6 +155,7 @@ def stream_train_sgd(shard_paths, classes, epochs, shuffle, sgd_params):
             except Exception as e:
                 print(f"[WARN] Skipping corrupt shard during train: {p} ({e})")
                 continue
+            X = scaler.transform(X)
             if not initialized:
                 clf.partial_fit(X, y, classes=classes)
                 initialized = True
@@ -144,9 +163,9 @@ def stream_train_sgd(shard_paths, classes, epochs, shuffle, sgd_params):
                 clf.partial_fit(X, y)
         if not initialized:
             raise RuntimeError("No valid shards found to initialize SGDClassifier.")
-    return clf
+    return clf, scaler
 
-def stream_evaluate(clf, shard_paths):
+def stream_evaluate(clf, shard_paths, scaler):
     top1_correct = 0
     top5_correct = 0
     total = 0
@@ -157,6 +176,7 @@ def stream_evaluate(clf, shard_paths):
         except Exception as e:
             print(f"[WARN] Skipping corrupt shard during eval: {p} ({e})")
             continue
+        X = scaler.transform(X)
         probs = clf.predict_proba(X)
         top1 = np.argmax(probs, axis=1)
         top1_correct += np.sum(clf.classes_[top1] == y)
@@ -247,7 +267,7 @@ def main():
     if args.sgd:
         print("\nStreaming SGDClassifier training (no full matrix load)...")
         classes = np.arange(len(train_ds.classes), dtype="int32")
-        clf = stream_train_sgd(
+        clf, scaler = stream_train_sgd(
             train_shards,
             classes,
             epochs=args.sgd_epochs,
@@ -278,7 +298,7 @@ def main():
 
     print("\nEvaluating...")
     if args.sgd:
-        top1_acc, top5_acc = stream_evaluate(clf, val_shards)
+        top1_acc, top5_acc = stream_evaluate(clf, val_shards, scaler)
     else:
         probs = clf.predict_proba(val_features)
         top1_preds = np.argmax(probs, axis=1)
