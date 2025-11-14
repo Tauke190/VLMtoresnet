@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 import argparse
 
-IMAGE_NET = '~/data/datasets/imagenet'
-# IMAGE_NET = '/home/c3-0/datasets/ImageNet'
+# IMAGE_NET = '~/data/datasets/imagenet'
+IMAGE_NET = '/home/c3-0/datasets/ImageNet'
 OXFORD_PET = '~/data/datasets/oxford_pet'
 
 DATASET_PATHS = {
@@ -62,7 +62,7 @@ transform = transforms.Compose(
 )
 print("Loading datasets...")
 train = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=transform)
-val = datasets.ImageFolder(os.path.join(DATA_ROOT, "val"), transform=transform)
+val = datasets.ImageFolder(os.path.join(DATA_ROOT, "validation"), transform=transform)
 print(f"Train samples: {len(train):,}")
 print(f"Val samples: {len(val):,}")
 
@@ -130,37 +130,40 @@ def evaluate_stream(clf, val_dataset):
 
 # Branch by classifier type
 if args.classifier == "logreg":
-    # Extract features
     print("\nExtracting train features...")
     train_features, train_labels = get_features(train, desc="Train features")
-    print(f"Train features shape: {train_features.shape}")
-    print("\nExtracting val features...")
-    val_features, val_labels = get_features(val, desc="Val features")
-    print(f"Val features shape: {val_features.shape}")
+    # Upcast once to avoid internal sklearn copy
+    train_features = train_features.astype(np.float64, copy=True)
 
-    # Train logistic regression
     print("\nTraining logistic regression classifier...")
     classifier = LogisticRegression(
         random_state=0, C=0.316, max_iter=1000, verbose=1, n_jobs=-1
     )
     classifier.fit(train_features, train_labels)
 
-    print("\nEvaluating...")
-    probs = classifier.predict_proba(val_features)
-    # Top-1 accuracy
-    top1_preds = np.argmax(probs, axis=1)
-    top1_acc = np.mean(classifier.classes_[top1_preds] == val_labels) * 100
-    # Top-5 accuracy
-    top5_preds = np.argsort(probs, axis=1)[:, -5:]
-    top5_acc = (
-        np.mean(
-            [
-                val_labels[i] in classifier.classes_[top5_preds[i]]
-                for i in range(len(val_labels))
-            ]
-        )
-        * 100
-    )
+    # Free train cache before eval
+    del train_features, train_labels
+    import gc; gc.collect()
+
+    print("\nEvaluating (streaming, no val cache)...")
+    top1_correct = top5_correct = total = 0
+    val_loader = DataLoader(val, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader, desc="Val (streaming)"):
+            feats = feature_extractor(images.to(device)).view(images.size(0), -1).cpu().numpy().astype(np.float64, copy=False)
+            probs = classifier.predict_proba(feats)
+            y = labels.numpy()
+            # Top-1
+            top1_idx = np.argmax(probs, axis=1)
+            top1_preds = classifier.classes_[top1_idx]
+            top1_correct += np.sum(top1_preds == y)
+            # Top-5
+            top5_idx = np.argsort(probs, axis=1)[:, -5:]
+            top5_classes = classifier.classes_[top5_idx]
+            top5_correct += sum(y[i] in top5_classes[i] for i in range(len(y)))
+            total += len(y)
+    top1_acc = 100.0 * top1_correct / total
+    top5_acc = 100.0 * top5_correct / total
 else:
     # Streaming SGD flow (no feature caching)
     print("\nTraining streaming SGD classifier...")
