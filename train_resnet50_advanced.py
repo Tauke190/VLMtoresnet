@@ -80,7 +80,7 @@ def main():
     train_subset = torch.utils.data.Subset(train_dataset, selected_indices)
 
     train_loader = torch.utils.data.DataLoader(
-        train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True
+        train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True, drop_last=True
     )
 
     # Create a subset of the validation set
