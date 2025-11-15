@@ -132,7 +132,6 @@ def evaluate_stream(clf, val_dataset):
 if args.classifier == "logreg":
     print("\nExtracting train features...")
     train_features, train_labels = get_features(train, desc="Train features")
-    # Upcast once to avoid internal sklearn copy
 
     print("\nTraining logistic regression classifier...")
     classifier = LogisticRegression(

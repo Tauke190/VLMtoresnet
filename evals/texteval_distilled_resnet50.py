@@ -14,8 +14,8 @@ import urllib.request
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BATCH_SIZE = 32
 
-# IMAGENET_VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
-IMAGENET_VAL_DIR = os.path.expanduser('/home/c3-0/datasets/ImageNet/validation')
+IMAGENET_VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/val')
+# IMAGENET_VAL_DIR = os.path.expanduser('/home/c3-0/datasets/ImageNet/validation')
 
 OXFORD_PET_VAL_DIR = os.path.expanduser('~/data/datasets/oxford_pet/val')
 
