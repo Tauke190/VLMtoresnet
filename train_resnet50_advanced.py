@@ -16,7 +16,7 @@ random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 
-TRAINING_FRACTION = 0.2  # Use 20% of images per class for training
+TRAINING_FRACTION = 0.01  # Use 20% of images per class for training
 
 def format_seconds(seconds):
     seconds = int(seconds)
