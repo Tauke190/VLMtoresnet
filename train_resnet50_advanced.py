@@ -186,7 +186,7 @@ def main():
 
         scheduler.step()
 
-        top1, top5 = evaluate(ema.module, val_loader, DEVICE)
+        top1, top5 = evaluate(ema.ema, val_loader, DEVICE)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
         # Early stopping check (based on Top-1)
