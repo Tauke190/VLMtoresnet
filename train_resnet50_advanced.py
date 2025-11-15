@@ -31,7 +31,7 @@ def main():
     VAL_DIR = os.path.expanduser('/home/c3-0/datasets/ImageNet/validation')
 
     # ==== Config ====
-    BATCH_SIZE = 256
+    BATCH_SIZE = 32
     EPOCHS = 600  # Increase if you want the 1000-epoch estimate to trigger
     LR = 5e-3
     WEIGHT_DECAY = 0.01
