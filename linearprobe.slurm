@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pleasework2
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=gmem48
+    #SBATCH --constraint=gmem48
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=10G
 #SBATCH --output=pleasework2%j.out
