@@ -133,7 +133,6 @@ if args.classifier == "logreg":
     print("\nExtracting train features...")
     train_features, train_labels = get_features(train, desc="Train features")
     # Upcast once to avoid internal sklearn copy
-    train_features = train_features.astype(np.float64, copy=True)
 
     print("\nTraining logistic regression classifier...")
     classifier = LogisticRegression(
