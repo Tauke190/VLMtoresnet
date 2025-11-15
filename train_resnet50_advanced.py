@@ -17,8 +17,8 @@ random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 
-TRAINING_FRACTION = 0.05  # Use 20% of images per class for training
-VAL_SUBSET_FRACTION = 0.2  # Use 20% of validation set for validation each epoch
+TRAINING_FRACTION = 0.04  # Use 20% of images per class for training
+VAL_SUBSET_FRACTION = 0.1  # Use 20% of validation set for validation each epoch
 
 def format_seconds(seconds):
     seconds = int(seconds)
@@ -187,7 +187,7 @@ def main():
                 avg_batch_5 = elapsed_5 / 100
                 est_total_time_5 = avg_batch_5 * total_batches_all_epochs
                 remaining_5 = est_total_time_5 - elapsed_5
-                print(f"[Time Estimate @5 batches] Avg batch: {avg_batch_5:.4f}s | "
+                print(f"[Time Estimate @100 batches] Avg batch: {avg_batch_5:.4f}s | "
                       f"Est total: {format_seconds(est_total_time_5)} | "
                       f"Remaining: {format_seconds(remaining_5)}")
 
@@ -197,7 +197,7 @@ def main():
                 avg_batch_10 = elapsed_10 / 1000.0
                 est_total_time_10 = avg_batch_10 * total_batches_all_epochs
                 remaining_10 = est_total_time_10 - elapsed_10
-                print(f"[Time Estimate @10 batches] Avg batch: {avg_batch_10:.4f}s | "
+                print(f"[Time Estimate @1000 batches] Avg batch: {avg_batch_10:.4f}s | "
                       f"Est total: {format_seconds(est_total_time_10)} | "
                       f"Remaining: {format_seconds(remaining_10)}")
 
