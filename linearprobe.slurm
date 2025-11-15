@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=pleasework2
+#SBATCH --job-name=timm_resnet
 #SBATCH --gres=gpu:1
     #SBATCH --constraint=gmem48
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=12
 #SBATCH --mem-per-cpu=10G
-#SBATCH --output=pleasework2%j.out
-#SBATCH --error=pleasework2%j.err
+#SBATCH --output=timm_resnet%j.out
+#SBATCH --error=timm_resnet%j.err
 #SBATCH --time=24:00:00
 
 
