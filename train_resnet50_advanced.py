@@ -10,13 +10,15 @@ from timm.data import Mixup
 from timm.loss import SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from timm.optim.lamb import Lamb
+import matplotlib.pyplot as plt
 
 # Set random seeds for reproducibility
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 
-TRAINING_FRACTION = 0.01  # Use 20% of images per class for training
+TRAINING_FRACTION = 0.05  # Use 20% of images per class for training
+VAL_SUBSET_FRACTION = 0.2  # Use 20% of validation set for validation each epoch
 
 def format_seconds(seconds):
     seconds = int(seconds)
@@ -80,7 +82,21 @@ def main():
     train_loader = torch.utils.data.DataLoader(
         train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True
     )
+
+    # Create a subset of the validation set
+    num_val = len(val_dataset)
+    val_indices = np.arange(num_val)
+    np.random.seed(42)
+    subset_size = max(1, int(VAL_SUBSET_FRACTION * num_val))
+    val_subset_indices = np.random.choice(val_indices, subset_size, replace=False)
+    val_subset = torch.utils.data.Subset(val_dataset, val_subset_indices)
+
     val_loader = torch.utils.data.DataLoader(
+        val_subset, batch_size=512, shuffle=False, num_workers=2, pin_memory=True
+    )
+
+    # Create a DataLoader for the full validation set (for final evaluation)
+    full_val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=512, shuffle=False, num_workers=2, pin_memory=True
     )
 
@@ -129,6 +145,7 @@ def main():
     best_top1 = -1.0
     epochs_no_improve = 0
     PATIENCE = 10
+    val_top1_history = []  # Track validation accuracy
 
     for epoch in range(EPOCHS):
         epoch_start = time.time()
@@ -187,6 +204,7 @@ def main():
         scheduler.step()
 
         top1, top5 = evaluate(ema.ema, val_loader, DEVICE)
+        val_top1_history.append(top1)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
         # Early stopping check (based on Top-1)
@@ -223,6 +241,20 @@ def main():
               f"Elapsed: {format_seconds(elapsed_total)} | "
               f"ETA: {format_seconds(est_remaining_time)} "
               f"(avg/epoch {avg_epoch_time:.2f}s)")
+
+    # After training, evaluate on the full validation set
+    final_top1, final_top5 = evaluate(ema.ema, full_val_loader, DEVICE)
+    print(f"[Final Evaluation] Full Validation Top-1: {final_top1:.2f}% | Top-5: {final_top5:.2f}%")
+
+    # Plot validation accuracy per epoch
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(1, len(val_top1_history) + 1), val_top1_history, marker='o')
+    plt.xlabel('Epoch')
+    plt.ylabel('Validation Top-1 Accuracy (%)')
+    plt.title('Validation Accuracy per Epoch')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('timm_resnet_val_accuracy_per_epoch.png')
 
 if __name__ == "__main__":
     main()

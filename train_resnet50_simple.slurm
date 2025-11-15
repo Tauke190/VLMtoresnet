@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=simple_resnet
-#SBATCH --output=simple_resnet%j.out
-#SBATCH --error=simple_resnet%j.err
+#SBATCH --job-name=timm_resnet
+#SBATCH --output=timm_resnet%j.out
+#SBATCH --error=timm_resnet%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
