@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
-#SBATCH --mem=8G
+#SBATCH --mem=32G
 #SBATCH --time=72:00:00
 
 # Load necessary modules

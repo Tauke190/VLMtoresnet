@@ -1,6 +1,8 @@
 import os
 import time
+import random
 import torch
+import numpy as np
 from torchvision import models, transforms, datasets
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -8,6 +10,13 @@ from timm.data import Mixup
 from timm.loss import SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from timm.optim.lamb import Lamb
+
+# Set random seeds for reproducibility
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(42)
+
+TRAINING_FRACTION = 0.2  # Use 20% of images per class for training
 
 def format_seconds(seconds):
     seconds = int(seconds)
@@ -52,8 +61,24 @@ def main():
     train_dataset = datasets.ImageFolder(TRAIN_DIR, transform=train_transform)
     val_dataset = datasets.ImageFolder(VAL_DIR, transform=val_transform)
 
+    # Use only 20% of images per class for training
+    from collections import defaultdict
+
+    targets = np.array(train_dataset.targets)
+    class_indices = defaultdict(list)
+    for idx, label in enumerate(targets):
+        class_indices[label].append(idx)
+
+    selected_indices = []
+    for label, idxs in class_indices.items():
+        n_select = max(1, int(TRAINING_FRACTION * len(idxs)))
+        selected = np.random.choice(idxs, n_select, replace=False)
+        selected_indices.extend(selected.tolist())
+
+    train_subset = torch.utils.data.Subset(train_dataset, selected_indices)
+
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True
+        train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=512, shuffle=False, num_workers=2, pin_memory=True
