@@ -14,8 +14,8 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, trunc_normal_
 from timm.models.registry import register_model
 
-from models.modules.mobileone import MobileOneBlock
-from models.modules.replknet import ReparamLargeKernelConv
+from fastvit.modules.mobileone import MobileOneBlock
+from fastvit.modules.replknet import ReparamLargeKernelConv
 
 try:
     from mmseg.models.builder import BACKBONES as seg_BACKBONES
