@@ -141,10 +141,12 @@ def main():
         return top1, top5
 
     # ==== Training Loop ====
+    # Ensure checkpoint directory exists
+    ckpt_dir = os.path.join(os.getcwd(), "resnettraining")
+    os.makedirs(ckpt_dir, exist_ok=True)
+
     global_start = time.time()
     best_top1 = -1.0
-    epochs_no_improve = 0
-    PATIENCE = 10
     val_top1_history = []  # Track validation accuracy
 
     for epoch in range(EPOCHS):
@@ -181,7 +183,7 @@ def main():
                 running_loss = 0.0
                 accum_batches = 0
 
-            # Time estimate after first 5 batches of first epoch
+            # Time estimate after first 100 batches of first epoch
             if epoch == 0 and (batch_idx + 1) == 100:
                 elapsed_5 = time.time() - epoch0_start_time
                 avg_batch_5 = elapsed_5 / 100
@@ -191,7 +193,7 @@ def main():
                       f"Est total: {format_seconds(est_total_time_5)} | "
                       f"Remaining: {format_seconds(remaining_5)}")
 
-            # Time estimate after first 10 batches of first epoch
+            # Time estimate after first 1000 batches of first epoch
             if epoch == 0 and (batch_idx + 1) == 1000:
                 elapsed_10 = time.time() - epoch0_start_time
                 avg_batch_10 = elapsed_10 / 1000.0
@@ -207,20 +209,19 @@ def main():
         val_top1_history.append(top1)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
-        # Early stopping check (based on Top-1)
+        # Early stopping ONLY if validation accuracy falls below 10%
+        if top1 < 10.0:
+            print(f"Early stopping triggered: Validation Top-1 accuracy fell below 10% at epoch {epoch+1}.")
+            break
+
+        # Save best checkpoint
         if top1 > best_top1:
             best_top1 = top1
-            epochs_no_improve = 0
             best_ckpt_path = f"{script_name}_best.pth"
             torch.save({'epoch': epoch + 1,
                         'model_state_dict': model.state_dict(),
                         'top1': top1}, best_ckpt_path)
             print(f"New best Top-1 {top1:.2f}% — saved: {best_ckpt_path}")
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= PATIENCE:
-                print(f"Early stopping triggered (no Top-1 improvement for {PATIENCE} epochs).")
-                break
 
         checkpoint = {
             'epoch': epoch + 1,
