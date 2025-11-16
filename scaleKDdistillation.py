@@ -221,13 +221,13 @@ def run_distillation():
     print("Loaded ImageNet templates from CLIP/dataloaders/templates/imagenet1k.txt")
     print(f"Templates count: {len(imagenet_templates)}")
 
-    # print("Building ImageNet zero-shot weights for train-eval loader...")
-    # imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
-    # imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
+    print("Building ImageNet zero-shot weights for train-eval loader...")
+    imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+    imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
 
     print("Building ImageNet zero-shot weights for full val loader...")
-    # imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
-    # imagenet_zs_weights_val = zeroshot_classifier(imagenet_class_names_val, imagenet_templates, teacher).to(DEVICE)
+    imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
+    imagenet_zs_weights_val = zeroshot_classifier(imagenet_class_names_val, imagenet_templates, teacher).to(DEVICE)
 
     # Optional: Oxford-IIIT Pet zero-shot eval (unchanged)
     if EVAL_OXFORD_PET:
@@ -253,12 +253,12 @@ def run_distillation():
     scaler = GradScaler()
 
     # Initial zero-shot evaluation on the small held-out train-eval subset
-    # print("\nInitial zero-shot evaluation (student projected into CLIP space):")
-    # top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
-    # print(f"[Train-Eval SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
-    # if EVAL_OXFORD_PET and pet_val_loader is not None:
-    #     pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
-    #     print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
+    print("\nInitial zero-shot evaluation (student projected into CLIP space):")
+    top1, top5 = evaluate_zero_shot(backbone, projector, train_eval_loader, imagenet_zs_weights_train, DEVICE)
+    print(f"[Train-Eval SUBSET] Initial Zero-shot: Top-1: {top1:.2f}%, Top-5: {top5:.2f}%")
+    if EVAL_OXFORD_PET and pet_val_loader is not None:
+        pet_top1, pet_top5 = evaluate_zero_shot(backbone, projector, pet_val_loader, pet_zs_weights, DEVICE)
+        print(f"[Oxford-Pet] Initial Zero-shot: Top-1: {pet_top1:.2f}%, Top-5: {pet_top5:.2f}%")
 
     # # Save initial checkpoint
     save_checkpoint(backbone, projector, 0, PROJECT_ROOT, __file__)
