@@ -271,13 +271,20 @@ if __name__ == "__main__":
 
     # Print the final feature dimension of the FastViT model
     dummy = torch.randn(1, 3, 224, 224).to(device)
+    model.eval()
     with torch.no_grad():
-        features = model.forward(dummy)
-        print("Final feature shape:", features.shape)
-        if hasattr(features, 'shape'):
-            print("Final feature dimension:", features.shape[-1])
-        else:
-            print("Feature output type:", type(features))
+        x = dummy
+        x = model.forward_embeddings(x)
+        x = model.forward_tokens(x)
+        x = model.conv_exp(x)
+        x = model.gap(x)
+        x = x.view(x.size(0), -1)
+        print("Penultimate feature shape (before classifier):", x.shape)
+        print("Penultimate feature dimension:", x.shape[-1])
+
+        # If you want the final output (logits) as well:
+        logits = model.head(x)
+        print("Final output (logits) shape:", logits.shape)
 
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), 
