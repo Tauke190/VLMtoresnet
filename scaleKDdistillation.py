@@ -55,7 +55,6 @@ from utils import (
     save_checkpoint,
     compute_flops,
     plot_and_save_losses,
-    get_teacher_features,
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
@@ -214,7 +213,7 @@ def run_distillation():
         transformer_width=teacher.visual.transformer.width,  # ViT-L/14 hidden dim
         teacher_token_dim=teacher.visual.transformer.width,  # ViT-L/14 hidden dim
         teacher_num_tokens=teacher.visual.positional_embedding.shape[0],  # number of tokens (class + patches)
-        patch_size=2  # patchify the stem
+        patch_size=1  # patchify the stem
     ).to(DEVICE)
 
     # Load templates and build zero-shot weights aligned to each dataset's class ordering
