@@ -19,6 +19,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from timm.models import create_model
+from fastvit import fastvit_t8
 
 # TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 # VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
@@ -265,7 +266,7 @@ if __name__ == "__main__":
     resume_training = True
 
     num_classes = len(train_dataset_full.classes)  # use full class list
-    model = create_model("fastvit_t8", num_classes=num_classes)
+    model = fastvit_t8(num_classes=num_classes)
     model.to(device)
 
     # Print the final feature dimension of the FastViT model
