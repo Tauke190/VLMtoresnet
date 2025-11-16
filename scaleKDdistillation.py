@@ -19,11 +19,11 @@ TRAIN_SUBSET_RATIO = 0.2
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05 # Used for validation accuracy in each epoch
 # For cluster server
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/val'
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 30
