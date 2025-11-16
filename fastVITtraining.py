@@ -1,4 +1,3 @@
-import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,9 +6,6 @@ warnings.filterwarnings('ignore')
 import os
 import time
 from math import sqrt
-import sys
-
-# Import PyTorch libraries
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -18,7 +14,6 @@ from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from timm.models import create_model
 from fastvit import fastvit_t8
 
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
@@ -27,15 +22,15 @@ VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 # TRAIN_DIR = '~/data/datasets/imagenet/train'
 # VAL_DIR = '~/data/datasets/imagenet/val'
 
-EPOCHS = 50
+EPOCHS = 300
 
 ## Set Hyperparameters
 class Params:
     def __init__(self):
-        self.batch_size = 32
+        self.batch_size = 128
         self.name = "fastVIT_training"
-        self.workers = 4
-        self.lr = 0.1
+        self.workers = 8
+        self.lr = 0.001
         self.momentum = 0.9
         self.weight_decay = 1e-4
         self.lr_step_size = 30
@@ -88,26 +83,21 @@ def train(dataloader, model, loss_fn, optimizer, epoch, writer):
             est_epoch_100 = avg_100 * len(dataloader)
             print(f"Estimated time for one epoch (based on 100 batches): {est_epoch_100:.2f}s ({est_epoch_100/60:.2f}min)")
             print(f"Estimated total training time for {EPOCHS} epochs: {est_epoch_100*EPOCHS/3600:.2f}h")
-            sys.stdout.flush()
         if batch == 999:
             avg_1000 = np.mean(batch_times[:1000])
             est_epoch_1000 = avg_1000 * len(dataloader)
             print(f"Estimated time for one epoch (based on 1000 batches): {est_epoch_1000:.2f}s ({est_epoch_1000/60:.2f}min)")
             print(f"Estimated total training time for {EPOCHS} epochs: {est_epoch_1000*EPOCHS/3600:.2f}h")
-            sys.stdout.flush()
 
         if batch % 100 == 0:
             batch_loss = running_loss / total_samples if total_samples > 0 else 0.0
             batch_acc = 100.0 * running_correct / total_samples if total_samples > 0 else 0.0
             logger.info(f"Epoch {epoch+1} Batch {batch}: loss={batch_loss:.6f}")
-            sys.stdout.flush()
 
     epoch_loss = running_loss / total_samples if total_samples > 0 else 0.0
     epoch_acc = 100.0 * running_correct / total_samples if total_samples > 0 else 0.0
     epoch_time = time.time() - start0
     logger.info(f"Epoch {epoch+1} completed: loss={epoch_loss:.6f}, acc={epoch_acc:.2f}%, time={epoch_time:.2f}s")
-    sys.stdout.flush()
-
 
 def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=False):
     size = len(dataloader.dataset)
@@ -133,10 +123,10 @@ def test(dataloader, model, loss_fn, epoch, writer, train_dataloader, calc_acc5=
 
     step = epoch * len(train_dataloader.dataset)
     logger.info(f"Test Results - Epoch {epoch+1}: Accuracy={accuracy:.2f}%, Avg loss={test_loss:.6f}")
-    sys.stdout.flush()
+    # sys.stdout.flush()
     if calc_acc5:
         logger.info(f"Top-5 Accuracy={top5_accuracy:.2f}%")
-        sys.stdout.flush()
+        # sys.stdout.flush()
 
 if __name__ == "__main__":
     params = Params()
@@ -251,16 +241,14 @@ if __name__ == "__main__":
     print(f"Classes: {len(train_dataset_full.classes)} | "
           f"20% subset size: {len(train_indices) + len(val_indices)} | "
           f"Train: {len(train_indices)} | Val: {len(val_indices)}")
-    sys.stdout.flush()
 
     # device
     print("Libraries imported - ready to use PyTorch", torch.__version__)
-    sys.stdout.flush()
+    # sys.stdout.flush()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"Using {device} device")
-    sys.stdout.flush()
 
     # resume training options
     resume_training = True
@@ -296,12 +284,11 @@ if __name__ == "__main__":
     start_epoch = 0
     checkpoint_path = os.path.join("checkpoints", params.name, f"checkpoint.pth")
     print(checkpoint_path)
-    sys.stdout.flush()
 
     if resume_training and os.path.exists(checkpoint_path):
         print("Resuming training from checkpoint")
         print(checkpoint_path)
-        sys.stdout.flush()
+        # sys.stdout.flush()
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model"])
         start_epoch = checkpoint["epoch"] + 1
@@ -313,18 +300,18 @@ if __name__ == "__main__":
         else:
             params.__dict__.update(checkpoint["params"])
 
-    # from torch.utils.tensorboard import SummaryWriter
     from pathlib import Path
     Path(os.path.join("checkpoints", params.name)).mkdir(parents=True, exist_ok=True)
     # writer = SummaryWriter('runs/' + params.name)
     writer = None  # TensorBoard disabled
     test(val_loader, model, loss_fn, epoch=0, writer=writer, train_dataloader=train_loader, calc_acc5=True)
     print("Starting training")
-    sys.stdout.flush()
+    # sys.stdout.flush()
     epoch_times = []
+    total_train_start = time.time()  # <-- Add this line
     for epoch in range(start_epoch, EPOCHS):
         print(f"Epoch {epoch}")
-        sys.stdout.flush()
+        # sys.stdout.flush()
         start_time = time.time()
         train(train_loader, model, loss_fn, optimizer, epoch=epoch, writer=writer)
         checkpoint = {
@@ -343,4 +330,5 @@ if __name__ == "__main__":
         epoch_times.append(epoch_time)
         avg_epoch_time = np.mean(epoch_times)
         print(f"Avg epoch time: {avg_epoch_time:.2f}s")
-        sys.stdout.flush()
+    total_train_time = time.time() - total_train_start  # <-- Add this line
+    print(f"Total training time: {total_train_time:.2f}s ({total_train_time/60:.2f} min, {total_train_time/3600:.2f} h)")  # <-- And this
