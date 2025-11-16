@@ -272,7 +272,7 @@ if __name__ == "__main__":
     # Print the final feature dimension of the FastViT model
     dummy = torch.randn(1, 3, 224, 224).to(device)
     with torch.no_grad():
-        features = model.forward_features(dummy)
+        features = model.forward(dummy)
         print("Final feature shape:", features.shape)
         if hasattr(features, 'shape'):
             print("Final feature dimension:", features.shape[-1])
