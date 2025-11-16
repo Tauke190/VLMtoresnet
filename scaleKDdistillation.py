@@ -208,16 +208,13 @@ def run_distillation():
     distill_loss_fn = nn.MSELoss()
     params_to_train = list(backbone.parameters()) + list(projector.parameters())
     optimizer = optim.AdamW(params_to_train, lr=LEARNING_RATE)
-
-    teacher_features = get_teacher_features(teacher, images).float()
-
     
     cnn_to_vit_token_distiller = CNNtoViTTokenDistiller(
-        cnn_feature_dim=cnn_features.shape[1],
-        transformer_width=1024, # match ViT-L/14 hidden dim
-        teacher_token_dim=teacher_features.shape[-1], # match CLIP token dim for VIT-L/14
-        teacher_num_tokens=teacher_features.shape[1], # match number of tokens from CLIP teacher VIT-L/14
-        patch_size=7 # match patch size to get 7x7 feature map from 224x224 input
+        cnn_feature_dim=student_feature_dim,
+        transformer_width=teacher.visual.transformer.width,  # ViT-L/14 hidden dim
+        teacher_token_dim=teacher.visual.transformer.width,  # ViT-L/14 hidden dim
+        teacher_num_tokens=teacher.visual.positional_embedding.shape[0],  # number of tokens (class + patches)
+        patch_size=2  # patchify the stem
     ).to(DEVICE)
 
     # Load templates and build zero-shot weights aligned to each dataset's class ordering
@@ -290,8 +287,6 @@ def run_distillation():
             with autocast():
 
                 cnn_features = get_resnet50_prepool_features(backbone, images)
-
-
                 student_tokens = cnn_to_vit_token_distiller(cnn_features)
                 teacher_tokens = get_teacher_tokens(teacher, images).float()
                 loss = distill_loss_fn(student_tokens, teacher_tokens)
