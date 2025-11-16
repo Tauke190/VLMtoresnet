@@ -221,9 +221,9 @@ def run_distillation():
     print("Loaded ImageNet templates from CLIP/dataloaders/templates/imagenet1k.txt")
     print(f"Templates count: {len(imagenet_templates)}")
 
-    print("Building ImageNet zero-shot weights for train-eval loader...")
-    imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
-    imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
+    # print("Building ImageNet zero-shot weights for train-eval loader...")
+    # imagenet_class_names_train = imagenet_aligned_classnames(base_train, "imagenet_class_index.json")
+    # imagenet_zs_weights_train = zeroshot_classifier(imagenet_class_names_train, imagenet_templates, teacher).to(DEVICE)
 
     print("Building ImageNet zero-shot weights for full val loader...")
     # imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")

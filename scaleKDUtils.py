@@ -54,15 +54,15 @@ class CNNtoViTTokenDistiller(nn.Module):
         x = x.permute(0,2,3,1,4,5).contiguous()
         nH, nW = x.shape[1], x.shape[2]
         x = x.view(B, nH * nW, C * self.patch_size * self.patch_size)
-        print(f"Patchified shape: {x.shape} (B, num_patches, patch_dim)")
+        # print(f"Patchified shape: {x.shape} (B, num_patches, patch_dim)")
         return x
 
     def forward(self, cnn_feat):
         # cnn_feat: [B, C, H, W]
-        print(f"Input CNN feature shape: {cnn_feat.shape}")
+        # print(f"Input CNN feature shape: {cnn_feat.shape}")
         x = self.patchify(cnn_feat)  # [B, num_patches, patch_dim]
         x = self.channel_proj(x)     # [B, num_patches, transformer_width]
-        print(f"After channel_proj: {x.shape}")
+        # print(f"After channel_proj: {x.shape}")
 
         # Positional embedding
         B, N, D = x.shape
@@ -70,18 +70,18 @@ class CNNtoViTTokenDistiller(nn.Module):
             self.pos_embed = nn.Parameter(torch.zeros(1, N, D, device=x.device))
             nn.init.trunc_normal_(self.pos_embed, std=0.02)
         x = x + self.pos_embed
-        print(f"After adding pos_embed: {x.shape}")
+        # print(f"After adding pos_embed: {x.shape}")
 
         # Expand trainable queries for batch
         queries = self.trainable_queries.expand(B, -1, -1)  # [B, num_queries, D]
-        print(f"Trainable queries shape: {queries.shape}")
+        # print(f"Trainable queries shape: {queries.shape}")
 
         # Transformer decoder: queries attend to patch tokens
         out = self.transformer_decoder(tgt=queries, memory=x)  # [B, num_queries, D]
-        print(f"After transformer decoder: {out.shape}")
+        # print(f"After transformer decoder: {out.shape}")
 
         out = self.token_proj(out)  # [B, num_queries, teacher_token_dim]
-        print(f"Output queries after projection: {out.shape}")
+        # print(f"Output queries after projection: {out.shape}")
 
         return out
 
