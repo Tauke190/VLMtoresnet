@@ -11,7 +11,7 @@ class CNNtoViTTokenDistiller(nn.Module):
         teacher_num_tokens,
         patch_size=2,
         transformer_width=768,
-        num_heads=12,
+        num_heads=16,
         num_layers=1,
     ):
         super().__init__()
