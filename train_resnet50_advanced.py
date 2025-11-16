@@ -209,15 +209,10 @@ def main():
         val_top1_history.append(top1)
         print(f"[Epoch {epoch+1}] Validation Top-1: {top1:.2f}% | Top-5: {top5:.2f}%")
 
-        # Early stopping ONLY if validation accuracy falls below 10%
-        if top1 < 10.0:
-            print(f"Early stopping triggered: Validation Top-1 accuracy fell below 10% at epoch {epoch+1}.")
-            break
-
         # Save best checkpoint
         if top1 > best_top1:
             best_top1 = top1
-            best_ckpt_path = f"{script_name}_best.pth"
+            best_ckpt_path = os.path.join(ckpt_dir, f"{script_name}_best.pth")
             torch.save({'epoch': epoch + 1,
                         'model_state_dict': model.state_dict(),
                         'top1': top1}, best_ckpt_path)
@@ -227,9 +222,15 @@ def main():
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
         }
-        checkpoint_path = f"{script_name}_epoch{epoch+1}.pth"
+        checkpoint_path = os.path.join(ckpt_dir, f"{script_name}_epoch{epoch+1}.pth")
         torch.save(checkpoint, checkpoint_path)
         print(f"Checkpoint saved: {checkpoint_path}")
+
+        # Early stopping: if validation accuracy in the last epoch drops by 10% or more compared to best seen so far
+        if epoch == EPOCHS - 1 and best_top1 > 0 and (best_top1 - top1) / best_top1 >= 0.10:
+            print(f"Early stopping triggered: Final epoch validation Top-1 dropped by more than 10% "
+                  f"compared to best ({best_top1:.2f}% → {top1:.2f}%).")
+            break
 
         # Epoch timing and ETA (includes training, validation, and checkpoint I/O)
         epoch_time = time.time() - epoch_start
