@@ -41,7 +41,7 @@ class NonLocalBlock(nn.Module):
 class ResNet50_NonLocal(nn.Module):
     def __init__(self):
         super(ResNet50_NonLocal, self).__init__()
-        self.resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+        self.resnet = models.resnet50(pretrained=True)
         self.nl1 = NonLocalBlock(256)   # after layer1
         self.nl2 = NonLocalBlock(512)   # after layer2
         self.nl3 = NonLocalBlock(1024)  # after layer3
