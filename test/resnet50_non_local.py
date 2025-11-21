@@ -112,7 +112,7 @@ def visualize_attention(img, attn_map, block_name="block"):
 # Main
 # -------------------------------
 if __name__ == "__main__":
-    img_path = "your_image.jpg"  # replace with your image
+    img_path = "dog.jpg"  # replace with your image
     img, img_tensor = load_image(img_path)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
