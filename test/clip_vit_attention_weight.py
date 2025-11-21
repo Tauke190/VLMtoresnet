@@ -177,7 +177,16 @@ def main():
     if rollout_map is not None:
         rollout_up = upsample_maps(rollout_map, target_hw)
 
-    # Save individual layers
+
+    # Save attention maps after every 3 layers (layers 3, 6, 9, 12)
+    selected_layers = [2, 5, 8, 11]  # 0-based indices
+    for i in selected_layers:
+        if i < len(upsampled):
+            hm = upsampled[i][0].cpu().numpy()
+            out_path = Path(args.output_dir) / f"attention_layer_{i+1}.png"
+            overlay_and_save(image, hm, out_path, cmap=args.cmap, alpha=args.alpha)
+
+    # Save individual layers as before
     if not args.no_individual:
         for i, m in enumerate(upsampled):
             hm = m[0].cpu().numpy()
