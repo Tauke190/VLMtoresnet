@@ -122,18 +122,25 @@ if __name__ == "__main__":
     with torch.no_grad():
         output, attn_maps = model(img_tensor)
 
-    # visualize attention maps for all non-local blocks in the same figure
-    plt.figure(figsize=(16, 4))
+    # visualize original image and attention maps for all non-local blocks in the same figure
+    plt.figure(figsize=(20, 4))
+    # Show original image first
+    plt.subplot(1, 5, 1)
+    plt.imshow(img)
+    plt.title("Original Image")
+    plt.axis('off')
+
     for idx, attn in enumerate(attn_maps):
         B, N, N = attn.shape
         H, W = img.size[1], img.size[0]
         global_attn = attn.mean(dim=1).view(int(N**0.5), int(N**0.5)).cpu().numpy()
         attn_resized = cv2.resize(global_attn, (W, H))
+        # Make heatmap more prominent by increasing its weight
         heatmap = cv2.applyColorMap(np.uint8(255 * attn_resized), cv2.COLORMAP_JET)
         img_np = np.array(img)
-        overlay = 0.6 * img_np + 0.4 * heatmap
+        overlay = cv2.addWeighted(img_np, 0.4, heatmap, 0.6, 0)  # more heatmap, less image
 
-        plt.subplot(1, 4, idx + 1)
+        plt.subplot(1, 5, idx + 2)
         plt.imshow(np.uint8(overlay))
         plt.title(f"NonLocal_{idx+1}")
         plt.axis('off')
