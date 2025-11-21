@@ -7,6 +7,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+import argparse
 
 # -------------------------------
 # Non-Local Block
@@ -112,8 +113,12 @@ def visualize_attention(img, attn_map, block_name="block"):
 # Main
 # -------------------------------
 if __name__ == "__main__":
-    img_path = "dog.jpg"  # replace with your image
-    img, img_tensor = load_image(img_path)
+
+    parser = argparse.ArgumentParser(description="Visualize Non-Local Attention Maps for ResNet50")
+    parser.add_argument('--image', type=str, required=True, help='Path to the input image')
+    args = parser.parse_args()
+
+    img, img_tensor = load_image(args.image)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ResNet50_NonLocal().to(device)
