@@ -1,0 +1,50 @@
+# FastViT CLIP Distillation Configuration
+
+# Model
+model: "fastvit_sa36"
+pretrained: true
+num_classes: 1000
+
+# Data
+dataset: ""
+input_size: [3, 224, 224] # CLIP L/14 resolution
+crop_pct: 0.95
+interpolation: "bicubic"
+
+# Training
+epochs: 30
+batch_size: 64
+opt: "adamw"
+lr: 0.0002
+weight_decay: 0.05
+momentum: 0.9
+clip_grad: 0.01
+
+# Scheduler
+sched: "cosine"
+warmup_epochs: 2
+warmup_lr: 1e-6
+min_lr: 1e-6
+
+# Augmentation (disabled for cleaner alignment)
+mixup: 0.0
+cutmix: 0.0
+smoothing: 0.0
+aa: ""
+reprob: 0.0
+drop_path: 0.0
+
+# System
+workers: 8
+amp: false
+native_amp: false
+channels_last: false
+pin_mem: true
+
+# Logging
+log_interval: 50
+checkpoint_hist: 5
+
+# Distillation specific
+distillation_type: "none" # Not using built-in distillation
+model_ema: false # Disable EMA for distillation
