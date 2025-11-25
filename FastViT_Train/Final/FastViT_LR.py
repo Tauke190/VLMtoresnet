@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# timm moved this; new import avoids the warning
 from timm.layers import trunc_normal_
 
 
@@ -27,7 +26,7 @@ class FastViT_lr(nn.Module):
         if lock:
             for p in self.base.parameters():
                 p.requires_grad = False
-            print("✓ Backbone frozen")
+            print("Backbone frozen")
 
         # SA36 @ 224 layout: (num_blocks, num_patches, embed_dim)
         stage_configs = [
@@ -51,7 +50,7 @@ class FastViT_lr(nn.Module):
             for t in stage_tokens:
                 trunc_normal_(t, std=token_std)
 
-            # One gate per block (starts at 0 => zero influence at step 0)
+            # One gate per block (starts at 0)
             stage_gates = nn.ParameterList(
                 [nn.Parameter(torch.tensor(0.0)) for _ in range(num_blocks)]
             )
@@ -60,7 +59,7 @@ class FastViT_lr(nn.Module):
             self.token_gates.append(stage_gates)
 
         total = sum(len(s) for s in self.blocks_spatial_tokens)
-        print(f"✓ Created {total} tokens + gates (trunc_normal init)")
+        print(f"Created {total} tokens + gates (trunc_normal init)")
 
         # Wrap each block forward to inject tokens before block runs
         for s_idx, stage in enumerate(self.base.stages):

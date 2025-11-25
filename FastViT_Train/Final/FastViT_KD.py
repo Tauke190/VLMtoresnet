@@ -27,30 +27,17 @@ class FastViT_CLIP(nn.Module):
         # Simple linear projector: 1024 → 768
         self.projector = nn.Linear(self.feature_dim, embed_dim)
 
-        # Change std=0.02 to std=0.001 (Tiny weights)
         nn.init.trunc_normal_(self.projector.weight, std=0.001)
         nn.init.zeros_(self.projector.bias)
 
-        print(f"✓ FastViT_CLIP created")
+        print(f"FastViT_CLIP created")
         print(f"  Feature dim: {self.feature_dim} → CLIP dim: {embed_dim}")
 
-    def forward(self, x, return_features=False):
-        # FastViT features (Let this stay in float16 for speed)
+    def forward(self, x):
         features = self.fastvit.forward_features(x)
         features = F.adaptive_avg_pool2d(features, 1).flatten(1)
         projected = self.projector(features)
-
-        # 1. Cast to float32 (Safe Mode) just for this calculation
-        projected = projected.float()
-
-        # 2. Normalize with safety epsilon
-        projected = F.normalize(projected, dim=-1, eps=1e-6)
-
-        if return_features:
-            logits = self.fastvit.head(features)
-            return logits, projected
-
-        return projected
+        return projected.float()  # Just ensure float32
 
 
 def create_fastvit_clip(
