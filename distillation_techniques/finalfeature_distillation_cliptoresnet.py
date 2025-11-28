@@ -362,8 +362,8 @@ def run_distillation():
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Final Feature Distillation Script")
-    parser.add_argument('--train_dir', type=str, default=TRAIN_DIR, help='Path to training directory')
-    parser.add_argument('--val_dir', type=str, default=VAL_DIR, help='Path to validation directory')
+    parser.add_argument('--train_dir', required=False,type=str, default=TRAIN_DIR, help='Path to training directory')
+    parser.add_argument('--val_dir', required=False,type=str, default=VAL_DIR, help='Path to validation directory')
     args = parser.parse_args()
 
     run_distillation()
