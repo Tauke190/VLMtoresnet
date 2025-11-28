@@ -1,4 +1,3 @@
-
 import argparse
 import sys
 import os
@@ -22,8 +21,9 @@ def main():
 
 	script_path = distill_scripts[args.distillation]
 
+	project_root = os.path.dirname(os.path.abspath(__file__))
 	# Build command to run the selected script with the provided directories
-	command = f"python {script_path} --train_dir {args.train_dir} --val_dir {args.val_dir}"
+	command = f'cd "{project_root}" && python {script_path} --train_dir {args.train_dir} --val_dir {args.val_dir}'
 	print(f"Running: {command}")
 	exit_code = os.system(command)
 	if exit_code != 0:
