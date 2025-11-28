@@ -9,7 +9,7 @@ from torchvision import datasets, transforms
 from tqdm import tqdm
 import clip
 
-from timm.utils import reduce_tensor 
+from timm.utils import reduce_tensor
 from FastViT_KD import create_fastvit_clip
 
 USE_EMA = True
@@ -57,6 +57,7 @@ def _encode_text_prompts(clip_model, prompts, device):
 
     text_features = torch.stack(text_features, dim=0)  # [C, D]
     return text_features.float().to(device)
+
 
 @torch.no_grad()
 def prepare_zeroshot_head(

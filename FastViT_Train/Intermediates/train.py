@@ -1,29 +1,8 @@
-#
-# For acknowledgement see accompanying ACKNOWLEDGEMENTS file.
-# Copyright (C) 2023 Apple Inc. All rights reserved.
-#
-
-"""ImageNet Training Script
-
-This is intended to be a lean and easily modifiable ImageNet training script that reproduces ImageNet
-training results with some of the latest networks and training techniques. It favours canonical PyTorch
-and standard Python style over trying to be able to 'do it all.' That said, it offers quite a few speed
-and training result improvements over the usual PyTorch example scripts. Repurpose as you see fit.
-
-This script was started from an early version of the PyTorch ImageNet example
-(https://github.com/pytorch/examples/tree/master/imagenet)
-
-NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
-(https://github.com/NVIDIA/apex/tree/master/examples/imagenet)
-
-Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
-"""
 import argparse
 import time
 import yaml
 import os
 import glob
-import math
 import clip
 import logging
 from collections import OrderedDict
@@ -31,8 +10,6 @@ from contextlib import suppress
 from datetime import datetime
 import torch.nn.functional as F
 import torch
-import torch.nn as nn
-import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
 from timm.data import (
@@ -44,13 +21,10 @@ from timm.data import (
     AugMixDataset,
 )
 from timm.models import (
-    create_model,
     safe_model_name,
     resume_checkpoint,
-    load_checkpoint,
     model_parameters,
 )
-from timm.layers import convert_splitbn_model
 from timm.utils import *
 from timm.loss import *
 from timm.optim import create_optimizer_v2, optimizer_kwargs
@@ -58,6 +32,8 @@ from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
 
 from FastViT_KD import create_fastvit_clip
+from eval_zeroshot import prepare_zeroshot_head, evaluate_zero_shot
+import sys
 
 try:
     from apex import amp
@@ -75,12 +51,6 @@ try:
 except AttributeError:
     pass
 
-try:
-    import wandb
-
-    has_wandb = True
-except ImportError:
-    has_wandb = False
 import sys
 
 torch.backends.cudnn.benchmark = True
@@ -102,6 +72,57 @@ def register_clip_hook(module, store_dict, key="clip_block"):
         store_dict[key] = out
 
     return module.register_forward_hook(hook_fn)
+
+
+import sys
+
+
+def crash_on_bad_loss(
+    loss,
+    args,
+    batch_idx,
+    images,
+    student_features,
+    teacher_features,
+    epoch=None,
+):
+    """Debug helper: print stats and hard-exit if loss is NaN/Inf."""
+    if not (torch.isnan(loss) or torch.isinf(loss)):
+        return
+
+    if epoch is not None:
+        header = (
+            f"\n[CRITICAL FAIL] Rank {args.rank} | Epoch {epoch} | Batch {batch_idx}"
+        )
+    else:
+        header = f"\n[CRITICAL FAIL] Rank {args.rank} | Batch {batch_idx}"
+
+    print(header)
+    print(f"Loss value: {loss.item()}")
+
+    # 1. Input stats
+    print(
+        f"Input: min={images.min().item():.4f}, "
+        f"max={images.max().item():.4f}, "
+        f"NaN={torch.isnan(images).any().item()}"
+    )
+
+    # 2. Student stats
+    s_min, s_max = student_features.min().item(), student_features.max().item()
+    print(f"Student Features: min={s_min:.4f}, max={s_max:.4f}")
+    if torch.isnan(student_features).any():
+        print("!!! FAULT: Student output contains NaNs")
+    if torch.isinf(student_features).any():
+        print("!!! FAULT: Student output contains Infinity")
+
+    # 3. Teacher stats
+    t_min, t_max = teacher_features.min().item(), teacher_features.max().item()
+    print(f"Teacher Features: min={t_min:.4f}, max={t_max:.4f}")
+    if torch.isnan(teacher_features).any():
+        print("!!! FAULT: Teacher output contains NaNs")
+
+    sys.stdout.flush()
+    sys.exit(1)
 
 
 # The first arg parser parses out only the --config argument, this argument is used to
@@ -275,21 +296,6 @@ parser.add_argument(
     help='Optimizer (default: "adamw"',
 )
 parser.add_argument(
-    "--opt-eps",
-    default=None,
-    type=float,
-    metavar="EPSILON",
-    help="Optimizer Epsilon (default: None, use opt default)",
-)
-parser.add_argument(
-    "--opt-betas",
-    default=None,
-    type=float,
-    nargs="+",
-    metavar="BETA",
-    help="Optimizer Betas (default: None, use opt default)",
-)
-parser.add_argument(
     "--momentum",
     type=float,
     default=0.9,
@@ -312,12 +318,6 @@ parser.add_argument(
     default="norm",
     help='Gradient clipping mode. One of ("norm", "value", "agc")',
 )
-parser.add_argument(
-    "--wd-schedule",
-    type=str,
-    default="none",
-    help='Weight decay scheduler. One of ("cosine", "none")',
-)
 
 
 # Learning rate schedule parameters
@@ -332,55 +332,6 @@ parser.add_argument(
     "--lr", type=float, default=1e-3, metavar="LR", help="learning rate (default: 1e-3)"
 )
 parser.add_argument(
-    "--lr-noise",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="pct, pct",
-    help="learning rate noise on/off epoch percentages",
-)
-parser.add_argument(
-    "--lr-noise-pct",
-    type=float,
-    default=0.67,
-    metavar="PERCENT",
-    help="learning rate noise limit percent (default: 0.67)",
-)
-parser.add_argument(
-    "--lr-noise-std",
-    type=float,
-    default=1.0,
-    metavar="STDDEV",
-    help="learning rate noise std-dev (default: 1.0)",
-)
-parser.add_argument(
-    "--lr-cycle-mul",
-    type=float,
-    default=1.0,
-    metavar="MULT",
-    help="learning rate cycle len multiplier (default: 1.0)",
-)
-parser.add_argument(
-    "--lr-cycle-decay",
-    type=float,
-    default=0.5,
-    metavar="MULT",
-    help="amount to decay each learning rate cycle (default: 0.5)",
-)
-parser.add_argument(
-    "--lr-cycle-limit",
-    type=int,
-    default=1,
-    metavar="N",
-    help="learning rate cycle limit, cycles enabled if > 1",
-)
-parser.add_argument(
-    "--lr-k-decay",
-    type=float,
-    default=1.0,
-    help="learning rate k-decay for cosine/poly (default: 1.0)",
-)
-parser.add_argument(
     "--warmup-lr",
     type=float,
     default=1e-6,
@@ -392,8 +343,9 @@ parser.add_argument(
     type=float,
     default=1e-5,
     metavar="LR",
-    help="lower lr bound for cyclic schedulers that hit 0 (1e-5)",
+    help="lower lr bound for cyclic schxedulers that hit 0 (1e-5)",
 )
+
 parser.add_argument(
     "--epochs",
     type=int,
@@ -452,6 +404,28 @@ parser.add_argument(
     help="LR decay rate (default: 0.1)",
 )
 
+parser.add_argument(
+    "--color-jitter",
+    type=float,
+    default=0.4,
+    metavar="PCT",
+    help="Color jitter factor (default: 0.4)",
+)
+parser.add_argument(
+    "--aa",
+    type=str,
+    default="rand-m9-mstd0.5-inc1",
+    metavar="NAME",
+    help='Use AutoAugment policy. "v0" or "original". (default: rand-m9-mstd0.5-inc1)',
+)
+parser.add_argument(
+    "--aug-repeats",
+    type=int,
+    default=0,
+    help="Number of augmentation repetitions (distributed training only) (default: 0)",
+)
+
+
 # Augmentation & regularization parameters
 parser.add_argument(
     "--no-aug",
@@ -480,50 +454,6 @@ parser.add_argument(
 )
 parser.add_argument(
     "--vflip", type=float, default=0.0, help="Vertical flip training aug probability"
-)
-parser.add_argument(
-    "--color-jitter",
-    type=float,
-    default=0.4,
-    metavar="PCT",
-    help="Color jitter factor (default: 0.4)",
-)
-parser.add_argument(
-    "--aa",
-    type=str,
-    default="rand-m9-mstd0.5-inc1",
-    metavar="NAME",
-    help='Use AutoAugment policy. "v0" or "original". (default: rand-m9-mstd0.5-inc1)',
-),
-parser.add_argument(
-    "--aug-repeats",
-    type=int,
-    default=0,
-    help="Number of augmentation repetitions (distributed training only) (default: 0)",
-)
-parser.add_argument(
-    "--aug-splits",
-    type=int,
-    default=0,
-    help="Number of augmentation splits (default: 0, valid: 0 or >=2)",
-)
-parser.add_argument(
-    "--jsd-loss",
-    action="store_true",
-    default=False,
-    help="Enable Jensen-Shannon Divergence + CE loss. Use with `--aug-splits`.",
-)
-parser.add_argument(
-    "--bce-loss",
-    action="store_true",
-    default=False,
-    help="Enable BCE loss w/ Mixup/CutMix use.",
-)
-parser.add_argument(
-    "--bce-target-thresh",
-    type=float,
-    default=None,
-    help="Threshold for binarizing softened BCE targets (default: None, disabled)",
 )
 parser.add_argument(
     "--reprob",
@@ -582,13 +512,6 @@ parser.add_argument(
     help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"',
 )
 parser.add_argument(
-    "--mixup-off-epoch",
-    default=0,
-    type=int,
-    metavar="N",
-    help="Turn off mixup after this epoch, disabled if 0 (default: 0)",
-)
-parser.add_argument(
     "--smoothing", type=float, default=0.1, help="Label smoothing (default: 0.1)"
 )
 parser.add_argument(
@@ -597,99 +520,10 @@ parser.add_argument(
     default="bicubic",
     help='Training interpolation (random, bilinear, bicubic default: "random")',
 )
-parser.add_argument(
-    "--drop", type=float, default=0.0, metavar="PCT", help="Dropout rate (default: 0.)"
-)
-parser.add_argument(
-    "--drop-connect",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop connect rate, DEPRECATED, use drop-path (default: None)",
-)
-parser.add_argument(
-    "--drop-path",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop path rate (default: None)",
-)
-parser.add_argument(
-    "--drop-block",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop block rate (default: None)",
-)
-
-# Batch norm parameters (only works with gen_efficientnet based models currently)
-parser.add_argument(
-    "--bn-tf",
-    action="store_true",
-    default=False,
-    help="Use Tensorflow BatchNorm defaults for models that support it (default: False)",
-)
-parser.add_argument(
-    "--bn-momentum",
-    type=float,
-    default=None,
-    help="BatchNorm momentum override (if not None)",
-)
-parser.add_argument(
-    "--bn-eps",
-    type=float,
-    default=None,
-    help="BatchNorm epsilon override (if not None)",
-)
-parser.add_argument(
-    "--sync-bn",
-    action="store_true",
-    help="Enable NVIDIA Apex or Torch synchronized BatchNorm.",
-)
-parser.add_argument(
-    "--dist-bn",
-    type=str,
-    default="reduce",
-    help='Distribute BatchNorm stats between nodes after each epoch ("broadcast", "reduce", or "")',
-)
-parser.add_argument(
-    "--split-bn",
-    action="store_true",
-    help="Enable separate BN layers per augmentation split.",
-)
-
-# Model Exponential Moving Average
-parser.add_argument(
-    "--model-ema",
-    action="store_true",
-    default=True,
-    help="Enable tracking moving average of model weights",
-)
-parser.add_argument(
-    "--model-ema-force-cpu",
-    action="store_true",
-    default=False,
-    help="Force ema to be tracked on CPU, rank=0 node only. Disables EMA validation.",
-)
-parser.add_argument(
-    "--model-ema-decay",
-    type=float,
-    default=0.9995,
-    help="decay factor for model weights moving average (default: 0.9998)",
-)
 
 # Misc
 parser.add_argument(
-    "--finetune",
-    action="store_true",
-    default=False,
-    help="If used, loading loss_scaler will be disabled in resume",
-)
-parser.add_argument(
     "--seed", type=int, default=42, metavar="S", help="random seed (default: 42)"
-)
-parser.add_argument(
-    "--worker-seeding", type=str, default="all", help="worker seed mode (default: all)"
 )
 parser.add_argument(
     "--log-interval",
@@ -719,12 +553,6 @@ parser.add_argument(
     default=8,
     metavar="N",
     help="how many training processes to use (default: 8)",
-)
-parser.add_argument(
-    "--save-images",
-    action="store_true",
-    default=False,
-    help="save images of input bathes every log interval for debugging",
 )
 parser.add_argument(
     "--amp",
@@ -789,13 +617,6 @@ parser.add_argument(
     metavar="EVAL_METRIC",
     help='Best metric (default: "top1"',
 )
-parser.add_argument(
-    "--tta",
-    type=int,
-    default=0,
-    metavar="N",
-    help="Test/inference time augmentation (oversampling) factor. 0=None (default: 0)",
-)
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument(
     "--use-multi-epochs-loader",
@@ -808,17 +629,6 @@ parser.add_argument(
     dest="torchscript",
     action="store_true",
     help="convert model torchscript for inference",
-)
-parser.add_argument(
-    "--log-wandb",
-    action="store_true",
-    default=False,
-    help="log training and validation metrics to wandb",
-)
-parser.add_argument(
-    "--imagenet-trainset-size",
-    default=1281167,
-    help="Size of imagenet training set for weight decay scheduling.",
 )
 
 
@@ -907,15 +717,21 @@ def main():
     for param in clip_model.parameters():
         param.requires_grad = False
 
-    # Attach hook to chosen CLIP transformer block
+    # Attach hook to chosen CLIP transformer block (for intermediate KD)
     clip_handle = register_clip_hook(
         clip_model.visual.transformer.resblocks[CLIP_BLOCK_IDX],
         teacher_feats,
         key="clip_block",
     )
 
-    args.eval_metric = "loss"
-    eval_metric = "loss"
+    # ---- Build CLIP zero-shot head for ImageNet-1K once ----
+    if args.local_rank == 0:
+        _logger.info("Preparing CLIP zero-shot head (ImageNet-1K)...")
+    text_features, _ = prepare_zeroshot_head(clip_model=clip_model)
+
+    # We will use zero-shot Top-1 as the eval metric
+    args.eval_metric = "zs_top1"
+    eval_metric = args.eval_metric
 
     if args.local_rank == 0:
         total = sum(p.numel() for p in model.parameters())
@@ -942,36 +758,13 @@ def main():
 
     # setup augmentation batch splits for contrastive loss or split bn
     num_aug_splits = 0
-    if args.aug_splits > 0:
-        assert args.aug_splits > 1, "A split of 1 makes no sense"
-        num_aug_splits = args.aug_splits
-
-    # enable split bn (separate bn stats per batch-portion)
-    if args.split_bn:
-        assert num_aug_splits > 1 or args.resplit
-        model = convert_splitbn_model(model, max(num_aug_splits, 2))
 
     # move model to GPU, enable channels last layout if set
     model.cuda()
     clip_model.cuda()
 
-    # setup synchronized BatchNorm for distributed training
-    if args.distributed and args.sync_bn:
-        assert not args.split_bn
-        if has_apex and use_amp == "apex":
-            # Apex SyncBN preferred unless native amp is activated
-            model = convert_syncbn_model(model)
-        else:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        if args.local_rank == 0:
-            _logger.info(
-                "Converted model to use Synchronized BatchNorm. WARNING: You may have issues if using "
-                "zero initialized BN layers (enabled by default for ResNets) while sync-bn enabled."
-            )
-
     if args.torchscript:
         assert not use_amp == "apex", "Cannot use APEX AMP with torchscripted model"
-        assert not args.sync_bn, "Cannot use SyncBatchNorm with torchscripted model"
         model = torch.jit.script(model)
 
     optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
@@ -996,49 +789,20 @@ def main():
     # optionally resume from a checkpoint
     resume_epoch = None
     if args.resume:
-        if not args.finetune:
-            # If folder give, pick the last checkpoint from a sorted list of checkpoints
-            if os.path.isdir(args.resume):
-                ckpt_paths = sorted(glob.glob(os.path.join(args.resume, "*.pth.tar")))
-                resume_path = ckpt_paths[-1]
-                setattr(args, "resume", resume_path)
-                print("Resuming from {}".format(resume_path))
+        # If folder give, pick the last checkpoint from a sorted list of checkpoints
+        if os.path.isdir(args.resume):
+            ckpt_paths = sorted(glob.glob(os.path.join(args.resume, "*.pth.tar")))
+            resume_path = ckpt_paths[-1]
+            setattr(args, "resume", resume_path)
+            print("Resuming from {}".format(resume_path))
 
-            resume_epoch = resume_checkpoint(
-                model,
-                args.resume,
-                optimizer=None if args.no_resume_opt else optimizer,
-                loss_scaler=None if args.no_resume_opt else loss_scaler,
-                log_info=args.local_rank == 0,
-            )
-        else:
-            print(
-                "Finetune option selected, not loading optimizer state and loss_scaler"
-            )
-            _ = resume_checkpoint(
-                model,
-                args.resume,
-                optimizer=None,
-                loss_scaler=None,
-                log_info=args.local_rank == 0,
-            )
-
-            data_config["crop_pct"] = 1.0
-            print("data config: {}".format(data_config))
-
-    # setup exponential moving average of model weights, SWA could be used here too
-    model_ema = None
-    if args.model_ema:
-        # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
-        model_ema = ModelEmaV2(
+        resume_epoch = resume_checkpoint(
             model,
-            decay=args.model_ema_decay,
-            device="cpu" if args.model_ema_force_cpu else None,
+            args.resume,
+            optimizer=None if args.no_resume_opt else optimizer,
+            loss_scaler=None if args.no_resume_opt else loss_scaler,
+            log_info=args.local_rank == 0,
         )
-        # Do not load EMA model when running in finetuning mode
-        if args.resume and not args.finetune:
-            print("Loading EMA model")
-            load_checkpoint(model_ema.module, args.resume, use_ema=True)
 
     # setup distributed training
     if args.distributed:
@@ -1068,9 +832,6 @@ def main():
     if lr_scheduler is not None and start_epoch > 0:
         lr_scheduler.step(start_epoch)
 
-    # setup weight decay scheduler
-    wd_scheduler = None
-
     if args.local_rank == 0:
         _logger.info("Scheduled epochs: {}".format(num_epochs))
 
@@ -1094,6 +855,9 @@ def main():
         download=args.dataset_download,
         batch_size=args.batch_size,
     )
+
+    if args.num_classes is None:
+        args.num_classes = dataset_train.num_classes
 
     # setup mixup / cutmix
     collate_fn = None
@@ -1126,6 +890,7 @@ def main():
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config["interpolation"]
+
     loader_train = create_loader(
         dataset_train,
         input_size=data_config["input_size"],
@@ -1153,7 +918,7 @@ def main():
         collate_fn=collate_fn,
         pin_memory=args.pin_mem,
         use_multi_epochs_loader=args.use_multi_epochs_loader,
-        worker_seeding=args.worker_seeding,
+        worker_seeding="all",
     )
 
     loader_eval = create_loader(
@@ -1200,7 +965,6 @@ def main():
             model=model,
             optimizer=optimizer,
             args=args,
-            model_ema=model_ema,
             amp_scaler=loss_scaler,
             checkpoint_dir=output_dir,
             recovery_dir=output_dir,
@@ -1227,16 +991,9 @@ def main():
                 output_dir=output_dir,
                 amp_autocast=amp_autocast,
                 loss_scaler=loss_scaler,
-                model_ema=model_ema,
                 mixup_fn=mixup_fn,
-                wd_scheduler=wd_scheduler,
                 clip_model=clip_model,  # Pass CLIP model to training function
             )
-
-            if args.distributed and args.dist_bn in ("broadcast", "reduce"):
-                if args.local_rank == 0:
-                    _logger.info("Distributing BatchNorm running means and vars")
-                distribute_bn(model, args.world_size, args.dist_bn == "reduce")
 
             eval_metrics = validate(
                 model,
@@ -1247,22 +1004,19 @@ def main():
                 amp_autocast=amp_autocast,
             )
 
-            if model_ema is not None and not args.model_ema_force_cpu:
-                if args.distributed and args.dist_bn in ("broadcast", "reduce"):
-                    distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
-                ema_eval_metrics = validate(
-                    model_ema.module,
-                    loader_eval,
-                    validate_loss_fn,
-                    args,
-                    clip_model=clip_model,
-                    amp_autocast=amp_autocast,
-                    log_suffix=" (EMA)",
-                )
-                eval_metrics = ema_eval_metrics
+            # ---- Zero-shot evaluation on ImageNet val using CLIP prompts ----
+            model_for_zs = model.module if isinstance(model, NativeDDP) else model
+            zs_metrics = evaluate_zero_shot(
+                model=model_for_zs,
+                loader=loader_eval,
+                text_features=text_features,
+                args=args,
+                amp_autocast=amp_autocast,
+            )
+            eval_metrics.update(zs_metrics)
 
             if lr_scheduler is not None:
-                # step LR for next epoch
+                # step LR for next epoch, using zs_top1
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
             if output_dir is not None:
@@ -1272,11 +1026,12 @@ def main():
                     eval_metrics,
                     os.path.join(output_dir, "summary.csv"),
                     write_header=best_metric is None,
-                    log_wandb=args.log_wandb and has_wandb,
+                    log_wandb=False,
                 )
 
+            # ----- Checkpointing based on zero-shot Top-1 -----
             if saver is not None:
-                # save proper checkpoint with eval metric
+                # save proper checkpoint with eval metric (zs_top1)
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(
                     epoch, metric=save_metric
@@ -1304,18 +1059,9 @@ def train_one_epoch(
     output_dir=None,
     amp_autocast=suppress,
     loss_scaler=None,
-    model_ema=None,
     mixup_fn=None,
-    wd_scheduler=None,
     clip_model=None,
 ):
-
-    # Disable mixup for CLIP distillation
-    if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
-        if args.prefetcher and loader.mixup_enabled:
-            loader.mixup_enabled = False
-        elif mixup_fn is not None:
-            mixup_fn.mixup_enabled = False
 
     second_order = hasattr(optimizer, "is_second_order") and optimizer.is_second_order
     batch_time_m = AverageMeter()
@@ -1362,8 +1108,12 @@ def train_one_epoch(
                     teacher_final = F.normalize(teacher_final, dim=-1)
 
                 if teacher_feats is not None and "clip_block" in teacher_feats:
-                    t_block = teacher_feats["clip_block"]  # [B, seq, C]
-                    teacher_cls = t_block[:, 0].float()  # CLS token
+                    t_block = teacher_feats["clip_block"]  # [B, seq, C=1024]
+                    cls_pre = t_block[:, 0].float()  # CLS token before projection
+
+                    # Project CLS token into CLIP embedding space (1024 -> 768)
+                    proj = clip_model.visual.proj.float()  # [1024, 768]
+                    teacher_cls = cls_pre @ proj  # [B, 768]
                     teacher_cls = F.normalize(teacher_cls, dim=-1)
 
             # Total loss: MSE final + MSE intermediate
@@ -1375,10 +1125,7 @@ def train_one_epoch(
 
             if teacher_cls is not None:
                 intermediate_loss = F.mse_loss(student_stage2, teacher_cls)
-                print(f"Intermediate loss: {intermediate_loss.item():.6f}")
             else:
-                print("No intermediate loss (teacher CLS missing)")
-                print("Teacher feats keys: ", list(teacher_feats.keys()))
                 intermediate_loss = torch.zeros((), device=input.device)
 
             loss = (
@@ -1386,44 +1133,15 @@ def train_one_epoch(
                 + INTERMEDIATE_FEATURE_WEIGHT * intermediate_loss
             )
 
-        # NaN/Inf guard (updated to correct tensors)
-        if torch.isnan(loss) or torch.isinf(loss):
-
-            print(
-                f"\n[CRITICAL FAIL] Rank {args.rank} | Epoch {epoch} | Batch {batch_idx}"
-            )
-            print(
-                f"Loss value: {loss.item()}  (final={final_loss.item():.6f}, inter={intermediate_loss.item():.6f})"
-            )
-
-            print(
-                f"Input: min={input.min().item():.4f}, max={input.max().item():.4f}, NaN={torch.isnan(input).any().item()}"
-            )
-
-            s_min, s_max = student_final.min().item(), student_final.max().item()
-            print(
-                f"Student Final: min={s_min:.4f}, max={s_max:.4f}, NaN={torch.isnan(student_final).any().item()}"
-            )
-
-            s2_min, s2_max = student_stage2.min().item(), student_stage2.max().item()
-            print(
-                f"Student Stage2: min={s2_min:.4f}, max={s2_max:.4f}, NaN={torch.isnan(student_stage2).any().item()}"
-            )
-
-            if teacher_final is not None:
-                t_min, t_max = teacher_final.min().item(), teacher_final.max().item()
-                print(
-                    f"Teacher Final: min={t_min:.4f}, max={t_max:.4f}, NaN={torch.isnan(teacher_final).any().item()}"
-                )
-
-            if teacher_cls is not None:
-                tc_min, tc_max = teacher_cls.min().item(), teacher_cls.max().item()
-                print(
-                    f"Teacher CLS: min={tc_min:.4f}, max={tc_max:.4f}, NaN={torch.isnan(teacher_cls).any().item()}"
-                )
-
-            sys.stdout.flush()
-            sys.exit(1)
+        crash_on_bad_loss(
+            loss=loss,
+            args=args,
+            batch_idx=batch_idx,
+            images=input,
+            student_features=student_final,
+            teacher_features=teacher_final,
+            epoch=epoch,
+        )
 
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
@@ -1449,9 +1167,6 @@ def train_one_epoch(
                     mode=args.clip_mode,
                 )
             optimizer.step()
-
-        if model_ema is not None:
-            model_ema.update(model)
 
         torch.cuda.synchronize()
         num_updates += 1
@@ -1492,14 +1207,6 @@ def train_one_epoch(
                     )
                 )
 
-                if args.save_images and output_dir:
-                    torchvision.utils.save_image(
-                        input,
-                        os.path.join(output_dir, f"train-batch-{batch_idx}.jpg"),
-                        padding=0,
-                        normalize=True,
-                    )
-
         if (
             saver is not None
             and args.recovery_interval
@@ -1509,8 +1216,6 @@ def train_one_epoch(
 
         if lr_scheduler is not None:
             lr_scheduler.step_update(num_updates=num_updates, metric=losses_m.avg)
-        if wd_scheduler is not None:
-            wd_scheduler.update_weight_decay(optimizer)
 
         end = time.time()
 
@@ -1563,8 +1268,12 @@ def validate(
                     teacher_final = F.normalize(teacher_final, dim=-1)
 
                     if teacher_feats is not None and "clip_block" in teacher_feats:
-                        t_block = teacher_feats["clip_block"]  # [B, seq, C]
-                        teacher_cls = t_block[:, 0].float()
+                        t_block = teacher_feats["clip_block"]  # [B, seq, C=1024]
+                        cls_pre = t_block[:, 0].float()  # CLS token before projection
+
+                        # Project CLS token into CLIP embedding space (1024 -> 768)
+                        proj = clip_model.visual.proj.float()  # [1024, 768]
+                        teacher_cls = cls_pre @ proj  # [B, 768]
                         teacher_cls = F.normalize(teacher_cls, dim=-1)
 
                 # Losses
@@ -1584,48 +1293,15 @@ def validate(
                     + INTERMEDIATE_FEATURE_WEIGHT * intermediate_loss
                 )
 
-            # NaN/Inf guard (correct tensors)
-            if torch.isnan(loss) or torch.isinf(loss):
-
-                print(f"\n[CRITICAL FAIL] Rank {args.rank} | Val Batch {batch_idx}")
-                print(
-                    f"Loss value: {loss.item()}  (final={final_loss.item():.6f}, inter={intermediate_loss.item():.6f})"
-                )
-
-                print(
-                    f"Input: min={input.min().item():.4f}, max={input.max().item():.4f}, NaN={torch.isnan(input).any().item()}"
-                )
-
-                s_min, s_max = student_final.min().item(), student_final.max().item()
-                print(
-                    f"Student Final: min={s_min:.4f}, max={s_max:.4f}, NaN={torch.isnan(student_final).any().item()}"
-                )
-
-                s2_min, s2_max = (
-                    student_stage2.min().item(),
-                    student_stage2.max().item(),
-                )
-                print(
-                    f"Student Stage2: min={s2_min:.4f}, max={s2_max:.4f}, NaN={torch.isnan(student_stage2).any().item()}"
-                )
-
-                if teacher_final is not None:
-                    t_min, t_max = (
-                        teacher_final.min().item(),
-                        teacher_final.max().item(),
-                    )
-                    print(
-                        f"Teacher Final: min={t_min:.4f}, max={t_max:.4f}, NaN={torch.isnan(teacher_final).any().item()}"
-                    )
-
-                if teacher_cls is not None:
-                    tc_min, tc_max = teacher_cls.min().item(), teacher_cls.max().item()
-                    print(
-                        f"Teacher CLS: min={tc_min:.4f}, max={tc_max:.4f}, NaN={torch.isnan(teacher_cls).any().item()}"
-                    )
-
-                sys.stdout.flush()
-                sys.exit(1)
+            crash_on_bad_loss(
+                loss=loss,
+                args=args,
+                batch_idx=batch_idx,
+                images=input,
+                student_features=student_final,
+                teacher_features=teacher_final,
+                epoch=None,
+            )
 
             torch.cuda.synchronize()
             losses_m.update(loss.item(), input.size(0))

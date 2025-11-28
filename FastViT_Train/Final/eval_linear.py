@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
-from FastViT_Train.Final.FastViT_KD import create_fastvit_clip
+from FastViT_KD import create_fastvit_clip
 
 USE_EMA = True
 BATCH_SIZE = 256
@@ -112,7 +112,7 @@ def get_features(model, dataset):
 
 checkpoints = [
     "model_best.pth.tar",
-    "Wmodel_best.pth.tar",
+    "checkpoint-37.pth.tar",
     # "./CheckPoint30/checkpoint-30.pth.tar",
     # "./CheckPoint30/Wcheckpoint-30.pth.tar",
 ]

@@ -26,7 +26,6 @@ class FastViT_lr(nn.Module):
         if lock:
             for p in self.base.parameters():
                 p.requires_grad = False
-            print("Backbone frozen")
 
         # SA36 @ 224 layout: (num_blocks, num_patches, embed_dim)
         stage_configs = [
@@ -89,7 +88,6 @@ class FastViT_lr(nn.Module):
 
         x_flat = x.flatten(2).transpose(1, 2)  # (B, N, C)
 
-        # Resize token if resolution mismatch
         if token.shape[1] != x_flat.shape[1]:
             token_rs = token.transpose(1, 2)  # (1, C, N)
             token_rs = F.interpolate(token_rs, size=x_flat.shape[1], mode="linear")

@@ -24,7 +24,6 @@ class FastViT_lr(nn.Module):
         if lock:
             for p in self.base.parameters():
                 p.requires_grad = False
-            print("Backbone frozen")
 
         stage_configs = [
             (6, 3136, 64),  # 56x56
@@ -124,7 +123,7 @@ class FastViT_lr(nn.Module):
             if stage_indices is None or s_idx in stage_indices:
                 feats[f"stage{s_idx}"] = x
 
-        # --- CRITICAL: Apply final_conv (512 -> 1024 channels) ---
+        # --- Apply final_conv (512 -> 1024 channels) ---
         if hasattr(self.base, "final_conv"):
             x = self.base.final_conv(x)
 

@@ -15,13 +15,13 @@ class FastViT_CLIP(nn.Module):
 
         self.fastvit = FastViT_lr(base_model, lock=lock)
 
-        # Final feature dim for SA36 final map (after timm forward_features)
+        # Final dim in SA36 is 1024 channels
         self.feature_dim = 1024
         self.projector = nn.Linear(self.feature_dim, embed_dim)
         nn.init.trunc_normal_(self.projector.weight, std=0.001)
         nn.init.zeros_(self.projector.bias)
 
-        # Stage2 (14x14) dim in SA36 is 256 channels
+        # Stage2(14x14) dim in SA36 is 256 channels
         self.stage2_dim = 256
         self.stage2_projector = nn.Linear(self.stage2_dim, embed_dim)
         nn.init.trunc_normal_(self.stage2_projector.weight, std=0.001)
