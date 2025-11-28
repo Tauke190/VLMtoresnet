@@ -16,10 +16,10 @@ import os
 TRAIN_SUBSET_RATIO = 0.2
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05 
 
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
-# TRAIN_DIR = '~/data/datasets/imagenet/train'
-# VAL_DIR = '~/data/datasets/imagenet/val'
+# TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+# VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = '~/data/datasets/imagenet/train'
+VAL_DIR = '~/data/datasets/imagenet/validation'
 
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-4
@@ -41,7 +41,7 @@ USE_CRD = True
 CRD_WEIGHT = 0.9  # weight for contrastive distillation loss term relative to other losses
 
 # Paths and utils
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
@@ -392,9 +392,4 @@ if __name__ == '__main__':
     parser.add_argument('--train_dir', type=str, default=TRAIN_DIR, help='Path to training directory')
     parser.add_argument('--val_dir', type=str, default=VAL_DIR, help='Path to validation directory')
     args = parser.parse_args()
-    global TRAIN_DIR, VAL_DIR
-    if args.train_dir is not None:
-        TRAIN_DIR = args.train_dir
-    if args.val_dir is not None:
-        VAL_DIR = args.val_dir
     run_distillation()
