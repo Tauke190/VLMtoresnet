@@ -40,7 +40,7 @@ EVAL_OXFORD_PET = True
 OXFORD_PET_VAL_DIR = '~/data/datasets/oxford_pet/val'  # ImageFolder layout
 
 # Add path setup for importing zero-shot utilities and templates
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
