@@ -8,8 +8,8 @@ def main():
 	parser.add_argument('--distillation', type=str, required=True, choices=[
 		'contrastive', 'finalfeature', 'intermediate', 'masked_generative'],
 		help='Type of distillation to run')
-	parser.add_argument('--train_dir', type=str, required=True, help='Path to training directory')
-	parser.add_argument('--val_dir', type=str, required=True, help='Path to validation directory')
+	parser.add_argument('--train_dir', type=str, required=False, help='Path to training directory')
+	parser.add_argument('--val_dir', type=str, required=False, help='Path to validation directory')
 	args = parser.parse_args()
 
 	# Map distillation type to script
