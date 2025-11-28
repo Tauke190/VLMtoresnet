@@ -140,6 +140,7 @@ def parse_args():
     ap.add_argument("--cmap", default="inferno")
     ap.add_argument("--layers", type=str, default="all", help="Comma list of layer indices or 'all'")
     ap.add_argument("--no-individual", action="store_true", help="Skip saving per-layer individual overlays")
+    ap.add_argument("--show-heads", action="store_true", help="Show attention maps for each head across the rows for selected layers")
     return ap.parse_args()
 
 def main():
@@ -170,6 +171,7 @@ def main():
     if args.layers != "all":
         wanted = [int(x) for x in args.layers.split(",") if x.strip() != ""]
         per_layer_maps = [m for i, m in enumerate(per_layer_maps) if i in wanted]
+        vision_attentions = [a for i, a in enumerate(vision_attentions) if i in wanted]
 
     # Upsample to image size
     target_hw = image.size[1], image.size[0]  # (H,W)
@@ -177,20 +179,50 @@ def main():
     if rollout_map is not None:
         rollout_up = upsample_maps(rollout_map, target_hw)
 
+    # Show attention maps for each head across the rows for selected layers
+    if args.show_heads:
+        # For each selected layer, plot all heads' CLS->patch attention
+        for layer_idx, layer_attn in enumerate(vision_attentions):
+            b, heads, seq, _ = layer_attn.shape
+            # Only batch=1 supported for visualization
+            assert b == 1, "Batch size > 1 not supported for head visualization."
+            # CLS token to patches for each head
+            cls_to_patches = layer_attn[0, :, 0, 1:]  # (heads, num_patches)
+            num_patches = cls_to_patches.shape[-1]
+            side = int(num_patches ** 0.5)
+            assert side * side == num_patches, "Patch count not square; unexpected model configuration."
+            maps = cls_to_patches.reshape(heads, side, side)
+            # Normalize each head map to [0,1]
+            maps = maps - maps.amin(dim=(1,2), keepdim=True)
+            maps = maps / (maps.amax(dim=(1,2), keepdim=True) + 1e-6)
+            # Upsample to image size
+            maps_up = F.interpolate(maps.unsqueeze(1), size=target_hw, mode="bicubic", align_corners=False).squeeze(1)
+            # Plot all heads in a grid
+            cols = 4
+            rows = (heads + cols - 1) // cols
+            fig, axes = plt.subplots(rows, cols, figsize=(cols*2, rows*2))
+            axes = axes.flatten()
+            base = np.array(image)
+            for i in range(rows*cols):
+                ax = axes[i]
+                ax.axis('off')
+                if i < heads:
+                    hm = maps_up[i].cpu().numpy()
+                    ax.imshow(base)
+                    ax.imshow(hm, cmap=args.cmap, alpha=args.alpha)
+                    ax.set_title(f"Head {i}")
+            plt.tight_layout()
+            out_path = Path(args.output_dir) / f"layer_{layer_idx+1}_all_heads.png"
+            fig.savefig(out_path, bbox_inches='tight', pad_inches=0)
+            plt.close(fig)
 
-    # Save attention maps after every 3 layers (layers 3, 6, 9, 12)
-    selected_layers = [2, 5, 8, 11]  # 0-based indices
+
+    # Save attention maps after every 3 layers (layers 3, 6, 9, 12) ONLY
+    selected_layers = [0, 1, 2, 5, 8, 11]  # 0-based indices
     for i in selected_layers:
         if i < len(upsampled):
             hm = upsampled[i][0].cpu().numpy()
             out_path = Path(args.output_dir) / f"attention_layer_{i+1}.png"
-            overlay_and_save(image, hm, out_path, cmap=args.cmap, alpha=args.alpha)
-
-    # Save individual layers as before
-    if not args.no_individual:
-        for i, m in enumerate(upsampled):
-            hm = m[0].cpu().numpy()
-            out_path = Path(args.output_dir) / f"attention_layer_{i}.png"
             overlay_and_save(image, hm, out_path, cmap=args.cmap, alpha=args.alpha)
 
     # Save grid

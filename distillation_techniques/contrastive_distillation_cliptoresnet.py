@@ -17,6 +17,7 @@ import os
 TRAIN_SUBSET_RATIO = 0.2
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05  # used for validation accuracy in each epoch
 
+
 TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
 VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
 # TRAIN_DIR = '~/data/datasets/imagenet/train'
@@ -384,4 +385,9 @@ def run_distillation():
         return
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="Contrastive Distillation Script")
+    parser.add_argument('--train_dir', type=str, default=TRAIN_DIR, help='Path to training directory')
+    parser.add_argument('--val_dir', type=str, default=VAL_DIR, help='Path to validation directory')
+    args = parser.parse_args()
     run_distillation()

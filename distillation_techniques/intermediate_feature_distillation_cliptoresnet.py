@@ -24,8 +24,11 @@ import os
 
 TRAIN_SUBSET_RATIO = 0.2            
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05
-TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
-VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+# Default dataset paths
+DEFAULT_TRAIN_DIR = '/home/c3-0/datasets/ImageNet/train'
+DEFAULT_VAL_DIR = '/home/c3-0/datasets/ImageNet/validation'
+TRAIN_DIR = DEFAULT_TRAIN_DIR
+VAL_DIR = DEFAULT_VAL_DIR
 
 # TRAIN_DIR = '~/data/datasets/imagenet/train'
 # VAL_DIR = '~/data/datasets/imagenet/val'
@@ -380,4 +383,14 @@ def run_distillation():
             pass
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="Intermediate Feature Distillation Script")
+    parser.add_argument('--train_dir', type=str, default=None, help='Path to training directory')
+    parser.add_argument('--val_dir', type=str, default=None, help='Path to validation directory')
+    args = parser.parse_args()
+    global TRAIN_DIR, VAL_DIR
+    if args.train_dir is not None:
+        TRAIN_DIR = args.train_dir
+    if args.val_dir is not None:
+        VAL_DIR = args.val_dir
     run_distillation()

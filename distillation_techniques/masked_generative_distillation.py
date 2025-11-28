@@ -387,4 +387,14 @@ def run_distillation():
         return
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="Masked Generative Distillation Script")
+    parser.add_argument('--train_dir', type=str, default=TRAIN_DIR, help='Path to training directory')
+    parser.add_argument('--val_dir', type=str, default=VAL_DIR, help='Path to validation directory')
+    args = parser.parse_args()
+    global TRAIN_DIR, VAL_DIR
+    if args.train_dir is not None:
+        TRAIN_DIR = args.train_dir
+    if args.val_dir is not None:
+        VAL_DIR = args.val_dir
     run_distillation()
