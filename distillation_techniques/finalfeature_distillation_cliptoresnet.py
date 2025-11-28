@@ -45,7 +45,7 @@ CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 sys.path.append(str(CLIP_DIR))
 # NEW: ensure we can import utils.py when running this script directly
-# sys.path.append(str(PROJECT_ROOT))
+sys.path.append(str(PROJECT_ROOT))
 
 # NEW: import helpers from utils.py
 from utils import (
