@@ -16,17 +16,9 @@ BATCH_SIZE = 32
 
 IMAGENET_VAL_DIR = os.path.expanduser('~/data/datasets/imagenet/validation')
 OXFORD_PET_VAL_DIR = os.path.expanduser('~/data/datasets/oxford_pet/val')
+\
 
-def find_project_root(start: Path, markers=('utils.py', 'CLIP')):
-    p = start.resolve()
-    for parent in [p] + list(p.parents):
-        utils_file = parent / 'utils.py'
-        clip_dir = parent / 'CLIP'
-        if utils_file.exists() and clip_dir.exists():
-            return parent
-    return start.resolve().parent  # fallback
-
-PROJECT_ROOT = find_project_root(Path(__file__).parent)
+PROJECT_ROOT = Path(__file__).parent
 CLIP_DIR = PROJECT_ROOT / "CLIP"
 TEMPLATES_DIR = CLIP_DIR / "dataloaders" / "templates"
 
