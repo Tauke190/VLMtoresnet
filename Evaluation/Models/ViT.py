@@ -13,11 +13,10 @@ data_root = "./data"
 cache_dir = "./feature_cache_clip_vitl14_336"
 os.makedirs(cache_dir, exist_ok=True)
 
-# Load CLIP ViT-L/14@336px
-MODEL_NAME = "ViT-L/14@336px"
+MODEL_NAME = "ViT-L/14"
 print(f"Loading CLIP {MODEL_NAME}...")
 model, base_preprocess = clip.load(MODEL_NAME, device=device)
-# Wrap preprocess to handle grayscale images (like FER2013)
+
 from torchvision import transforms
 
 preprocess = transforms.Compose(

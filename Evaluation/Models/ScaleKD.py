@@ -10,15 +10,12 @@ from mmpretrain.registry import MODELS
 from typing import Dict
 from DatasetLoader import *
 
-# Device / paths
 device = "cuda" if torch.cuda.is_available() else "cpu"
 data_root = "./data"
 cache_dir = "./feature_cache_scalekd_resnet50"
 os.makedirs(cache_dir, exist_ok=True)
 
-# -------- EDIT THIS ONLY --------
 CKPT_PATH = "./resnet50_scalekd_e300.pth"
-# --------------------------------
 
 
 def build_resnet50d():
@@ -46,25 +43,16 @@ def build_resnet50d():
 
 
 def load_student_ckpt(model: torch.nn.Module, ckpt_path: str):
-    """
-    Load ScaleKD student checkpoint into the MMPretrain ImageClassifier.
-
-    - Filters out BatchNorm num_batches_tracked buffers.
-    - Supports both MMPretrain-style ('backbone.*', 'head.*') and plain ResNet-50 keys.
-    - Refuses distillation bundles that still contain 'student.' keys.
-    """
     print(f"Loading checkpoint from: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu")
     state: Dict[str, torch.Tensor] = ckpt.get("state_dict", ckpt)
 
-    # Distillation bundle (teacher + student) – user should first run pth_transfer.py
     if any(k.startswith("student.") for k in state.keys()):
         raise RuntimeError(
             "Checkpoint contains 'student.' keys (distillation bundle). "
             "Please run ScaleKD's pth_transfer.py to produce a student-only checkpoint."
         )
 
-    # Case 1: already in MMPretrain namespace
     if any(k.startswith(("backbone.", "head.")) for k in state.keys()):
         filtered = {k: v for k, v in state.items() if "num_batches_tracked" not in k}
         msg = model.load_state_dict(filtered, strict=False)
@@ -72,7 +60,6 @@ def load_student_ckpt(model: torch.nn.Module, ckpt_path: str):
         print("=> load_state_dict (mmcls style) unexpected:", msg.unexpected_keys)
         return
 
-    # Case 2: plain torchvision-style ResNet-50 keys (conv1, layer1, fc, ...)
     new_state: Dict[str, torch.Tensor] = {}
     for k, v in state.items():
         if "num_batches_tracked" in k:
@@ -83,11 +70,8 @@ def load_student_ckpt(model: torch.nn.Module, ckpt_path: str):
             new_state["backbone." + k] = v
 
     msg = model.load_state_dict(new_state, strict=False)
-    print("=> load_state_dict (plain ResNet) missing:", msg.missing_keys)
-    print("=> load_state_dict (plain ResNet) unexpected:", msg.unexpected_keys)
 
 
-# Instantiate ScaleKD ResNet-50-D student
 print("Loading ScaleKD ResNet-50-D student...")
 model = build_resnet50d()
 load_student_ckpt(model, CKPT_PATH)
@@ -166,7 +150,6 @@ def evaluate_dataset(dataset_name, loader_fn, skip_download: bool = False):
     start_time = time.time()
 
     try:
-        # Get data loaders from the shared DatasetLoader utilities
         train_loader, test_loader = loader_fn(
             data_root=data_root,
             transform=transform,
@@ -185,7 +168,6 @@ def evaluate_dataset(dataset_name, loader_fn, skip_download: bool = False):
 
         print(f"\n  Train: {train_features.shape}, Test: {test_features.shape}")
 
-        # Train linear probe (same hyperparameters as ConvMixer)
         print("  Training logistic regression...")
         classifier = LogisticRegression(
             random_state=0,
