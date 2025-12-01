@@ -9,7 +9,7 @@ from torchvision import datasets, transforms
 from tqdm import tqdm
 import clip
 
-from timm.utils import reduce_tensor 
+from timm.utils import reduce_tensor
 from FastViT_KD import create_fastvit_clip
 
 USE_EMA = True
@@ -23,8 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
-# Paths for label files (same dir as this script)
-_BASE_DIR = os.path.dirname(__file__)
+_BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 IMAGENET_CLASSES_TXT = os.path.join(_BASE_DIR, "imagenet_classes.txt")
 IMAGENET_LABELS_TXT = os.path.join(_BASE_DIR, "imagenet_labels.txt")
 
@@ -58,6 +57,7 @@ def _encode_text_prompts(clip_model, prompts, device):
     text_features = torch.stack(text_features, dim=0)  # [C, D]
     return text_features.float().to(device)
 
+
 @torch.no_grad()
 def prepare_zeroshot_head(
     clip_model=None,
@@ -88,8 +88,13 @@ def prepare_zeroshot_head(
 
     # Load classes / labels (labels only for logging / sanity)
     class_names = _load_lines(IMAGENET_CLASSES_TXT)
+    if os.path.exists(IMAGENET_CLASSES_TXT):
+        print(f"Loading ImageNet labels from {IMAGENET_CLASSES_TXT}...")
+
     try:
         imagenet_labels = _load_lines(IMAGENET_LABELS_TXT)
+        if os.path.exists(IMAGENET_LABELS_TXT):
+            print(f"Loading ImageNet labels from {IMAGENET_LABELS_TXT}...")
         if len(imagenet_labels) != len(class_names):
             print(
                 f"[warn] imagenet_labels.txt has {len(imagenet_labels)} lines, "

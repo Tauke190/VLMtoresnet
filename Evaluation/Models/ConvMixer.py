@@ -148,7 +148,7 @@ def evaluate_dataset(dataset_name, loader_fn, skip_download=False):
 
 # Dataset configurations (name, loader_fn, skip_download)
 datasets_config = [
-    ("Stanford Cars", get_stanford_cars_loaders, True), # True: Skip_Download
+    ("Stanford Cars", get_stanford_cars_loaders, True),  # True: Skip_Download
     ("GTSRB", get_gtsrb_loaders, True),
     ("Food101", get_food101_loaders, True),
     ("FGVC Aircraft", get_aircraft_loaders, True),

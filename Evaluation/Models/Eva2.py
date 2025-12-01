@@ -14,7 +14,6 @@ cache_dir = "./feature_cache_eva02_clip_l14_224"
 os.makedirs(cache_dir, exist_ok=True)
 
 # Load EVA02-CLIP-L/14 (224px)
-# NOTE: requires `pip install open_clip_torch`
 MODEL_NAME = "eva02_large_patch14_clip_224.merged2b"  # EVA02-CLIP-L/14
 OPENCLIP_REPO = "hf-hub:timm/eva02_large_patch14_clip_224.merged2b_s4b_b131k"
 

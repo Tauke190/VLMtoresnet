@@ -683,6 +683,8 @@ def main():
 
     if args.local_rank == 0:
         _logger.info(f"Creating FastViT_CLIP model: {args.model}")
+
+    # Load student FastViT model
     model = create_fastvit_clip(
         model_name=args.model,
         pretrained=args.pretrained,
@@ -698,7 +700,7 @@ def main():
         param.requires_grad = False
     print("CLIP teacher loaded and frozen")
 
-    # ---- Build CLIP zero-shot head for ImageNet-1K once ----
+    # Prepare the zero-shot head for evaluation
     if args.local_rank == 0:
         _logger.info("Preparing CLIP zero-shot head (ImageNet-1K)...")
     text_features, _ = prepare_zeroshot_head(clip_model=clip_model)

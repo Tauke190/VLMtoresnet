@@ -7,60 +7,44 @@ from timm.layers import trunc_normal_
 
 
 class FastViT_lr(nn.Module):
-    """
-    FastViT with per-block spatial tokens (EVA-style) + stability controls:
-    - Backbone frozen
-    - One trainable token per block
-    - Tokens init with timm.trunc_normal_(std=0.02)
-    - Tokens L2-normalized + scaled each forward
-    - Per-block gates (start at 0) + small prompt_scale to prevent overflow
-    """
-
-    def __init__(self, base_model, lock=True, token_std=0.02, prompt_scale=0.1):
+    def __init__(
+        self,
+        base_model,
+        lock: bool = True,
+        token_std: float = 0.02,
+    ):
         super().__init__()
         self.base = base_model
         self.is_locked = lock
-        self.prompt_scale = prompt_scale  # global safety scale
 
         # Freeze backbone weights
         if lock:
             for p in self.base.parameters():
                 p.requires_grad = False
 
-        # SA36 @ 224 layout: (num_blocks, num_patches, embed_dim)
+        # SA36 @ 224 layout: (num_blocks, embed_dim, H, W)
         stage_configs = [
-            (6, 3136, 64),  # 56x56
-            (6, 784, 128),  # 28x28
-            (18, 196, 256),  # 14x14
-            (6, 49, 512),  # 7x7
+            (6, 64, 56, 56),  # Stage 1
+            (6, 128, 28, 28),  # Stage 2
+            (18, 256, 14, 14),  # Stage 3
+            (6, 512, 7, 7),  # Stage 4
         ]
 
         self.blocks_spatial_tokens = nn.ModuleList()
-        self.token_gates = nn.ModuleList()
 
-        for num_blocks, num_patches, embed_dim in stage_configs:
-            # One token per block
+        for num_blocks, embed_dim, H, W in stage_configs:
             stage_tokens = nn.ParameterList(
                 [
-                    nn.Parameter(torch.empty(1, num_patches, embed_dim))
+                    nn.Parameter(torch.empty(1, embed_dim, H, W))
                     for _ in range(num_blocks)
                 ]
             )
             for t in stage_tokens:
                 trunc_normal_(t, std=token_std)
 
-            # One gate per block (starts at 0)
-            stage_gates = nn.ParameterList(
-                [nn.Parameter(torch.tensor(0.0)) for _ in range(num_blocks)]
-            )
-
             self.blocks_spatial_tokens.append(stage_tokens)
-            self.token_gates.append(stage_gates)
 
-        total = sum(len(s) for s in self.blocks_spatial_tokens)
-        print(f"Created {total} tokens + gates (trunc_normal init)")
-
-        # Wrap each block forward to inject tokens before block runs
+        # Attach token to each block before forward
         for s_idx, stage in enumerate(self.base.stages):
             blocks = getattr(stage, "blocks", None)
             if blocks is None:
@@ -72,9 +56,7 @@ class FastViT_lr(nn.Module):
 
                 orig_fwd = blk.forward
 
-                def fwd_with_token(
-                    x, *args, orig_fwd=orig_fwd, s=s_idx, b=b_idx, **kwargs
-                ):
+                def fwd_with_token(x, *args, orig_fwd=orig_fwd, s=s_idx, b=b_idx, **kwargs):
                     x = self.add_spatial_token(x, s, b)
                     return orig_fwd(x, *args, **kwargs)
 
@@ -82,35 +64,12 @@ class FastViT_lr(nn.Module):
                 blk._has_token_wrap = True
 
     def add_spatial_token(self, x, stage_idx, block_idx):
-        B, C, H, W = x.shape
-        token = self.blocks_spatial_tokens[stage_idx][block_idx]  # (1, N, C)
-        gate = self.token_gates[stage_idx][block_idx]  # scalar
+        token = self.blocks_spatial_tokens[stage_idx][block_idx]  # (1, C, H, W)
 
-        x_flat = x.flatten(2).transpose(1, 2)  # (B, N, C)
-
-        if token.shape[1] != x_flat.shape[1]:
-            token_rs = token.transpose(1, 2)  # (1, C, N)
-            token_rs = F.interpolate(token_rs, size=x_flat.shape[1], mode="linear")
-            token = token_rs.transpose(1, 2)
-
-        # Bound token magnitude each forward
-        token_norm = F.normalize(token, p=2, dim=-1, eps=1e-8)
-        token_scaled = token_norm * math.sqrt(token.shape[-1])
-
-        # Gate controls "how much"; prompt_scale caps max influence
-        alpha = torch.tanh(gate) * self.prompt_scale
-        x_flat = x_flat + alpha * token_scaled
-
-        return x_flat.transpose(1, 2).reshape(B, C, H, W)
+        return x + token
 
     def forward_features(self, x):
         return self.base.forward_features(x)
 
     def forward(self, x):
         return self.base(x)
-
-    def train(self, mode=True):
-        super().train(mode)
-        if mode and self.is_locked:
-            self.base.eval()  # keep BN running stats frozen
-        return self
