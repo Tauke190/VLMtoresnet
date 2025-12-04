@@ -60,6 +60,20 @@ from utils import (
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+    """
+    Evaluates the zero-shot classification accuracy of the student model.
+
+    Args:
+        backbone (nn.Module): Student backbone model.
+        projector (nn.Module): Linear projector mapping student features to teacher space.
+        loader (DataLoader): DataLoader for evaluation images.
+        zs_weights (torch.Tensor): Zero-shot classifier weights (features for each class).
+        device (str): Device to run evaluation on.
+
+    Returns:
+        top1 (float): Top-1 accuracy (%).
+        top5 (float): Top-5 accuracy (%).
+    """
     backbone.eval()
     projector.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
@@ -91,6 +105,26 @@ def build_imagenet_loaders(
     num_workers=2,
     seed=42,
 ):
+    """
+    Builds ImageNet DataLoaders for training, validation, and evaluation.
+
+    Args:
+        train_dir (str): Path to ImageNet training directory.
+        val_dir (str): Path to ImageNet validation directory.
+        transform (callable): Transformations to apply to images.
+        batch_size (int): Batch size for DataLoaders.
+        subset_ratio (float): Ratio of training data to use for training subset.
+        eval_ratio_within_subset (float): Ratio of training subset to use for train-eval split.
+        num_workers (int): Number of DataLoader workers.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        train_loader (DataLoader): DataLoader for training subset.
+        train_eval_loader (DataLoader): DataLoader for train-eval subset.
+        full_val_loader (DataLoader): DataLoader for full validation set.
+        base_train (ImageFolder): Full training dataset.
+        base_val (ImageFolder): Full validation dataset.
+    """
     train_dir = os.path.expanduser(train_dir)
     val_dir = os.path.expanduser(val_dir)
 
@@ -149,6 +183,18 @@ def build_imagenet_loaders(
 
 # CRD loss (keep original)
 def contrastive_distill_loss(student_features_norm, labels, class_text_features_norm, logit_scale=None):
+    """
+    Computes the contrastive distillation loss (cross-entropy) between student features and class text features.
+
+    Args:
+        student_features_norm (torch.Tensor): Normalized student features [B, D].
+        labels (torch.Tensor): Ground truth class labels [B].
+        class_text_features_norm (torch.Tensor): Normalized class text features [C, D].
+        logit_scale (torch.nn.Parameter, optional): Optional learnable logit scale.
+
+    Returns:
+        loss (torch.Tensor): Contrastive distillation loss value.
+    """
     # student_features_norm: [B, D], normalized
     # class_text_features_norm: [C, D], normalized
     logits = student_features_norm @ class_text_features_norm.t()  # [B, C]
@@ -158,6 +204,19 @@ def contrastive_distill_loss(student_features_norm, labels, class_text_features_
     return ce(logits, labels)
 
 def run_distillation():
+    """
+    Runs the masked generative distillation training loop.
+
+    Loads teacher and student models, prepares datasets and zero-shot weights,
+    trains the student with feature and contrastive distillation losses,
+    evaluates zero-shot accuracy, and saves checkpoints.
+
+    Args:
+        None (uses global config and argparse for dataset paths).
+
+    Returns:
+        None
+    """
     print(f"Using device: {DEVICE}")
 
     # --- Setup Models ---

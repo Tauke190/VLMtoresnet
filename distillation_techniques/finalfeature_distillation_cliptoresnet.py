@@ -61,6 +61,20 @@ from utils import (
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+    """
+    Evaluates the student model in zero-shot mode using CLIP zero-shot weights.
+
+    Args:
+        backbone (nn.Module): Student backbone model (e.g., ResNet).
+        projector (nn.Module): Linear layer projecting student features to teacher feature space.
+        loader (DataLoader): DataLoader for evaluation images.
+        zs_weights (torch.Tensor): Zero-shot classifier weights (features for each class).
+        device (str): Device to run evaluation on.
+
+    Returns:
+        top1 (float): Top-1 accuracy (%).
+        top5 (float): Top-5 accuracy (%).
+    """
     backbone.eval()
     projector.eval()
     # ensure same device and dtype as projection output
@@ -93,6 +107,26 @@ def build_imagenet_loaders(
     num_workers=2,
     seed=42,
 ):
+    """
+    Builds ImageNet DataLoaders for training, validation, and evaluation.
+
+    Args:
+        train_dir (str): Path to training images (ImageFolder format).
+        val_dir (str): Path to validation images (ImageFolder format).
+        transform (callable): Preprocessing transform for images.
+        batch_size (int): Batch size for DataLoaders.
+        subset_ratio (float): Fraction of training data to use for training subset.
+        eval_ratio_within_subset (float): Fraction of training subset for validation during training.
+        num_workers (int): Number of worker threads for DataLoader.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        train_loader (DataLoader): DataLoader for training subset.
+        train_eval_loader (DataLoader): DataLoader for validation split from training subset.
+        full_val_loader (DataLoader): DataLoader for full validation set.
+        base_train (ImageFolder): Full training dataset object.
+        base_val (ImageFolder): Full validation dataset object.
+    """
     train_dir = os.path.expanduser(train_dir)
     val_dir = os.path.expanduser(val_dir)
 
@@ -155,6 +189,17 @@ def build_imagenet_loaders(
 
 
 def run_distillation():
+    """
+    Runs the feature distillation process from CLIP ViT-L/14 (teacher) to ResNet-50 (student).
+
+    Loads models, builds datasets, performs training with feature distillation, and evaluates zero-shot accuracy.
+
+    Args:
+        None (uses global config and argparse for dataset paths).
+
+    Returns:
+        None (prints progress, saves checkpoints, and plots losses/accuracies).
+    """
     print(f"Using device: {DEVICE}")
 
     # --- Setup Models ---

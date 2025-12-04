@@ -1,0 +1,12 @@
+torch>=1.10
+torchvision>=0.11
+timm>=0.6.5
+git+https://github.com/openai/CLIP.git
+numpy
+Pillow
+argparse
+# For progress bars and plotting (if used in utils)
+tqdm
+matplotlib
+# For slurm scripts or cluster use (optional)
+# submitit

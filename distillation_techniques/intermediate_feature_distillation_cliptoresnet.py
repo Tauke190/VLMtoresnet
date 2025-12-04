@@ -67,6 +67,20 @@ from utils import (
 )
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+    """
+    Evaluates the student model in a zero-shot setting.
+
+    Args:
+        backbone (nn.Module): Student backbone model.
+        projector (nn.Module): Linear projection head.
+        loader (DataLoader): DataLoader for evaluation data.
+        zs_weights (torch.Tensor): Zero-shot classifier weights.
+        device (str): Device to run evaluation on.
+
+    Returns:
+        top1 (float): Top-1 accuracy (%).
+        top5 (float): Top-5 accuracy (%).
+    """
     backbone.eval()
     projector.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
@@ -97,6 +111,26 @@ def build_imagenet_loaders(
     num_workers=2,
     seed=42,
 ):
+    """
+    Builds ImageNet DataLoaders for training, train-eval, and validation splits.
+
+    Args:
+        train_dir (str): Path to training data directory.
+        val_dir (str): Path to validation data directory.
+        transform (callable): Transformations to apply to images.
+        batch_size (int): Batch size for DataLoaders.
+        subset_ratio (float): Fraction of training data to use.
+        eval_ratio_within_subset (float): Fraction of subset for train-eval split.
+        num_workers (int): Number of DataLoader workers.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        train_loader (DataLoader): Loader for training subset.
+        train_eval_loader (DataLoader): Loader for train-eval subset.
+        full_val_loader (DataLoader): Loader for full validation set.
+        base_train (ImageFolder): Full training dataset.
+        base_val (ImageFolder): Full validation dataset.
+    """
     train_dir = os.path.expanduser(train_dir)
     val_dir = os.path.expanduser(val_dir)
     base_train = ImageFolder(root=train_dir, transform=transform)
@@ -146,6 +180,17 @@ def build_imagenet_loaders(
     return train_loader, train_eval_loader, full_val_loader, base_train, base_val
 
 def register_hook(module, name, feature_dict):
+    """
+    Registers a forward hook on a module to save its output in a dictionary.
+
+    Args:
+        module (nn.Module): Module to register hook on.
+        name (str): Key name for feature_dict.
+        feature_dict (dict): Dictionary to store features.
+
+    Returns:
+        handle: Hook handle for removal.
+    """
     def hook_fn(module, input, output):
         if output.dim() == 3 and output.shape[0] > output.shape[1]:
             output = output.permute(1, 0, 2)
@@ -153,6 +198,18 @@ def register_hook(module, name, feature_dict):
     return module.register_forward_hook(hook_fn)
 
 def run_distillation():
+    """
+    Runs the intermediate feature distillation process.
+
+    Loads teacher and student models, builds dataloaders, performs training with
+    feature distillation, evaluates zero-shot accuracy, and saves checkpoints.
+
+    Args:
+        None (uses global config and argparse for dataset paths).
+
+    Results:
+        Trains student model, prints/logs training/validation metrics, saves checkpoints.
+    """
     print(f"Using device: {DEVICE}")
 
     print("Loading teacher model (CLIP ViT-L/14)...")

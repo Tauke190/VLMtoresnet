@@ -13,7 +13,6 @@ from pathlib import Path
 import sys
 import os
 
-# --- Configuration (copied from finalfeature_..., except distillation strategy remains CRD+MSE) ---
 TRAIN_SUBSET_RATIO = 0.2
 TRAIN_EVAL_WITHIN_SUBSET_RATIO = 0.05  # used for validation accuracy in each epoch
 
@@ -59,11 +58,27 @@ from utils import (
     plot_and_save_losses,
 )
 
+# Zero-shot evaluation function (copied)
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+    """
+    Evaluates the student model in a zero-shot setting.
+
+    Args:
+        backbone (nn.Module): Student backbone model (e.g., ResNet).
+        projector (nn.Module): Linear layer projecting student features to teacher (CLIP) space.
+        loader (DataLoader): DataLoader for evaluation dataset.
+        zs_weights (torch.Tensor): Zero-shot classifier weights (CLIP text features).
+        device (str): Device to run evaluation on.
+
+    Returns:
+        top1 (float): Top-1 accuracy (%).
+        top5 (float): Top-5 accuracy (%).
+    """
     backbone.eval()
     projector.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
 
+    # Evaluation loop
     top1_correct, top5_correct, total = 0, 0, 0
     with torch.no_grad():
         for images, labels in loader:
@@ -91,6 +106,26 @@ def build_imagenet_loaders(
     num_workers=2,
     seed=42,
 ):
+    """
+    Builds ImageNet DataLoaders for training, validation, and evaluation.
+
+    Args:
+        train_dir (str): Path to ImageNet training directory.
+        val_dir (str): Path to ImageNet validation directory.
+        transform (callable): Preprocessing transform for images.
+        batch_size (int): Batch size for DataLoaders.
+        subset_ratio (float): Ratio of training data to use for training subset.
+        eval_ratio_within_subset (float): Ratio of training subset to use for validation.
+        num_workers (int): Number of DataLoader workers.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        train_loader (DataLoader): Loader for training subset.
+        train_eval_loader (DataLoader): Loader for validation subset (from train).
+        full_val_loader (DataLoader): Loader for full validation set.
+        base_train (ImageFolder): Full training dataset.
+        base_val (ImageFolder): Full validation dataset.
+    """
     train_dir = os.path.expanduser(train_dir)
     val_dir = os.path.expanduser(val_dir)
 
@@ -127,6 +162,7 @@ def build_imagenet_loaders(
             train_split_indices.extend(selected_cls)
             continue
 
+        # Determine eval count within this class
         k_eval = max(1, int(round(len(selected_cls) * eval_ratio_within_subset)))
         k_eval = min(k_eval, len(selected_cls) - 1)
         eval_split_indices.extend(selected_cls[:k_eval])
@@ -149,6 +185,18 @@ def build_imagenet_loaders(
 
 # CRD loss (keep original)
 def contrastive_distill_loss(student_features_norm, labels, class_text_features_norm, logit_scale=None):
+    """
+    Computes the contrastive distillation loss (cross-entropy in CLIP space).
+
+    Args:
+        student_features_norm (torch.Tensor): Normalized student features [B, D].
+        labels (torch.Tensor): Ground-truth class labels [B].
+        class_text_features_norm (torch.Tensor): Normalized CLIP text features [C, D].
+        logit_scale (torch.nn.Parameter, optional): Optional logit scaling parameter.
+
+    Returns:
+        loss (torch.Tensor): Cross-entropy loss value.
+    """
     # student_features_norm: [B, D], normalized
     # class_text_features_norm: [C, D], normalized
     logits = student_features_norm @ class_text_features_norm.t()  # [B, C]
@@ -158,6 +206,18 @@ def contrastive_distill_loss(student_features_norm, labels, class_text_features_
     return ce(logits, labels)
 
 def run_distillation():
+    """
+    Main function to run the contrastive distillation training loop.
+
+    Loads teacher and student models, prepares datasets and zero-shot weights,
+    trains the student with CRD and MSE losses, evaluates periodically, and saves checkpoints.
+
+    Args:
+        None (uses global config and command-line arguments).
+
+    Returns:
+        None
+    """
     print(f"Using device: {DEVICE}")
 
     # --- Setup Models ---
@@ -167,6 +227,7 @@ def run_distillation():
     for p in teacher.parameters():
         p.requires_grad = False
 
+    # --- Student model (ResNet-50) ---
     print("Loading student model (ResNet-50)...")
     backbone = timm.create_model('resnet50', pretrained=True, num_classes=0).to(DEVICE)
     teacher_feature_dim = teacher.visual.output_dim
@@ -210,6 +271,7 @@ def run_distillation():
         text_features_train = imagenet_zs_weights_train.t().contiguous()
         text_features_train = text_features_train / text_features_train.norm(dim=-1, keepdim=True)
 
+        # Full val zero-shot weights
         print("Building ImageNet zero-shot weights for full val loader...")
         imagenet_class_names_val = imagenet_aligned_classnames(base_val, "imagenet_class_index.json")
         imagenet_zs_weights_val = zeroshot_classifier(
@@ -378,7 +440,7 @@ def run_distillation():
         total_time = time.time() - total_start_time
         print(f"Total training time: {total_time/60:.2f} minutes ({total_time/3600:.2f} hours)")
         plot_and_save_losses(train_losses, val_accuracies, __file__)
-
+ 
     except FileNotFoundError as e:
         print(f"Error: Dataset directory not found. Please check your paths.")
         print(e)

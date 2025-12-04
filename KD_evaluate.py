@@ -37,6 +37,15 @@ IMAGENET_INDEX_FILENAME = "imagenet_class_index.json"
 IMAGENET_INDEX_URL = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_class_index.json"
 
 def resolve_imagenet_index():
+    """
+    Resolves the path to the ImageNet class index JSON file.
+
+    Args:
+        None (uses environment variable and known locations).
+
+    Returns:
+        Path to the imagenet_class_index.json file if found or downloaded, else None.
+    """
     env_override = os.environ.get("IMAGENET_INDEX_PATH")
     candidates = [
         env_override,
@@ -61,6 +70,20 @@ def resolve_imagenet_index():
     return None  # signal fallback
 
 def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
+    """
+    Evaluates zero-shot classification accuracy using a student backbone and projector.
+
+    Args:
+        backbone (nn.Module): Student model backbone.
+        projector (nn.Module): Linear projector mapping student features to teacher space.
+        loader (DataLoader): DataLoader for evaluation images.
+        zs_weights (torch.Tensor): Zero-shot classifier weights.
+        device (str): Device to run evaluation on.
+
+    Returns:
+        top1 (float): Top-1 accuracy in percentage.
+        top5 (float): Top-5 accuracy in percentage.
+    """
     backbone.eval()
     projector.eval()
     zs_weights = zs_weights.to(device=device, dtype=torch.float32)
@@ -81,9 +104,30 @@ def evaluate_zero_shot(backbone, projector, loader, zs_weights, device=DEVICE):
     return top1, top5
 
 def filter_state_dict(state_dict):
+    """
+    Filters out unwanted keys from a state_dict (e.g., profiling keys).
+
+    Args:
+        state_dict (dict): Model state dictionary.
+
+    Returns:
+        dict: Filtered state dictionary.
+    """
     return {k: v for k, v in state_dict.items() if 'total_ops' not in k and 'total_params' not in k}
 
 def main():
+    """
+    Main entry point for zero-shot evaluation.
+
+    Parses command-line arguments, loads models and data, builds zero-shot classifier,
+    loads checkpoints, and runs evaluation.
+
+    Args:
+        None (arguments parsed from command line).
+
+    Returns:
+        None (prints results to stdout).
+    """
     parser = argparse.ArgumentParser(description="Final-feature zero-shot evaluation (CLIP->ResNet student).")
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--dataset', type=str, choices=['imagenet', 'oxfordpet'], default='imagenet')
