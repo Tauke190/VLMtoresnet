@@ -122,11 +122,6 @@ def main():
     Parses command-line arguments, loads models and data, builds zero-shot classifier,
     loads checkpoints, and runs evaluation.
 
-    Args:
-        None (arguments parsed from command line).
-
-    Returns:
-        None (prints results to stdout).
     """
     parser = argparse.ArgumentParser(description="Final-feature zero-shot evaluation (CLIP->ResNet student).")
     parser.add_argument('--checkpoint', type=str, required=True)
