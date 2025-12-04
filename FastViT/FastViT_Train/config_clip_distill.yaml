@@ -1,0 +1,29 @@
+# Model
+model: "fastvit_sa36"
+pretrained: true
+num_classes: 1000
+
+# Data
+dataset: ""
+input_size: [3, 224, 224] # CLIP L/14 resolution
+
+
+# Training
+epochs: 30
+cooldown_epochs: 0  
+batch_size: 384
+opt: "adamw"
+lr: 0.002
+warmup_lr: 1e-3
+
+
+# System
+workers: 8
+amp: true
+native_amp: true
+
+# Logging
+log_interval: 100
+checkpoint_hist: 5
+
+
