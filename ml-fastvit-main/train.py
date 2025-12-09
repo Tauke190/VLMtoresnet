@@ -848,6 +848,13 @@ parser.add_argument(
     help="Weight for CLIP feature alignment loss (default: 0.0 = disabled).",
 )
 
+parser.add_argument(
+    "--freeze-backbone",
+    action="store_true",
+    default=False,
+    help="Freeze backbone and train only the projector.",
+)
+
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -1037,6 +1044,12 @@ def main():
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
 
+    if args.freeze_backbone:
+        for param in model.parameters():
+            param.requires_grad = False
+        if args.local_rank == 0:
+            print("[INFO] Backbone frozen. Only projector will be trained.")
+
     # setup synchronized BatchNorm for distributed training
     if args.distributed and args.sync_bn:
         assert not args.split_bn
@@ -1056,10 +1069,16 @@ def main():
         assert not args.sync_bn, "Cannot use SyncBatchNorm with torchscripted model"
         model = torch.jit.script(model)
 
-    optimizer = create_optimizer_v2(
-        list(model.parameters()) + list(projector.parameters()),
-        **optimizer_kwargs(cfg=args),
-    )
+    if args.freeze_backbone:
+        optimizer = create_optimizer_v2(
+            projector.parameters(),
+            **optimizer_kwargs(cfg=args),
+        )
+    else:
+        optimizer = create_optimizer_v2(
+            list(model.parameters()) + list(projector.parameters()),
+            **optimizer_kwargs(cfg=args),
+        )
     # setup automatic mixed-precision (AMP) loss scaling and op casting
     amp_autocast = suppress  # do nothing
     loss_scaler = None

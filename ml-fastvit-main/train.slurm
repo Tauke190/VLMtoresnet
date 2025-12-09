@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fastvit
+#SBATCH --job-name=fastvit_frozen
 #SBATCH --output=fastvit%j.out
 #SBATCH --error=fastvit%j.err
 #SBATCH --cpus-per-task=2
@@ -58,7 +58,8 @@ python -m torch.distributed.launch --nproc_per_node=2 train.py \
     --drop-path 0.35 \
     --experiment CLIPtoResNet \
     --workers 4 \
-    --epochs 50
+    --epochs 50 \
+    --freeze-backbone
 
 
 # Optional cleanup
