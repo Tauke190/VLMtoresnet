@@ -32,6 +32,7 @@ cd /home/av354855/fastvit
 # Run unbuffered
 # python -u train.py \
 #     /home/c3-0/datasets/ImageNet \
+#     --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b \
 #     --model fastvit_sa36 \
 #     --initial-checkpoint fastvit_sa36.pth.tar \
 #     -b 128 \

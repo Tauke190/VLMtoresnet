@@ -893,6 +893,13 @@ def build_imagenet_clip_text_features(clip_model, device):
     with open(templates_path, "r") as f:
         templates = [line.strip() for line in f if line.strip()]
 
+    # Print some example prompts for the first few classes
+    print("\n[DEBUG] Example text prompts for ImageNet classes:")
+    for class_name in class_names[:3]:  # Show for first 3 classes
+        for template in templates:
+            print("  ", template.format(class_name))
+        print("---")
+
     all_class_embeds = []
     clip_model.eval()
     with torch.no_grad():
@@ -933,7 +940,7 @@ def build_aircraft_clip_text_features(clip_model, class_names, device, template_
             all_text_features.append(class_feature)
         all_text_features = torch.stack(all_text_features, dim=0)
     return all_text_features  # [num_classes, dim]
-
+    
 def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4, batch_size=64):
     """
     Create CLIP model, Aircraft dataloader, and pre-computed text features
@@ -949,7 +956,7 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
     # NOTE: This assumes aircraft_dataloader.Aircraft has the usual Dataset API:
     #   dataset = Aircraft(root=..., split="test", transform=preprocess)
     #   dataset[i] -> (PIL image, label), dataset.classes -> list of class names
-    dataset = aircraft_dataloader.Aircraft(
+    dataset = aircraft_dataloader.aircraft(
         root=aircraft_root,
         split="test",
         transform=preprocess,
