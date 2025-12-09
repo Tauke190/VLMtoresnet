@@ -16,12 +16,11 @@ with torch.no_grad():
         feats = model(x)
     if isinstance(feats, (tuple, list)):
         feats = feats[0]
-    feats = feats.view(feats.size(0), -1)
-print("FastViT feat dim:", feats.shape[-1])
+    print("FastViT final feature map shape:", feats.shape)
 
 # CLIP
 clip_model, _ = clip.load("ViT-L/14", device=device, jit=False)
 with torch.no_grad():
     tokens = clip.tokenize(["a dog"]).to(device)
     txt = clip_model.encode_text(tokens)
-print("CLIP text dim:", txt.shape[-1])
+    print("CLIP text feature shape:", txt.shape)
