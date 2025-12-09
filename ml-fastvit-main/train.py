@@ -30,8 +30,8 @@ from contextlib import suppress
 from datetime import datetime
 from misc import ClipLoss
 import clip 
-import CLIP.dataloaders.aircraft as aircraft_dataloader
 
+from CLIP.dataloaders import aircraft as aircraft_dataloader
 import torch
 import torch.nn as nn
 import torchvision.utils
