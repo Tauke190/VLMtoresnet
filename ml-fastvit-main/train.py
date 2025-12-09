@@ -992,6 +992,26 @@ def main():
 
     # move model to GPU, enable channels last layout if set
     model.cuda()
+
+
+    #-----------------------------------------------------------
+    with torch.no_grad():
+        dummy = torch.randn(2, *data_config["input_size"], device=args.device)
+        if hasattr(model, "forward_features"):
+            feat = model.forward_features(dummy)
+        else:
+            feat = model(dummy)
+        if isinstance(feat, (tuple, list)):
+            feat = feat[0]
+        feat = feat.view(feat.size(0), -1)
+        fastvit_dim = feat.shape[-1]
+
+
+    clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
+    projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
+
+    #-----------------------------------------------------------
+
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
 
@@ -1014,8 +1034,10 @@ def main():
         assert not args.sync_bn, "Cannot use SyncBatchNorm with torchscripted model"
         model = torch.jit.script(model)
 
-    optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
-
+    optimizer = create_optimizer_v2(
+        list(model.parameters()) + list(projector.parameters()),
+        **optimizer_kwargs(cfg=args),
+    )
     # setup automatic mixed-precision (AMP) loss scaling and op casting
     amp_autocast = suppress  # do nothing
     loss_scaler = None
@@ -1288,7 +1310,9 @@ def main():
         for p in clip_model.parameters():
             p.requires_grad = False
         clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
-        # use CLIP's own logit scale (fixed)
+        
+        if args.local_rank == 0:
+            print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
         clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
 
         clip_loss_fn = ClipLoss(
@@ -1357,6 +1381,7 @@ def main():
                 model_ema=model_ema,
                 mixup_fn=mixup_fn,
                 wd_scheduler=wd_scheduler,
+                projector=projector,
                 clip_text_features=clip_text_features,
                 clip_logit_scale=clip_logit_scale,
                 clip_loss_fn=clip_loss_fn, # Clip loss funciton
@@ -1426,6 +1451,7 @@ def train_one_epoch(
     model_ema=None,
     mixup_fn=None,
     wd_scheduler=None,
+    projector=None,
     clip_text_features=None,
     clip_logit_scale=None,
     clip_loss_fn=None,
@@ -1481,8 +1507,8 @@ def train_one_epoch(
                 feats = output
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
-
             feats = feats.view(feats.size(0), -1)
+            feats = projector(feats)          # <--- apply projector
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
 
             batch_text_feats = clip_text_features[target]
@@ -1493,6 +1519,9 @@ def train_one_epoch(
             clip_loss = clip_loss_fn(
                 feats, batch_text_feats, clip_logit_scale
             )
+
+            if args.local_rank == 0:
+                print(f"[DEBUG] CLIP loss applied at batch {batch_idx}, loss value: {clip_loss.item():.4f}")
 
             total_loss = base_loss + args.clip_loss_weight * clip_loss
         loss = total_loss
