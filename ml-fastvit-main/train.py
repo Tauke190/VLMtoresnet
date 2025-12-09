@@ -993,7 +993,7 @@ def main():
     # move model to GPU, enable channels last layout if set
     model.cuda()
 
-
+    # Added by avinash Gyawali
     #-----------------------------------------------------------
     with torch.no_grad():
         dummy = torch.randn(2, *data_config["input_size"], device=args.device)
@@ -1006,9 +1006,31 @@ def main():
         feat = feat.view(feat.size(0), -1)
         fastvit_dim = feat.shape[-1]
 
+    clip_text_features = None
+    clip_loss_fn = None
+    clip_logit_scale = None
+    projector = None  # <-- initialize projector as None
 
-    clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
-    projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
+    if args.clip_loss_weight > 0.0:
+        clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
+        for p in clip_model.parameters():
+            p.requires_grad = False
+        clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
+        
+        if args.local_rank == 0:
+            print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
+        clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
+
+        clip_loss_fn = ClipLoss(
+            local_loss=False,
+            gather_with_grad=False,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+        )
+
+        clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
+        projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
 
     #-----------------------------------------------------------
 
@@ -1305,6 +1327,8 @@ def main():
     clip_text_features = None
     clip_loss_fn = None
     clip_logit_scale = None
+    projector = None  # <-- initialize projector as None
+
     if args.clip_loss_weight > 0.0:
         clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
         for p in clip_model.parameters():
@@ -1322,6 +1346,9 @@ def main():
             rank=args.rank,
             world_size=args.world_size,
         )
+
+        clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
+        projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
 
     # -----------------------------------------------------------------
 
