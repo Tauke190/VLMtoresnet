@@ -1357,6 +1357,9 @@ def main():
                 model_ema=model_ema,
                 mixup_fn=mixup_fn,
                 wd_scheduler=wd_scheduler,
+                clip_text_features=clip_text_features,
+                clip_logit_scale=clip_logit_scale,
+                clip_loss_fn=clip_loss_fn, # Clip loss funciton
             )
 
             if args.distributed and args.dist_bn in ("broadcast", "reduce"):
@@ -1423,6 +1426,9 @@ def train_one_epoch(
     model_ema=None,
     mixup_fn=None,
     wd_scheduler=None,
+    clip_text_features=None,
+    clip_logit_scale=None,
+    clip_loss_fn=None,
 ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -1453,11 +1459,46 @@ def train_one_epoch(
 
         with amp_autocast():
             output = model(input)
-            loss = loss_fn(input, output, target)
+            base_loss = loss_fn(input, output, target)
 
+            total_loss = base_loss
+
+        #-------------Added by avinash gyawali-------------------------#
+        # --- CLIP feature alignment loss ---
+        if (
+            args.clip_loss_weight > 0.0
+            and clip_loss_fn is not None
+            and clip_text_features is not None
+            and clip_logit_scale is not None
+            and isinstance(target, torch.Tensor)
+            and target.dtype == torch.long
+            and target.ndim == 1  # skip when mixup makes targets soft
+        ):
+            # get backbone features if available, else fall back to output
+            if hasattr(model, "forward_features"):
+                feats = model.forward_features(input)
+            else:
+                feats = output
+            if isinstance(feats, (tuple, list)):
+                feats = feats[0]
+
+            feats = feats.view(feats.size(0), -1)
+            feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
+
+            batch_text_feats = clip_text_features[target]
+            batch_text_feats = batch_text_feats / (
+                batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6
+            )
+
+            clip_loss = clip_loss_fn(
+                feats, batch_text_feats, clip_logit_scale
+            )
+
+            total_loss = base_loss + args.clip_loss_weight * clip_loss
+        loss = total_loss
+        #--------------------------------------------------#
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
-
         optimizer.zero_grad()
         if loss_scaler is not None:
             loss_scaler(
