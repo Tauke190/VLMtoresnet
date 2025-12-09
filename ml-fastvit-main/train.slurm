@@ -48,6 +48,7 @@ cd /home/av354855/fastvit
 python -m torch.distributed.launch --nproc_per_node=2 train.py \
     /home/c3-0/datasets/ImageNet \
     --model fastvit_sa36 \
+    --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b \
     --initial-checkpoint fastvit_sa36.pth.tar \
     -b 128 \
     --lr 1e-3 \

@@ -30,6 +30,7 @@ from contextlib import suppress
 from datetime import datetime
 from misc import ClipLoss
 import clip 
+import CLIP.dataloaders.aircraft as aircraft_dataloader
 
 import torch
 import torch.nn as nn
@@ -138,6 +139,13 @@ parser.add_argument(
     type=str,
     metavar="FILENAME",
     help='path to class to idx mapping file (default: "")',
+)
+parser.add_argument(
+    "--aircraft-data-dir",
+    default="",
+    type=str,
+    metavar="DIR",
+    help="Path to FGVC Aircraft dataset root for zero-shot evaluation (default: disabled).",
 )
 
 # Model parameters
@@ -899,6 +907,110 @@ def build_imagenet_clip_text_features(clip_model, device):
 
     return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
 
+def build_aircraft_clip_text_features(clip_model, class_names, device, template_file):
+    """Build CLIP text features for Aircraft class names using multiple prompt templates."""
+    # Load templates from file
+    with open(template_file, "r") as f:
+        templates = [line.strip() for line in f if line.strip()]
+
+    # Print some example prompts for the first few classes
+    print("\n[DEBUG] Example text prompts for aircraft classes:")
+    for class_name in class_names[:3]:  # Show for first 3 classes
+        for template in templates:
+            print("  ", template.format(class_name))
+        print("---")
+
+    all_text_features = []
+    with torch.no_grad():
+        for class_name in class_names:
+            texts = [template.format(class_name) for template in templates]
+            text_tokens = torch.cat([clip.tokenize(t) for t in texts]).to(device)
+            text_features = clip_model.encode_text(text_tokens)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            # Average features for this class over all templates
+            class_feature = text_features.mean(dim=0)
+            class_feature = class_feature / class_feature.norm()
+            all_text_features.append(class_feature)
+        all_text_features = torch.stack(all_text_features, dim=0)
+    return all_text_features  # [num_classes, dim]
+
+def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4, batch_size=64):
+    """
+    Create CLIP model, Aircraft dataloader, and pre-computed text features
+    for zero-shot evaluation.
+    """
+    if not aircraft_root or not os.path.isdir(aircraft_root):
+        raise ValueError(f"Invalid aircraft_data_dir: {aircraft_root}")
+
+    # Load CLIP model just for zero-shot eval (change architecture if you like)
+    clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
+    clip_model.eval()
+
+    # NOTE: This assumes aircraft_dataloader.Aircraft has the usual Dataset API:
+    #   dataset = Aircraft(root=..., split="test", transform=preprocess)
+    #   dataset[i] -> (PIL image, label), dataset.classes -> list of class names
+    dataset = aircraft_dataloader.Aircraft(
+        root=aircraft_root,
+        split="test",
+        transform=preprocess,
+    )
+    class_names = dataset.classes
+    text_features = build_aircraft_clip_text_features(
+        clip_model, class_names, device=device, template_file=template_file
+    )
+
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+
+    return {
+        "model": clip_model,
+        "loader": loader,
+        "text_features": text_features,  # [num_classes, dim]
+        "class_names": class_names,
+    }
+
+
+def evaluate_aircraft_zeroshot(aircraft_ctx, device):
+    """
+    Run zero-shot CLIP evaluation on the Aircraft test split.
+    Returns top-1 accuracy in %.
+    """
+    model = aircraft_ctx["model"]
+    loader = aircraft_ctx["loader"]
+    text_features = aircraft_ctx["text_features"]  # [C, D]
+
+    correct_top1 = 0
+    total = 0
+
+    model.eval()
+    with torch.no_grad():
+        for images, targets in loader:
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+
+            image_features = model.encode_image(images)
+            image_features = image_features / image_features.norm(
+                dim=-1, keepdim=True
+            )
+
+            # [B, C]
+            logits = 100.0 * image_features @ text_features.T
+            preds_top1 = logits.argmax(dim=-1)
+
+            correct_top1 += (preds_top1 == targets).sum().item()
+            total += targets.size(0)
+
+    acc1 = 100.0 * correct_top1 / max(total, 1)
+    return acc1
+
+
+#--------------------------------------------------------------------------------------------------------------
+
 
 def main():
     setup_default_logging()
@@ -1330,6 +1442,43 @@ def main():
     train_loss_fn = train_loss_fn.cuda()
     validate_loss_fn = nn.CrossEntropyLoss().cuda()
 
+
+    # -----------------------------------------------------------------
+    # Aircraft zero-shot evaluation setup (CLIP-based)
+    aircraft_zeroshot = None
+    if args.aircraft_data_dir and args.rank == 0:
+        template_file = os.path.join(
+            "CLIP", "dataloaders", "templates", "fgvc_aircraft.txt"
+        )
+        try:
+            aircraft_zeroshot = setup_aircraft_zeroshot(
+                args.aircraft_data_dir,
+                device=args.device,
+                template_file=template_file,
+                num_workers=args.workers,
+                batch_size=args.validation_batch_size or args.batch_size,
+            )
+            _logger.info(
+                f"Initialized Aircraft zero-shot evaluation with "
+                f"{len(aircraft_zeroshot['class_names'])} classes."
+            )
+
+            # --- Run zero-shot validation before training ---
+            aircraft_acc1 = evaluate_aircraft_zeroshot(
+                aircraft_zeroshot, device=args.device
+            )
+            _logger.info(
+                f"Aircraft zero-shot Acc@1 before training: {aircraft_acc1:.2f}%"
+            )
+            if args.log_wandb and has_wandb:
+                wandb.log(
+                    {"aircraft_zeroshot/top1_before_train": aircraft_acc1, "epoch": -1}
+                )
+        except Exception as e:
+            _logger.error(f"Failed to initialize Aircraft zero-shot evaluation: {e}")
+            aircraft_zeroshot = None
+    # -----------------------------------------------------------------
+
     # use distill loss wrapper, which returns base loss when distillation is disabled
     train_loss_fn = DistillationLoss(
         train_loss_fn,
@@ -1454,6 +1603,21 @@ def main():
                     log_suffix=" (EMA)",
                 )
                 eval_metrics = ema_eval_metrics
+
+
+            # ---------------- Aircraft zero-shot evaluation ----------------
+            if aircraft_zeroshot is not None and args.rank == 0:
+                aircraft_acc1 = evaluate_aircraft_zeroshot(
+                    aircraft_zeroshot, device=args.device
+                )
+                _logger.info(
+                    f"Aircraft zero-shot Acc@1 after epoch {epoch}: {aircraft_acc1:.2f}%"
+                )
+                if args.log_wandb and has_wandb:
+                    wandb.log(
+                        {"aircraft_zeroshot/top1": aircraft_acc1, "epoch": epoch}
+                    )
+            # ----------------------------------------------------------------
 
             if lr_scheduler is not None:
                 # step LR for next epoch

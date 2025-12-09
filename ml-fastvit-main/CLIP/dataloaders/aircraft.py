@@ -84,3 +84,7 @@ class aircraft(VisionDataset):
         target = self.y[index]
         img = self.transform(Image.open(self.images[index]))
         return img, target
+
+    @property
+    def classes(self):
+        return self.categories
