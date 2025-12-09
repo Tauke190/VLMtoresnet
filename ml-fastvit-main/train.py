@@ -28,7 +28,7 @@ import logging
 from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
-from misc import CLIPLoss
+from misc import ClipLoss
 
 import torch
 import torch.nn as nn
