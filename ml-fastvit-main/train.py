@@ -1555,7 +1555,10 @@ def train_one_epoch(
 
             total_loss = base_loss + args.clip_loss_weight * clip_loss
         loss = total_loss
-        #--------------------------------------------------#
+
+
+
+        #-------------------------------------------------------------------------#
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
@@ -1593,14 +1596,14 @@ def train_one_epoch(
             wd0 = param_groups[0]["weight_decay"]
             wd1 = param_groups[1]["weight_decay"] if len(param_groups) > 1 else wd0
 
-            if args.distributed:
-                reduced_loss = reduce_tensor(loss.data, args.world_size)
-                losses_m.update(reduced_loss.item(), input.size(0))
+            # --- Add CLIP loss to log ---
+            clip_loss_val = clip_loss.item() if 'clip_loss' in locals() else 0.0
 
             if args.local_rank == 0:
                 _logger.info(
                     "Train: {} [{:>4d}/{} ({:>3.0f}%)]  "
                     "Loss: {loss.val:#.4g} ({loss.avg:#.3g})  "
+                    "CLIP Loss: {clip_loss:.4f}  "
                     "Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  "
                     "({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  "
                     "LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}    "
@@ -1610,6 +1613,7 @@ def train_one_epoch(
                         len(loader),
                         100.0 * batch_idx / last_idx,
                         loss=losses_m,
+                        clip_loss=clip_loss_val,
                         batch_time=batch_time_m,
                         rate=input.size(0) * args.world_size / batch_time_m.val,
                         rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
