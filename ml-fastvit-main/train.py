@@ -883,6 +883,10 @@ def _parse_args():
 # Added by avinash gyawali
 #----------------------------------------------------------------
 
+
+import random
+# ...existing code...
+
 def build_imagenet_clip_text_features(clip_model, device):
     base_dir = os.path.dirname(__file__)
     classes_path = os.path.join(base_dir, "imagenet_classes.txt")
@@ -893,12 +897,16 @@ def build_imagenet_clip_text_features(clip_model, device):
     with open(templates_path, "r") as f:
         templates = [line.strip() for line in f if line.strip()]
 
-    # Print some example prompts for the first few classes
+    # Sample 5-6 random prompts from all combinations
+    prompt_combinations = [
+        template.format(class_name)
+        for class_name in class_names
+        for template in templates
+    ]
+    sampled_prompts = random.sample(prompt_combinations, k=6)
     print("\n[DEBUG] Example text prompts for ImageNet classes:")
-    for class_name in class_names[:3]:  # Show for first 3 classes
-        for template in templates:
-            print("  ", template.format(class_name))
-        print("---")
+    for prompt in sampled_prompts:
+        print("  ", prompt)
 
     all_class_embeds = []
     clip_model.eval()
