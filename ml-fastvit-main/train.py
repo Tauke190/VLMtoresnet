@@ -1507,7 +1507,10 @@ def train_one_epoch(
                 feats = output
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
-            feats = feats.view(feats.size(0), -1)
+            # --- Add this block for FastViT feature map ---
+            if feats.ndim == 4 and feats.shape[2] > 1 and feats.shape[3] > 1:
+                feats = feats.mean(dim=[2, 3])  # Global average pooling
+            # ----------------------------------------------
             feats = projector(feats)          # <--- apply projector
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
 
