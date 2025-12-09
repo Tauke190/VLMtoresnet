@@ -1589,8 +1589,9 @@ def train_one_epoch(
         if last_batch or batch_idx % args.log_interval == 0:
             lrl = [param_group["lr"] for param_group in optimizer.param_groups]
             lr = sum(lrl) / len(lrl)
-            wd0 = list(optimizer.param_groups)[0]["weight_decay"]
-            wd1 = list(optimizer.param_groups)[1]["weight_decay"]
+            param_groups = list(optimizer.param_groups)
+            wd0 = param_groups[0]["weight_decay"]
+            wd1 = param_groups[1]["weight_decay"] if len(param_groups) > 1 else wd0
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data, args.world_size)
