@@ -2,12 +2,10 @@
 #SBATCH --job-name=fastvit
 #SBATCH --output=fastvit%j.out
 #SBATCH --error=fastvit%j.err
-#SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --constraint=gmem48
-#SBATCH --gres=gpu:ampere:1
+#SBATCH --gres=gpu:ampere:2
 #SBATCH --mem=48G
-#SBATCH --time=100:00:00
 
 # Load necessary modules
 module load anaconda3
