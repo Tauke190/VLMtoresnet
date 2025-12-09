@@ -29,6 +29,7 @@ from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 from misc import ClipLoss
+import clip 
 
 import torch
 import torch.nn as nn
@@ -840,6 +841,13 @@ parser.add_argument(
     help="Size of imagenet training set for weight decay scheduling.",
 )
 
+parser.add_argument(
+    "--clip-loss-weight",
+    type=float,
+    default=1.0,
+    help="Weight for CLIP feature alignment loss (default: 0.0 = disabled).",
+)
+
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -856,6 +864,33 @@ def _parse_args():
     # Cache the args as a text string to save them in the output dir later
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     return args, args_text
+
+# Added by avinash gyawali
+#----------------------------------------------------------------
+
+def build_imagenet_clip_text_features(clip_model, device):
+    base_dir = os.path.dirname(__file__)
+    classes_path = os.path.join(base_dir, "imagenet_classes.txt")
+    templates_path = os.path.join(base_dir, "imagenet_templates.txt")
+
+    with open(classes_path, "r") as f:
+        class_names = [line.strip() for line in f if line.strip()]
+    with open(templates_path, "r") as f:
+        templates = [line.strip() for line in f if line.strip()]
+
+    all_class_embeds = []
+    clip_model.eval()
+    with torch.no_grad():
+        for cls in class_names:
+            texts = [t.format(cls) for t in templates]
+            text_tokens = clip.tokenize(texts).to(device)
+            class_feats = clip_model.encode_text(text_tokens)
+            class_feats = class_feats / class_feats.norm(dim=-1, keepdim=True)
+            class_feat = class_feats.mean(dim=0)
+            class_feat = class_feat / class_feat.norm()
+            all_class_embeds.append(class_feat)
+
+    return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
 
 
 def main():
@@ -1240,6 +1275,32 @@ def main():
         args.distillation_alpha,
         args.distillation_tau,
     )
+
+
+    # Added by avinash Gyawali
+    # ------------- CLIP text embeddings & loss (VIT-L/14) ---------------
+    
+    clip_text_features = None
+    clip_loss_fn = None
+    clip_logit_scale = None
+    if args.clip_loss_weight > 0.0:
+        clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
+        for p in clip_model.parameters():
+            p.requires_grad = False
+        clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
+        # use CLIP's own logit scale (fixed)
+        clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
+
+        clip_loss_fn = ClipLoss(
+            local_loss=False,
+            gather_with_grad=False,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+        )
+
+    # -----------------------------------------------------------------
+
 
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
