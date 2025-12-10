@@ -964,7 +964,7 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
 
     dataset = aircraft_dataloader(
         root=aircraft_root,
-        split="test",
+        train=False,
         transform=preprocess,
     )
     class_names = dataset.classes
