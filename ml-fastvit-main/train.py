@@ -971,7 +971,7 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
     clip_model.eval()
 
     # NOTE: use the `aircraft` class from the module
-    dataset = aircraft_dataloader.aircraft(
+    dataset = aircraft_dataloader(
         root=aircraft_root,
         train=False,
         transform=preprocess,
