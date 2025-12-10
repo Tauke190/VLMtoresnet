@@ -871,7 +871,6 @@ parser.add_argument(
     help="Freeze backbone and train only the projector.",
 )
 
-
 def _parse_args():
     # Do we have a config file to parse?
     args_config, remaining = config_parser.parse_known_args()
@@ -1063,6 +1062,7 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
     acc5 = 100.0 * correct_top5 / max(total, 1)
     return acc1, acc5
 
+
 def run_aircraft_zeroshot_eval(
     aircraft_ctx,
     args,
@@ -1078,7 +1078,7 @@ def run_aircraft_zeroshot_eval(
     `when` in {"before_train", "epoch", "batch"} controls log/W&B key names.
     """
     if aircraft_ctx is None or projector is None or args.rank != 0:
-        return
+        return None, None
 
     acc1, acc5 = evaluate_aircraft_zeroshot(
         aircraft_ctx, model=model, projector=projector, device=args.device
@@ -1118,7 +1118,10 @@ def run_aircraft_zeroshot_eval(
                 log_dict["batch"] = batch_idx
 
         wandb.log(log_dict)
-#--------------------------------------------------------------------------------------------------------------
+
+    return acc1, acc5
+
+
 
 def main():
     setup_default_logging()
@@ -1263,6 +1266,30 @@ def main():
 
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
+
+    # Save the projector before training (only on main process)
+    if projector is not None and args.rank == 0:
+        if args.experiment:
+            exp_name = args.experiment
+        else:
+            exp_name = "-".join(
+                [
+                    datetime.now().strftime("%Y%m%d-%H%M%S"),
+                    safe_model_name(args.model),
+                    str(data_config["input_size"][-1]),
+                ]
+            )
+        output_dir = get_outdir(
+            args.output if args.output else "./output/train", exp_name
+        )
+        os.makedirs(output_dir, exist_ok=True)
+        projector_ckpt = {
+            "epoch": 0,
+            "state_dict": projector.state_dict(),
+        }
+        proj_path = os.path.join(output_dir, "projector_init.pth.tar")
+        torch.save(projector_ckpt, proj_path)
+        _logger.info(f"Saved initial projector to {proj_path}")
 
     if args.freeze_backbone:
         for param in model.parameters():
@@ -1625,6 +1652,10 @@ def main():
         with open(os.path.join(output_dir, "args.yaml"), "w") as f:
             f.write(args_text)
 
+    # ---- Track best Aircraft zero-shot Acc@1 ----
+    best_aircraft_acc1 = None
+    best_aircraft_epoch = None
+
     try:
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
@@ -1678,7 +1709,7 @@ def main():
 
             # ---------------- Aircraft zero-shot evaluation after epochs ----------------
             if aircraft_zeroshot is not None and args.rank == 0:
-                run_aircraft_zeroshot_eval(
+                acc1_air, acc5_air = run_aircraft_zeroshot_eval(
                     aircraft_zeroshot,
                     args,
                     model,
@@ -1686,6 +1717,50 @@ def main():
                     when="epoch",
                     epoch=epoch,
                 )
+
+                # Save best backbone + projector based on Aircraft Acc@1
+                if acc1_air is not None:
+                    if best_aircraft_acc1 is None or acc1_air > best_aircraft_acc1:
+                        best_aircraft_acc1 = acc1_air
+                        best_aircraft_epoch = epoch
+
+                        if output_dir is not None:
+                            # unwrap DDP if needed
+                            backbone = model
+                            if hasattr(model, "module"):
+                                backbone = model.module
+
+                            # Save backbone
+                            model_path = os.path.join(
+                                output_dir, "model_best_aircraft.pth.tar"
+                            )
+                            torch.save(
+                                {
+                                    "epoch": epoch,
+                                    "aircraft_acc1": acc1_air,
+                                    "state_dict": backbone.state_dict(),
+                                },
+                                model_path,
+                            )
+
+                            # Save projector
+                            if projector is not None:
+                                proj_path = os.path.join(
+                                    output_dir, "projector_best_aircraft.pth.tar"
+                                )
+                                torch.save(
+                                    {
+                                        "epoch": epoch,
+                                        "aircraft_acc1": acc1_air,
+                                        "state_dict": projector.state_dict(),
+                                    },
+                                    proj_path,
+                                )
+
+                            _logger.info(
+                                f"Saved Aircraft-best model & projector at epoch {epoch} "
+                                f"(Acc@1={acc1_air:.2f}%)"
+                            )
             # ----------------------------------------------------------------
 
             if lr_scheduler is not None:
@@ -1703,12 +1778,33 @@ def main():
                 )
 
             if saver is not None:
-                # save proper checkpoint with eval metric
+                # save proper checkpoint with main eval metric (e.g. ImageNet top1)
                 save_metric = eval_metrics[eval_metric]
-                extra_state = {"projector": projector.state_dict()} if projector is not None else {}
                 best_metric, best_epoch = saver.save_checkpoint(
-                    epoch, metric=save_metric, extra_state=extra_state
+                    epoch, metric=save_metric
                 )
+
+                # ---- save BEST projector separately ----
+                # Only when this epoch becomes the new best
+                if (
+                    projector is not None
+                    and output_dir is not None
+                    and args.rank == 0
+                    and best_epoch == epoch
+                ):
+                    best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "metric": best_metric,
+                            "state_dict": projector.state_dict(),
+                        },
+                        best_proj_path,
+                    )
+                    _logger.info(
+                        f"Saved best projector to {best_proj_path} "
+                        f"(metric={best_metric:.4f}, epoch={epoch})"
+                    )
 
     except KeyboardInterrupt:
         pass
