@@ -1774,7 +1774,6 @@ def train_one_epoch(
             and isinstance(target, torch.Tensor)
             and target.dtype == torch.long
         ):
-            print("[DEBUG] Computing CLIP loss")
 
             # get backbone features if available, else fall back to output
             if hasattr(model, "forward_features"):
