@@ -5,8 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import clip
 
-from timm.models import create_model, safe_model_name
+from timm.models import create_model, safe_model_name, load_checkpoint
 from CLIP.dataloaders import aircraft as aircraft_dataloader
+import models  # <-- IMPORTANT: register custom FastViT models
 
 
 def build_aircraft_clip_text_features(clip_model, class_names, device, template_file):
@@ -61,16 +62,17 @@ def setup_aircraft_loader(aircraft_root, device, template_file, num_workers=4, b
 
 
 def load_backbone(args, device):
+    # Build model EXACTLY like validate.py / train_baseline.py
     model = create_model(
         args.model,
         pretrained=False,
-        num_classes=args.num_classes,
-        global_pool=args.gp if args.gp is not None else "avg",
+        num_classes=args.num_classes,  # or None, if that’s how you trained
+        in_chans=3,
+        global_pool=args.gp,
     )
 
-    ckpt = torch.load(args.model_checkpoint, map_location="cpu")
-    state_dict = ckpt.get("state_dict", ckpt)
-    model.load_state_dict(state_dict, strict=True)
+    # Use timm's helper to load checkpoints (handles EMA, 'module.' prefixes, etc.)
+    load_checkpoint(model, args.model_checkpoint, use_ema=False)
 
     model.to(device)
     model.eval()
