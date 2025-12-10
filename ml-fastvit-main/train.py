@@ -967,7 +967,7 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
         raise ValueError(f"Invalid aircraft_data_dir: {aircraft_root}")
 
     # CLIP model only for TEXT encoding
-    clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
+    clip_model, preprocess = clip.load("ViT-L/14", device=device, jit=False)
     clip_model.eval()
 
     # NOTE: use the `aircraft` class from the module
