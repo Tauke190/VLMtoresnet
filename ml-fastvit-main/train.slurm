@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fastvit_frozen
+#SBATCH --job-name=fastvit_unfrozen
 #SBATCH --output=fastvit%j.out
 #SBATCH --error=fastvit%j.err
 #SBATCH --cpus-per-task=2
@@ -66,6 +66,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --workers 4 \
     --epochs 50 \
     --aircraft-eval-interval 1000 \
+    --freeze-backbone
 
 # Optional cleanup
 conda deactivate
