@@ -998,12 +998,18 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
         "text_features": text_features,  # [num_classes, dim]
         "class_names": class_names,
     }
-def evaluate_aircraft_zeroshot(aircraft_ctx, device):
+```python
+// filepath: c:\Users\avina\Desktop\VLMtoresnet\ml-fastvit-main\train.py
+def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
     """
-    Run zero-shot CLIP evaluation on the Aircraft test split.
+    Run Aircraft zero-shot evaluation using FastViT + projector
+    as image encoder and CLIP text features as class prototypes.
+
     Returns top-1 and top-5 accuracy in %.
     """
-    model = aircraft_ctx["model"]
+    if projector is None:
+        raise RuntimeError("Projector is None; cannot run Aircraft zero-shot eval.")
+
     loader = aircraft_ctx["loader"]
     text_features = aircraft_ctx["text_features"]  # [C, D]
 
@@ -1011,20 +1017,36 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, device):
     correct_top5 = 0
     total = 0
 
+    # handle DDP-wrapped models
+    backbone = model
+    if isinstance(model, (NativeDDP, ApexDDP)):
+        backbone = model.module
+
+    was_training = model.training
     model.eval()
+
     with torch.no_grad():
         for images, targets in loader:
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
-            # Pseudocode: use FastViT + projector instead of clip_model.encode_image
-            feats = model.forward_features(images)
-            if feats.ndim == 4:
-                feats = feats.mean(dim=[2, 3])
-            feats = projector(feats)
-            feats = feats / feats.norm(dim=-1, keepdim=True)      # [B, D]
+            # get backbone features
+            if hasattr(backbone, "forward_features"):
+                feats = backbone.forward_features(images)
+            else:
+                feats = backbone(images)
 
-            logits = 100.0 * feats @ text_features.T              # [B, num_classes]
+            if isinstance(feats, (tuple, list)):
+                feats = feats[0]
+            if feats.ndim == 4:
+                feats = feats.mean(dim=[2, 3])  # global average pool if spatial
+
+            feats = feats.float()
+            feats = projector(feats)
+            feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)  # [B, D]
+
+            # logits vs CLIP text features
+            logits = 100.0 * feats @ text_features.T  # [B, num_classes]
             preds_top1 = logits.argmax(dim=-1)
             _, preds_top5 = logits.topk(5, dim=-1)
 
@@ -1032,10 +1054,12 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, device):
             correct_top5 += sum([t in p for t, p in zip(targets, preds_top5)])
             total += targets.size(0)
 
+    if was_training:
+        model.train()
+
     acc1 = 100.0 * correct_top1 / max(total, 1)
     acc5 = 100.0 * correct_top5 / max(total, 1)
     return acc1, acc5
-
 
 def run_aircraft_zeroshot_eval(
     aircraft_ctx,
