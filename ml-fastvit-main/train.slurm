@@ -68,3 +68,11 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
 
 # Optional cleanup
 conda deactivate
+
+
+python zeroshot_eval.py \
+  --model fastvit_sa36 \
+  --model-checkpoint fastvit_sa36.pth.tar \
+  --projector-checkpoint checkpoints/CLIPtoResNet/projector_init.pth.tar \
+  --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
+  --batch-size 128
