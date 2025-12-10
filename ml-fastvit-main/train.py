@@ -1044,7 +1044,10 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
             feats = projector(feats)
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)  # [B, D]
 
-            # logits vs CLIP text features
+            # Ensure both are the same dtype
+            if feats.dtype != text_features.dtype:
+                text_features = text_features.to(feats.dtype)
+
             logits = 100.0 * feats @ text_features.T  # [B, num_classes]
             preds_top1 = logits.argmax(dim=-1)
             _, preds_top5 = logits.topk(5, dim=-1)
