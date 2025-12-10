@@ -21,7 +21,7 @@ echo "Running on node: $(hostname)"
 echo "GPU info:"
 nvidia-smi
 
-export CUDA_VISIBLE_DEVICES=2,3
+# export CUDA_VISIBLE_DEVICES=2,3
 echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
