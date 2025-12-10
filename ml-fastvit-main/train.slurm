@@ -42,6 +42,7 @@ cd /home/av354855/fastvit
 #     --output ./checkpoints \
 #     --input-size 3 256 256 \
 #     --drop-path 0.35 \
+#     --aircraft-eval-interval \
 #     --experiment CLIPtoResNet \
 #     --workers 4 \
 #     --epochs 50
@@ -61,8 +62,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train.py \
     --experiment CLIPtoResNet \
     --workers 4 \
     --epochs 50 \
-    --freeze-backbone
-
+    --aircraft-eval-interval \
 
 # Optional cleanup
 conda deactivate

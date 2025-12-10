@@ -311,7 +311,6 @@ parser.add_argument(
     help='Weight decay scheduler. One of ("cosine", "none")',
 )
 
-
 # Learning rate schedule parameters
 parser.add_argument(
     "--sched",
@@ -815,6 +814,14 @@ parser.add_argument(
     metavar="EVAL_METRIC",
     help='Best metric (default: "top1"',
 )
+
+parser.add_argument(
+    "--aircraft-eval-interval",
+    type=int,
+    default=0,
+    metavar="N",
+    help="Run Aircraft zero-shot evaluation every N training batches (0 = only at epoch end).",
+)
 parser.add_argument(
     "--tta",
     type=int,
@@ -961,7 +968,6 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
     clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
 
-
     dataset = aircraft_dataloader(
         root=aircraft_root,
         train=False,
@@ -991,13 +997,14 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
 def evaluate_aircraft_zeroshot(aircraft_ctx, device):
     """
     Run zero-shot CLIP evaluation on the Aircraft test split.
-    Returns top-1 accuracy in %.
+    Returns top-1 and top-5 accuracy in %.
     """
     model = aircraft_ctx["model"]
     loader = aircraft_ctx["loader"]
     text_features = aircraft_ctx["text_features"]  # [C, D]
 
     correct_top1 = 0
+    correct_top5 = 0
     total = 0
 
     model.eval()
@@ -1014,16 +1021,69 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, device):
             # [B, C]
             logits = 100.0 * image_features @ text_features.T
             preds_top1 = logits.argmax(dim=-1)
+            _, preds_top5 = logits.topk(5, dim=-1)
 
             correct_top1 += (preds_top1 == targets).sum().item()
+            correct_top5 += sum([t in p for t, p in zip(targets, preds_top5)])
             total += targets.size(0)
 
     acc1 = 100.0 * correct_top1 / max(total, 1)
-    return acc1
+    acc5 = 100.0 * correct_top5 / max(total, 1)
+    return acc1, acc5
 
 
+def run_aircraft_zeroshot_eval(
+    aircraft_ctx,
+    args,
+    when: str,
+    epoch: int | None = None,
+    batch_idx: int | None = None,
+):
+    """
+    Helper to run Aircraft zero-shot evaluation and log metrics.
+
+    `when` in {"before_train", "epoch", "batch"} controls log/W&B key names.
+    """
+    if aircraft_ctx is None or args.rank != 0:
+        return
+
+    acc1, acc5 = evaluate_aircraft_zeroshot(aircraft_ctx, device=args.device)
+
+    # ----- logging strings -----
+    if when == "before_train":
+        msg = "Aircraft zero-shot before training"
+    elif when == "epoch":
+        msg = f"Aircraft zero-shot after epoch {epoch}"
+    elif when == "batch":
+        msg = f"Aircraft zero-shot at epoch {epoch}, batch {batch_idx}"
+    else:
+        msg = "Aircraft zero-shot"
+
+    _logger.info(f"{msg}: Acc@1 = {acc1:.2f}%")
+    _logger.info(f"{msg}: Acc@5 = {acc5:.2f}%")
+
+    # ----- wandb logging -----
+    if args.log_wandb and has_wandb:
+        log_dict = {}
+        if when == "before_train":
+            log_dict["aircraft_zeroshot/top1_before_train"] = acc1
+            log_dict["aircraft_zeroshot/top5_before_train"] = acc5
+            log_dict["epoch"] = -1
+        elif when == "epoch":
+            log_dict["aircraft_zeroshot/top1"] = acc1
+            log_dict["aircraft_zeroshot/top5"] = acc5
+            if epoch is not None:
+                log_dict["epoch"] = epoch
+        elif when == "batch":
+            log_dict["aircraft_zeroshot/top1_batch"] = acc1
+            log_dict["aircraft_zeroshot/top5_batch"] = acc5
+            if epoch is not None:
+                log_dict["epoch"] = epoch
+            if batch_idx is not None:
+                log_dict["batch"] = batch_idx
+
+        wandb.log(log_dict)
 #--------------------------------------------------------------------------------------------------------------
-
 
 def main():
     setup_default_logging()
@@ -1476,16 +1536,12 @@ def main():
         )
 
         # --- Run zero-shot validation before training ---
-        aircraft_acc1 = evaluate_aircraft_zeroshot(
-            aircraft_zeroshot, device=args.device
+        run_aircraft_zeroshot_eval(
+            aircraft_zeroshot,
+            args,
+            when="before_train",
+            epoch=-1,
         )
-        _logger.info(
-            f"Aircraft zero-shot Acc@1 before training: {aircraft_acc1:.2f}%"
-        )
-        if args.log_wandb and has_wandb:
-            wandb.log(
-                {"aircraft_zeroshot/top1_before_train": aircraft_acc1, "epoch": -1}
-            )
     # -----------------------------------------------------------------
 
     # use distill loss wrapper, which returns base loss when distillation is disabled
@@ -1589,6 +1645,8 @@ def main():
                 clip_text_features=clip_text_features,
                 clip_logit_scale=clip_logit_scale,
                 clip_loss_fn=clip_loss_fn, # Clip loss funciton
+                aircraft_zeroshot=aircraft_zeroshot,  # <--- NEW
+
             )
 
             if args.distributed and args.dist_bn in ("broadcast", "reduce"):
@@ -1614,18 +1672,14 @@ def main():
                 eval_metrics = ema_eval_metrics
 
 
-            # ---------------- Aircraft zero-shot evaluation ----------------
+            # ---------------- Aircraft zero-shot evaluation after epochs ----------------
             if aircraft_zeroshot is not None and args.rank == 0:
-                aircraft_acc1 = evaluate_aircraft_zeroshot(
-                    aircraft_zeroshot, device=args.device
+                run_aircraft_zeroshot_eval(
+                    aircraft_zeroshot,
+                    args,
+                    when="epoch",
+                    epoch=epoch,
                 )
-                _logger.info(
-                    f"Aircraft zero-shot Acc@1 after epoch {epoch}: {aircraft_acc1:.2f}%"
-                )
-                if args.log_wandb and has_wandb:
-                    wandb.log(
-                        {"aircraft_zeroshot/top1": aircraft_acc1, "epoch": epoch}
-                    )
             # ----------------------------------------------------------------
 
             if lr_scheduler is not None:
@@ -1674,6 +1728,7 @@ def train_one_epoch(
     clip_text_features=None,
     clip_logit_scale=None,
     clip_loss_fn=None,
+    aircraft_zeroshot=None,  # <--- NEW
 ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -1777,6 +1832,23 @@ def train_one_epoch(
 
         if model_ema is not None:
             model_ema.update(model)
+
+        # -----------------------------------------------------------------
+        # Optional Aircraft zero-shot eval every N batches inside epoch
+        if (
+            aircraft_zeroshot is not None
+            and args.rank == 0
+            and getattr(args, "aircraft_eval_interval", 0) > 0
+            and (batch_idx + 1) % args.aircraft_eval_interval == 0
+        ):
+            run_aircraft_zeroshot_eval(
+                aircraft_zeroshot,
+                args,
+                when="batch",
+                epoch=epoch,
+                batch_idx=batch_idx + 1,
+            )
+        # -----------------------------------------------------------------
 
         torch.cuda.synchronize()
         num_updates += 1
