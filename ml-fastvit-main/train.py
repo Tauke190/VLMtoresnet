@@ -959,22 +959,28 @@ def build_aircraft_clip_text_features(clip_model, class_names, device, template_
     
 def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4, batch_size=64):
     """
-    Create CLIP model, Aircraft dataloader, and pre-computed text features
-    for zero-shot evaluation.
+    Create Aircraft dataloader and pre-computed CLIP text features
+    for zero-shot evaluation. Images will be encoded by FastViT+projector,
+    NOT by CLIP's image encoder.
     """
     if not aircraft_root or not os.path.isdir(aircraft_root):
         raise ValueError(f"Invalid aircraft_data_dir: {aircraft_root}")
 
-    # Load CLIP model just for zero-shot eval (change architecture if you like)
+    # CLIP model only for TEXT encoding
     clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
 
-    dataset = aircraft_dataloader(
+    # NOTE: use the `aircraft` class from the module
+    dataset = aircraft_dataloader.aircraft(
         root=aircraft_root,
         train=False,
         transform=preprocess,
     )
-    class_names = dataset.classes
+    # pick class names from dataset
+    class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
+    if class_names is None:
+        raise RuntimeError("Aircraft dataset has no 'categories' or 'classes' attribute.")
+
     text_features = build_aircraft_clip_text_features(
         clip_model, class_names, device=device, template_file=template_file
     )
@@ -988,13 +994,10 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
     )
 
     return {
-        "model": clip_model,
         "loader": loader,
         "text_features": text_features,  # [num_classes, dim]
         "class_names": class_names,
     }
-
-
 def evaluate_aircraft_zeroshot(aircraft_ctx, device):
     """
     Run zero-shot CLIP evaluation on the Aircraft test split.
@@ -1014,13 +1017,14 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, device):
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
-            image_features = model.encode_image(images)
-            image_features = image_features / image_features.norm(
-                dim=-1, keepdim=True
-            )
+            # Pseudocode: use FastViT + projector instead of clip_model.encode_image
+            feats = model.forward_features(images)
+            if feats.ndim == 4:
+                feats = feats.mean(dim=[2, 3])
+            feats = projector(feats)
+            feats = feats / feats.norm(dim=-1, keepdim=True)      # [B, D]
 
-            # [B, C]
-            logits = 100.0 * image_features @ text_features.T
+            logits = 100.0 * feats @ text_features.T              # [B, num_classes]
             preds_top1 = logits.argmax(dim=-1)
             _, preds_top5 = logits.topk(5, dim=-1)
 
@@ -1036,6 +1040,8 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, device):
 def run_aircraft_zeroshot_eval(
     aircraft_ctx,
     args,
+    model,
+    projector,
     when: str,
     epoch: Union[int, None] = None,
     batch_idx: Union[int, None] = None,
@@ -1045,10 +1051,12 @@ def run_aircraft_zeroshot_eval(
 
     `when` in {"before_train", "epoch", "batch"} controls log/W&B key names.
     """
-    if aircraft_ctx is None or args.rank != 0:
+    if aircraft_ctx is None or projector is None or args.rank != 0:
         return
 
-    acc1, acc5 = evaluate_aircraft_zeroshot(aircraft_ctx, device=args.device)
+    acc1, acc5 = evaluate_aircraft_zeroshot(
+        aircraft_ctx, model=model, projector=projector, device=args.device
+    )
 
     # ----- logging strings -----
     if when == "before_train":
@@ -1540,6 +1548,8 @@ def main():
         run_aircraft_zeroshot_eval(
             aircraft_zeroshot,
             args,
+            model,
+            projector,
             when="before_train",
             epoch=-1,
         )
@@ -1645,6 +1655,8 @@ def main():
                 run_aircraft_zeroshot_eval(
                     aircraft_zeroshot,
                     args,
+                    model,
+                    projector,
                     when="epoch",
                     epoch=epoch,
                 )
@@ -1811,6 +1823,8 @@ def train_one_epoch(
             run_aircraft_zeroshot_eval(
                 aircraft_zeroshot,
                 args,
+                model,
+                projector,
                 when="batch",
                 epoch=epoch,
                 batch_idx=batch_idx + 1,
