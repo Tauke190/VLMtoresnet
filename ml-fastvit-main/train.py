@@ -1016,9 +1016,9 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
     correct_top5 = 0
     total = 0
 
-    # handle DDP-wrapped models
+    # handle DDP-wrapped models (NativeDDP, ApexDDP, etc.)
     backbone = model
-    if isinstance(model, (NativeDDP, ApexDDP)):
+    if hasattr(model, "module"):
         backbone = model.module
 
     was_training = model.training
