@@ -1802,9 +1802,6 @@ def train_one_epoch(
                 feats, batch_text_feats, clip_logit_scale
             )
 
-            if args.local_rank == 0:
-                print(f"[DEBUG] CLIP loss applied at batch {batch_idx}, loss value: {clip_loss.item():.4f}")
-
             total_loss = base_loss + args.clip_loss_weight * clip_loss
         loss = total_loss
 
