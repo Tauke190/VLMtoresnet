@@ -1773,8 +1773,9 @@ def train_one_epoch(
             and clip_logit_scale is not None
             and isinstance(target, torch.Tensor)
             and target.dtype == torch.long
-            and target.ndim == 1  # skip when mixup makes targets soft
         ):
+            print("[DEBUG] Computing CLIP loss")
+
             # get backbone features if available, else fall back to output
             if hasattr(model, "forward_features"):
                 feats = model.forward_features(input)
@@ -1786,9 +1787,11 @@ def train_one_epoch(
             if feats.ndim == 4 and feats.shape[2] > 1 and feats.shape[3] > 1:
                 feats = feats.mean(dim=[2, 3])  # Global average pooling
             # ----------------------------------------------
+            feats = feats.float()
             feats = projector(feats)          # <--- apply projector
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
 
+            batch_text_feats = batch_text_feats.float()
             batch_text_feats = clip_text_features[target]
             batch_text_feats = batch_text_feats / (
                 batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6
