@@ -1554,39 +1554,6 @@ def main():
         args.distillation_tau,
     )
 
-
-    # Added by avinash Gyawali
-    # ------------- CLIP text embeddings & loss (VIT-L/14) ---------------
-    
-    clip_text_features = None
-    clip_loss_fn = None
-    clip_logit_scale = None
-    projector = None  # <-- initialize projector as None
-
-    if args.clip_loss_weight > 0.0:
-        clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
-        for p in clip_model.parameters():
-            p.requires_grad = False
-        clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
-        
-        if args.local_rank == 0:
-            print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
-        clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
-
-        clip_loss_fn = ClipLoss(
-            local_loss=False,
-            gather_with_grad=False,
-            cache_labels=True,
-            rank=args.rank,
-            world_size=args.world_size,
-        )
-
-        clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
-        projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
-
-    # -----------------------------------------------------------------
-
-
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
     best_metric = None
@@ -1774,7 +1741,6 @@ def train_one_epoch(
             and isinstance(target, torch.Tensor)
             and target.dtype == torch.long
         ):
-
             # get backbone features if available, else fall back to output
             if hasattr(model, "forward_features"):
                 feats = model.forward_features(input)
