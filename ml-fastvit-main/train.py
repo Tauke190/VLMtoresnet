@@ -1463,33 +1463,29 @@ def main():
         template_file = os.path.join(
             "CLIP", "dataloaders", "templates", "fgvc_aircraft.txt"
         )
-        try:
-            aircraft_zeroshot = setup_aircraft_zeroshot(
-                args.aircraft_data_dir,
-                device=args.device,
-                template_file=template_file,
-                num_workers=args.workers,
-                batch_size=args.validation_batch_size or args.batch_size,
-            )
-            _logger.info(
-                f"Initialized Aircraft zero-shot evaluation with "
-                f"{len(aircraft_zeroshot['class_names'])} classes."
-            )
+        aircraft_zeroshot = setup_aircraft_zeroshot(
+            args.aircraft_data_dir,
+            device=args.device,
+            template_file=template_file,
+            num_workers=args.workers,
+            batch_size=args.validation_batch_size or args.batch_size,
+        )
+        _logger.info(
+            f"Initialized Aircraft zero-shot evaluation with "
+            f"{len(aircraft_zeroshot['class_names'])} classes."
+        )
 
-            # --- Run zero-shot validation before training ---
-            aircraft_acc1 = evaluate_aircraft_zeroshot(
-                aircraft_zeroshot, device=args.device
+        # --- Run zero-shot validation before training ---
+        aircraft_acc1 = evaluate_aircraft_zeroshot(
+            aircraft_zeroshot, device=args.device
+        )
+        _logger.info(
+            f"Aircraft zero-shot Acc@1 before training: {aircraft_acc1:.2f}%"
+        )
+        if args.log_wandb and has_wandb:
+            wandb.log(
+                {"aircraft_zeroshot/top1_before_train": aircraft_acc1, "epoch": -1}
             )
-            _logger.info(
-                f"Aircraft zero-shot Acc@1 before training: {aircraft_acc1:.2f}%"
-            )
-            if args.log_wandb and has_wandb:
-                wandb.log(
-                    {"aircraft_zeroshot/top1_before_train": aircraft_acc1, "epoch": -1}
-                )
-        except Exception as e:
-            _logger.error(f"Failed to initialize Aircraft zero-shot evaluation: {e}")
-            aircraft_zeroshot = None
     # -----------------------------------------------------------------
 
     # use distill loss wrapper, which returns base loss when distillation is disabled
