@@ -961,10 +961,8 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
     clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
 
-    # NOTE: This assumes aircraft_dataloader.Aircraft has the usual Dataset API:
-    #   dataset = Aircraft(root=..., split="test", transform=preprocess)
-    #   dataset[i] -> (PIL image, label), dataset.classes -> list of class names
-    dataset = aircraft_dataloader.aircraft(
+
+    dataset = aircraft_dataloader(
         root=aircraft_root,
         split="test",
         transform=preprocess,
