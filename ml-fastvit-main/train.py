@@ -1791,11 +1791,12 @@ def train_one_epoch(
             feats = projector(feats)          # <--- apply projector
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
 
-            batch_text_feats = batch_text_feats.float()
             batch_text_feats = clip_text_features[target]
             batch_text_feats = batch_text_feats / (
                 batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6
             )
+            batch_text_feats = batch_text_feats.float()
+
 
             clip_loss = clip_loss_fn(
                 feats, batch_text_feats, clip_logit_scale
