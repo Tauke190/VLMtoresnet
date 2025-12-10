@@ -1705,8 +1705,9 @@ def main():
             if saver is not None:
                 # save proper checkpoint with eval metric
                 save_metric = eval_metrics[eval_metric]
+                extra_state = {"projector": projector.state_dict()} if projector is not None else {}
                 best_metric, best_epoch = saver.save_checkpoint(
-                    epoch, metric=save_metric
+                    epoch, metric=save_metric, extra_state=extra_state
                 )
 
     except KeyboardInterrupt:
