@@ -62,7 +62,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train.py \
     --experiment CLIPtoResNet \
     --workers 4 \
     --epochs 50 \
-    --aircraft-eval-interval \
+    --aircraft-eval-interval 1000 \
 
 # Optional cleanup
 conda deactivate

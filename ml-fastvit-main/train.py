@@ -30,6 +30,7 @@ from contextlib import suppress
 from datetime import datetime
 from misc import ClipLoss
 import clip 
+from typing import Union
 
 from CLIP.dataloaders import aircraft as aircraft_dataloader
 import torch
@@ -1036,8 +1037,8 @@ def run_aircraft_zeroshot_eval(
     aircraft_ctx,
     args,
     when: str,
-    epoch: int | None = None,
-    batch_idx: int | None = None,
+    epoch: Union[int, None] = None,
+    batch_idx: Union[int, None] = None,
 ):
     """
     Helper to run Aircraft zero-shot evaluation and log metrics.
