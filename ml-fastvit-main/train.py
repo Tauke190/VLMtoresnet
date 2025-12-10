@@ -998,8 +998,7 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
         "text_features": text_features,  # [num_classes, dim]
         "class_names": class_names,
     }
-```python
-// filepath: c:\Users\avina\Desktop\VLMtoresnet\ml-fastvit-main\train.py
+
 def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
     """
     Run Aircraft zero-shot evaluation using FastViT + projector
