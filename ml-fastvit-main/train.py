@@ -720,7 +720,7 @@ parser.add_argument(
 parser.add_argument(
     "--log-interval",
     type=int,
-    default=50,
+    default=100,
     metavar="N",
     help="how many batches to wait before logging training status",
 )
@@ -1765,7 +1765,7 @@ def train_one_epoch(
             total_loss = base_loss
 
         #-------------Added by avinash gyawali-------------------------#
-        # --- CLIP feature alignment loss ---
+        # --- CLIP feature alignment loss ----------------------------#
         if (
             args.clip_loss_weight > 0.0
             and clip_loss_fn is not None
@@ -1868,7 +1868,7 @@ def train_one_epoch(
                 _logger.info(
                     "Train: {} [{:>4d}/{} ({:>3.0f}%)]  "
                     "Loss: {loss.val:#.4g} ({loss.avg:#.3g})  "
-                    "CLIP Loss: {clip_loss:.4f}  "
+                    "CLIP Loss: {clip_loss:.6f}  "
                     "Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  "
                     "({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  "
                     "LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}    "

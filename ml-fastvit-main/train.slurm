@@ -29,23 +29,24 @@ python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print
 # Change directory
 cd /home/av354855/fastvit
 
-# Run unbuffered
-# python -u train.py \
-#     /home/c3-0/datasets/ImageNet \
-#     --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
-#     --model fastvit_sa36 \
-#     --initial-checkpoint fastvit_sa36.pth.tar \
-#     -b 128 \
-#     --lr 1e-3 \
-#     --log-wandb \
-#     --native-amp \
-#     --output ./checkpoints \
-#     --input-size 3 256 256 \
-#     --drop-path 0.35 \
-#     --aircraft-eval-interval \
-#     --experiment CLIPtoResNet \
-#     --workers 4 \
-#     --epochs 50
+Run unbuffered
+python -u train.py \
+    /home/c3-0/datasets/ImageNet \
+    --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
+    --model fastvit_sa36 \
+    --initial-checkpoint fastvit_sa36.pth.tar \
+    -b 128 \
+    --lr 1e-3 \
+    --log-wandb \
+    --native-amp \
+    --output ./checkpoints \
+    --input-size 3 256 256 \
+    --mixup 0 --cutmix 0 \
+    --drop-path 0.35 \
+    --aircraft-eval-interval 1000 \
+    --experiment CLIPtoResNet \
+    --workers 4 \
+    --epochs 50
 
 python -m torch.distributed.launch --nproc_per_node=2 train.py \
     /home/c3-0/datasets/ImageNet \
@@ -59,6 +60,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train.py \
     --output ./checkpoints \
     --input-size 3 256 256 \
     --drop-path 0.35 \
+    --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 4 \
     --epochs 50 \
