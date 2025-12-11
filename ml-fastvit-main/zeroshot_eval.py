@@ -81,6 +81,25 @@ def setup_aircraft_loader(aircraft_root, device, template_file, num_workers=4, b
     return loader, text_features, class_names
 
 
+def build_clip_text_features(clip_model, class_names, device, template_file):
+    with open(template_file, "r") as f:
+        templates = [line.strip() for line in f if line.strip()]
+
+    all_text_features = []
+    clip_model.eval()
+    with torch.no_grad():
+        for class_name in class_names:
+            texts = [template.format(class_name) for template in templates]
+            text_tokens = torch.cat([clip.tokenize(t) for t in texts]).to(device)
+            text_features = clip_model.encode_text(text_tokens)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            class_feature = text_features.mean(dim=0)
+            class_feature = class_feature / class_feature.norm()
+            all_text_features.append(class_feature)
+
+    return torch.stack(all_text_features, dim=0)  # [num_classes, dim]
+
+
 def setup_zeroshot_loader(dataset_name, dataset_root, device, template_file, num_workers=4, batch_size=64):
     clip_model, preprocess = clip.load("ViT-L/14", device=device, jit=False)
     clip_model.eval()
@@ -101,11 +120,31 @@ def setup_zeroshot_loader(dataset_name, dataset_root, device, template_file, num
             root=dataset_root, 
             split="validation", 
             is_training=False, 
-            transform=preprocess  # <-- Add this line
+            transform=preprocess
         )
         classes_path = os.path.join(os.path.dirname(__file__), "imagenet_classes.txt")
         templates_path = os.path.join(os.path.dirname(__file__), "imagenet_templates.txt")
         text_features, class_names = build_imagenet_clip_text_features(clip_model, device, classes_path, templates_path)
+    elif dataset_name == "oxfordpet":
+        from CLIP.dataloaders import oxford_pets as oxfordpet_dataloader
+
+        dataset = oxfordpet_dataloader(root=dataset_root, train=False, transform=preprocess)
+        class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
+        if class_names is None:
+            raise RuntimeError("Oxford Pets dataset has no 'categories' or 'classes' attribute.")
+        if template_file is None:
+            template_file = os.path.join("CLIP", "dataloaders", "templates", "pets.txt")
+        text_features = build_clip_text_features(clip_model, class_names, device, template_file)
+    elif dataset_name == "food101":
+        from CLIP.dataloaders import food101 as food101_dataloader
+
+        dataset = food101_dataloader(root=dataset_root, train=False, transform=preprocess)
+        class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
+        if class_names is None:
+            raise RuntimeError("Food101 dataset has no 'categories' or 'classes' attribute.")
+        if template_file is None:
+            template_file = os.path.join("CLIP", "dataloaders", "templates", "food101.txt")
+        text_features = build_clip_text_features(clip_model, class_names, device, template_file)
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
