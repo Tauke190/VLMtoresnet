@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import clip
+from tqdm import tqdm
 
 from timm.models import create_model, safe_model_name, load_checkpoint
 from CLIP.dataloaders import aircraft as aircraft_dataloader
@@ -95,7 +96,13 @@ def setup_zeroshot_loader(dataset_name, dataset_root, device, template_file, num
     elif dataset_name == "imagenet":
         from timm.data import create_dataset
 
-        dataset = create_dataset("", root=dataset_root, split="validation", is_training=False)
+        dataset = create_dataset(
+            "", 
+            root=dataset_root, 
+            split="validation", 
+            is_training=False, 
+            transform=preprocess  # <-- Add this line
+        )
         classes_path = os.path.join(os.path.dirname(__file__), "imagenet_classes.txt")
         templates_path = os.path.join(os.path.dirname(__file__), "imagenet_templates.txt")
         text_features, class_names = build_imagenet_clip_text_features(clip_model, device, classes_path, templates_path)
@@ -167,7 +174,7 @@ def evaluate_aircraft_zeroshot(loader, text_features, model, projector, device):
     projector.eval()
 
     with torch.no_grad():
-        for images, targets in loader:
+        for images, targets in tqdm(loader, desc="Evaluating", leave=True):
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
