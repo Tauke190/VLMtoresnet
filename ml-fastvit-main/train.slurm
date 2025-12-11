@@ -86,3 +86,19 @@ python zeroshot_eval.py \
   --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
   --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
   --batch-size 128
+
+  python zeroshot_eval.py \
+  --model fastvit_sa36 \
+  --zeroshot-dataset oxfordpet \
+  --zeroshot-data-dir /home/c3-0/datasets/oxford_pets \
+  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
+  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
+  --batch-size 128
+
+   python zeroshot_eval.py \
+  --model fastvit_sa36 \
+  --zeroshot-dataset food101 \
+  --zeroshot-data-dir /home/c3-0/datasets/food_101 \
+  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
+  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
+  --batch-size 128
