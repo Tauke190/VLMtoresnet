@@ -126,9 +126,9 @@ def setup_zeroshot_loader(dataset_name, dataset_root, device, template_file, num
         templates_path = os.path.join(os.path.dirname(__file__), "imagenet_templates.txt")
         text_features, class_names = build_imagenet_clip_text_features(clip_model, device, classes_path, templates_path)
     elif dataset_name == "oxfordpet":
-        from CLIP.dataloaders import oxford_pets as oxfordpet_dataloader
+        from CLIP.dataloaders.oxford_pets import OxfordPets
 
-        dataset = oxfordpet_dataloader(root=dataset_root, train=False, transform=preprocess)
+        dataset = OxfordPets(root=dataset_root, train=False, transform=preprocess)
         class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
         if class_names is None:
             raise RuntimeError("Oxford Pets dataset has no 'categories' or 'classes' attribute.")
@@ -136,9 +136,9 @@ def setup_zeroshot_loader(dataset_name, dataset_root, device, template_file, num
             template_file = os.path.join("CLIP", "dataloaders", "templates", "pets.txt")
         text_features = build_clip_text_features(clip_model, class_names, device, template_file)
     elif dataset_name == "food101":
-        from CLIP.dataloaders import food101 as food101_dataloader
+        from CLIP.dataloaders.food101 import Food101
 
-        dataset = food101_dataloader(root=dataset_root, train=False, transform=preprocess)
+        dataset = Food101(root=dataset_root, train=False, transform=preprocess)
         class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
         if class_names is None:
             raise RuntimeError("Food101 dataset has no 'categories' or 'classes' attribute.")
