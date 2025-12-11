@@ -72,7 +72,7 @@ conda deactivate
 
 python zeroshot_eval.py \
   --model fastvit_sa36 \
-  --model-checkpoint fastvit_sa36.pth.tar \
-  --projector-checkpoint checkpoints/CLIPtoResNet/projector_init.pth.tar \
+  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
+  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar\
   --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
   --batch-size 128
