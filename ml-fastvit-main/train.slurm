@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=fastvit_unfrozen
-#SBATCH --output=fastvit%j.out
-#SBATCH --error=fastvit%j.err
-#SBATCH --cpus-per-task=2
-#SBATCH --constraint=gmem48
-#SBATCH --gres=gpu:ampere:2
-#SBATCH --mem=48G
+#SBATCH --job-name=OR_3
+#SBATCH --output=ucf_output/slurm-%j.out
+#SBATCH --gres-flags=enforce-binding
+#SBATCH -p gpu
+#SBATCH -C gmem48
+#SBATCH --gres=gpu:2
+#SBATCH --mem-per-cpu=6G 
+#SBATCH -c8
 
 # Load necessary modules
 module load anaconda3
@@ -98,7 +99,7 @@ python zeroshot_eval.py \
    python zeroshot_eval.py \
   --model fastvit_sa36 \
   --zeroshot-dataset food101 \
-  --zeroshot-data-dir /home/c3-0/datasets/food_101 \
+  --zeroshot-data-dir /home/c3-0/datasets/food-101 \
   --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
   --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
   --batch-size 128
