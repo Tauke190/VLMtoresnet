@@ -151,7 +151,7 @@ parser.add_argument(
 parser.add_argument(
     "--noise-max-epochs",
     type=int,
-    default=None,
+    default=10,
     help="Max fine-tuning epochs per noise level (default: use --epochs).",
 )
 
@@ -1860,6 +1860,30 @@ def run_noise_experiment(
         plt.close()
 
         _logger.info(f"Saved noise recovery plot to: {out_path}")
+
+    # Log: noise% vs time to recover (hours) to wandb
+    if args.local_rank == 0:
+        if args.log_wandb and has_wandb:
+            # Log as a wandb line plot
+            wandb.log({
+                "noise_recovery": wandb.Table(
+                    data=list(zip(noise_factors_pct, recovery_hours)),
+                    columns=["Noise level (% of mean variance)", "Time to recover (hours)"]
+                )
+            })
+            # Optionally, log as a custom line plot
+            wandb.log({
+                "Noise Recovery Curve": wandb.plot.line_series(
+                    xs=noise_factors_pct,
+                    ys=[recovery_hours],
+                    keys=["Time to recover (hours)"],
+                    title=f"{args.model} noise recovery (target ≥ {args.recovery_acc:.1f})",
+                    xname="Noise level (% of mean variance)"
+                )
+            })
+            _logger.info("Logged noise recovery curve to wandb.")
+        else:
+            _logger.info("Wandb logging not enabled or wandb not installed; skipping wandb log.")
 
 
 if __name__ == "__main__":
