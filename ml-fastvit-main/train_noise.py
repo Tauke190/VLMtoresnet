@@ -1563,7 +1563,7 @@ def train_one_epoch(
     return OrderedDict([("loss", losses_m.avg)])
 
 
-def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=""):
+def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix="", max_batches=None):
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
     top1_m = AverageMeter()
@@ -1575,6 +1575,8 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix="")
     last_idx = len(loader) - 1
     with torch.no_grad():
         for batch_idx, (input, target) in enumerate(loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
             last_batch = batch_idx == last_idx
             if not args.prefetcher:
                 input = input.cuda()
