@@ -27,7 +27,7 @@ preprocess = transforms.Compose([
 ])
 
 train_dir = os.path.join(IMAGENET_ROOT, "train")
-val_dir = os.path.join(IMAGENET_ROOT, "val")
+val_dir = os.path.join(IMAGENET_ROOT, "validation")
 
 train_dataset = ImageFolder(train_dir, transform=preprocess)
 val_dataset = ImageFolder(val_dir, transform=preprocess)
