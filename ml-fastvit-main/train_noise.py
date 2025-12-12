@@ -897,11 +897,6 @@ parser.add_argument(
     default=False,
     help="log training and validation metrics to wandb",
 )
-parser.add_argument(
-    "--imagenet-trainset-size",
-    default=1281167,
-    help="Size of imagenet training set for weight decay scheduling.",
-)
 
 
 def _parse_args():
