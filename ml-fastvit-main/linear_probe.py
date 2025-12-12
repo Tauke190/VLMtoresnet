@@ -11,7 +11,8 @@ from timm.models import create_model, load_checkpoint
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"  # Change as needed
-MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"  
+# MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"  
+MODEL_CKPT = "fastvit_sa36.pth.tar"
 NUM_CLASSES = 100  # CIFAR100
 BATCH_SIZE = 100
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
