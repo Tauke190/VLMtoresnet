@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR100
 from torchvision import transforms
 from tqdm import tqdm
+import models
 
 from timm.models import create_model, load_checkpoint
 
