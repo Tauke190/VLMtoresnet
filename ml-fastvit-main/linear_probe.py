@@ -12,7 +12,7 @@ from timm.models import create_model, load_checkpoint
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"  # Change as needed
-MODEL_CKPT = "/checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"  # Path to your backbone checkpoint
+MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"  # Path to your backbone checkpoint
 NUM_CLASSES = 1000  # ImageNet
 BATCH_SIZE = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
