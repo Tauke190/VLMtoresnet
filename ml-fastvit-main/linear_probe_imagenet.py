@@ -12,11 +12,11 @@ from timm.models import create_model, load_checkpoint
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"  # Change as needed
-MODEL_CKPT = "/checkpoints/CLIPtoResNet/model_best.pth.tar"  # Path to your backbone checkpoint
+MODEL_CKPT = "fastvit_sa36.pth.tar"  # Path to your backbone checkpoint
 NUM_CLASSES = 1000  # ImageNet
 BATCH_SIZE = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-IMAGENET_ROOT = "/home/c3-0/datasets/ImageNet"  # <-- Set this to your ImageNet root
+IMAGENET_ROOT = "/path/to/imagenet"  # <-- Set this to your ImageNet root
 
 # ---- DATA ----
 preprocess = transforms.Compose([
