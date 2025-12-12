@@ -72,10 +72,9 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
 conda deactivate
 
 
-python validate.py /home/c3-0/datasets/ImageNet --model fastvit_ma36 \
---checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
---use-inference-mode
 
+python validate.py /home/c3-0/datasets/ImageNet --model fastvit_sa36 \
+--checkpoint /home/av354855/VLMtoresnet/ml-fastvit-main/checkpoints/CLIPtoResNet/checkpoint-8.pth.tar  \
 
 python zeroshot_eval.py \
   --model fastvit_sa36 \
