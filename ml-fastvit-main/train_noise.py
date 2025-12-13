@@ -1697,9 +1697,10 @@ def run_noise_experiment(
             model = model.to(memory_format=torch.channels_last)
 
         # Add Gaussian noise: N(0, sqrt(noise_factor * mean_var))
-        noise_std = math.sqrt(args.noise_mean_var * noise_factor)
+        noise_var = args.noise_mean_var * noise_factor
+        noise_std = math.sqrt(noise_var)
         if args.local_rank == 0:
-            _logger.info(f"Adding Gaussian noise with std={noise_std:.6f}")
+            _logger.info(f"Adding Gaussian noise with variance={noise_var:.6f}")
         with torch.no_grad():
             for p in model.parameters():
                 if p.requires_grad:
