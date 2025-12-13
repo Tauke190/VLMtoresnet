@@ -36,4 +36,5 @@ python train_noise.py \
   --batch-size 128 \
   --native-amp \
   --noise-experiment \
-  --resume fastvit_sa36.pth.tar
+  --resume fastvit_sa36.pth.tar\
+  --log-wandb
