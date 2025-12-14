@@ -30,7 +30,7 @@ python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print
 /home/av354855/VLMtoresnet/ml-fastvit-main
 # Run unbuffered
 
-python linear_probe_eval.py \
+python linear_probe.py \
   --model fastvit_sa36 \
   --model-checkpoint checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/model_best.pth.tar \
   --projector-checkpoint checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/projector_best.pth.tar \

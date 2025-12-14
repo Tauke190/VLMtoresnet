@@ -229,10 +229,18 @@ def main():
     )
     clf.fit(train_features, train_labels)
 
+    # Top-1 accuracy
     preds = clf.predict(test_features)
-    acc = (test_labels == preds).astype(float).mean() * 100.0
-    print(f"\nLinear probe accuracy on {args.dataset}: {acc:.3f}% "
-          f"({len(class_names)} classes)")
+    acc1 = (test_labels == preds).astype(float).mean() * 100.0
+
+    # Top-5 accuracy
+    probs = clf.predict_proba(test_features)
+    top5 = np.argsort(probs, axis=1)[:, -5:]
+    acc5 = np.mean([label in top5_row for label, top5_row in zip(test_labels, top5)]) * 100.0
+
+    print(f"\nLinear probe accuracy on {args.dataset}:")
+    print(f"  Top-1: {acc1:.3f}%")
+    print(f"  Top-5: {acc5:.3f}% ({len(class_names)} classes)")
 
 
 if __name__ == "__main__":
