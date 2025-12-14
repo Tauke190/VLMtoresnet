@@ -798,7 +798,7 @@ parser.add_argument(
     "-j",
     "--workers",
     type=int,
-    default=8,
+    default=4,
     metavar="N",
     help="how many training processes to use (default: 8)",
 )
