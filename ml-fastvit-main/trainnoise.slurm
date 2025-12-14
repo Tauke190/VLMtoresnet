@@ -33,8 +33,9 @@ cd /home/av354855/fastvit
 python train_noise.py \
   /home/c3-0/datasets/ImageNet \
   --model fastvit_sa36 \
-  --batch-size 128 \
-  --native-amp \
+  --batch-size 256 \
   --noise-experiment \
   --resume fastvit_sa36.pth.tar \
   --log-wandb
+  --noise-val-batches 50
+  --noise-val-interval 200
