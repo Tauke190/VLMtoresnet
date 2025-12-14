@@ -8,7 +8,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
-from timm.models import create_model
+from timm.models import create_model, load_checkpoint, safe_model_name  # <-- add these
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
@@ -41,12 +41,10 @@ model = create_model(
     global_pool=None,
 )
 
-# Load checkpoint, but ignore classifier head
-checkpoint = torch.load(MODEL_CKPT, map_location="cpu", weights_only=False)
-state_dict = checkpoint.get("state_dict", checkpoint)
-# Remove classifier head weights (for ImageNet) if present
-state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
-model.load_state_dict(state_dict, strict=False)
+# Use timm's load_checkpoint for robust loading
+load_checkpoint(model, MODEL_CKPT, use_ema=False)
+print(f"Loaded backbone {safe_model_name(MODEL_NAME)} from {MODEL_CKPT}")
+
 model.to(DEVICE)
 model.eval()
 
@@ -74,8 +72,6 @@ def get_features(dataset):
             feats = model.forward_features(images)  # [batch, 1024]
             if feats.ndim == 4:
                 feats = feats.mean(dim=[2, 3])  # global pool if needed
-            print("Backbone features:", feats.shape)
-            print("Projector weight:", projector.weight.shape)
             feats = projector(feats)  # [batch, 768]
             all_features.append(feats.cpu())
             all_labels.append(labels)
