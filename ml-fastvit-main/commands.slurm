@@ -8,6 +8,15 @@ python -m torch.distributed.launch --nproc_per_node=2 train_noise.py \
   --noise-experiment
 
 
+python train_noise.py \
+  /home/c3-0/datasets/ImageNet \
+  --model fastvit_sa36 \
+  --batch-size 128 \
+  --native-amp \
+  --noise-experiment \
+  --resume fastvit_sa36.pth.tar
+
+
 python validate.py /home/c3-0/datasets/ImageNet --model fastvit_sa36 \
 --checkpoint /home/av354855/VLMtoresnet/ml-fastvit-main/checkpoints/CLIPtoResNet/model_best.pth.tar  \
 

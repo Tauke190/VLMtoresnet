@@ -5,11 +5,10 @@ from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
+import torch
+import torch.nn as nn
 from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
-
-
-from timm.models import create_model, load_checkpoint
-import models  # register custom models
+from timm.models import create_model
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
@@ -37,24 +36,19 @@ val_dataset = AircraftDataset(root=AIRCRAFT_ROOT, train=False, transform=preproc
 model = create_model(
     MODEL_NAME,
     pretrained=False,
-    num_classes=0,  # or None, depending on your model
+    num_classes=0,  # disables classifier head
     in_chans=3,
     global_pool=None,
 )
 
 # Load checkpoint, but ignore classifier head
-checkpoint = torch.load(MODEL_CKPT, map_location="cpu",weights_only=False)
+checkpoint = torch.load(MODEL_CKPT, map_location="cpu", weights_only=False)
 state_dict = checkpoint.get("state_dict", checkpoint)
 # Remove classifier head weights (for ImageNet) if present
 state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
-missing, unexpected = model.load_state_dict(state_dict, strict=False)
-print("Missing keys:", missing)
-print("Unexpected keys:", unexpected)
-
+model.load_state_dict(state_dict, strict=False)
 model.to(DEVICE)
 model.eval()
-
-import torch.nn as nn
 
 def load_projector(projector_ckpt_path, device):
     ckpt = torch.load(projector_ckpt_path, map_location="cpu")
@@ -77,15 +71,12 @@ def get_features(dataset):
     with torch.no_grad():
         for images, labels in tqdm(loader):
             images = images.to(DEVICE)
-            if hasattr(model, "forward_features"):
-                feats = model.forward_features(images)
-            else:
-                feats = model(images)
-            if isinstance(feats, (tuple, list)):
-                feats = feats[0]
+            feats = model.forward_features(images)  # [batch, 1024]
             if feats.ndim == 4:
-                feats = feats.mean(dim=[2, 3])
-            feats = projector(feats)  # Pass through projector!
+                feats = feats.mean(dim=[2, 3])  # global pool if needed
+            print("Backbone features:", feats.shape)
+            print("Projector weight:", projector.weight.shape)
+            feats = projector(feats)  # [batch, 768]
             all_features.append(feats.cpu())
             all_labels.append(labels)
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
