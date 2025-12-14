@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=OR_3
+#SBATCH --job-name=linearprobe
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
