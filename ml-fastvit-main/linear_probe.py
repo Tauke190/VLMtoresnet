@@ -43,7 +43,7 @@ model = create_model(
 )
 
 # Load checkpoint, but ignore classifier head
-checkpoint = torch.load(MODEL_CKPT, map_location="cpu")
+checkpoint = torch.load(MODEL_CKPT, map_location="cpu",weights_only=False)
 state_dict = checkpoint.get("state_dict", checkpoint)
 # Remove classifier head weights (for ImageNet) if present
 state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
