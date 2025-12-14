@@ -37,7 +37,7 @@ val_dataset = AircraftDataset(root=AIRCRAFT_ROOT, train=False, transform=preproc
 model = create_model(
     MODEL_NAME,
     pretrained=False,
-    num_classes=NUM_CLASSES,
+    num_classes=0,  # or None, depending on your model
     in_chans=3,
     global_pool=None,
 )
