@@ -30,4 +30,12 @@ python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print
 /home/av354855/VLMtoresnet/ml-fastvit-main
 # Run unbuffered
 
-python -u linear_probe.py
+python linear_probe_eval.py \
+  --model fastvit_sa36 \
+  --model-checkpoint checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/model_best.pth.tar \
+  --projector-checkpoint checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/projector_best.pth.tar \
+  --use-projector \
+  --dataset aircraft \
+  --data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
+  --batch-size 128 \
+  --workers 4
