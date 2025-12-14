@@ -44,7 +44,7 @@ model = create_model(
 )
 
 # Use timm's load_checkpoint for robust loading
-load_checkpoint(model, MODEL_CKPT, use_ema=False)
+load_checkpoint(model, MODEL_CKPT, use_ema=False, strict=False)
 print(f"Loaded backbone {safe_model_name(MODEL_NAME)} from {MODEL_CKPT}")
 
 model.to(DEVICE)
