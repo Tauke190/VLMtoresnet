@@ -71,10 +71,16 @@ def get_features(dataset):
     with torch.no_grad():
         for images, labels in tqdm(loader):
             images = images.to(DEVICE)
-            feats = model.forward_features(images)  # [batch, 1024]
+            # Robust feature extraction
+            if hasattr(model, "forward_features"):
+                feats = model.forward_features(images)
+            else:
+                feats = model(images)
+            if isinstance(feats, (tuple, list)):
+                feats = feats[0]
             if feats.ndim == 4:
                 feats = feats.mean(dim=[2, 3])  # global pool if needed
-            feats = projector(feats)  # [batch, 768]
+            feats = projector(feats)
             all_features.append(feats.cpu())
             all_labels.append(labels)
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
