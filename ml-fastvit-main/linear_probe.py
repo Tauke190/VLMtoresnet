@@ -15,7 +15,7 @@ import models
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
 MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/model_best.pth.tar"
-PROJECTOR_CKPT = "checkpoints/CLIPtoResNet/projector_best.pth.tar"
+PROJECTOR_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36_unfrozen/projector_best.pth.tar"
 NUM_CLASSES = 100  # FGVC Aircraft has 100 classes
 BATCH_SIZE = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
