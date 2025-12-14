@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
 from timm.models import create_model, load_checkpoint, safe_model_name  # <-- add these
+import models
+
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
