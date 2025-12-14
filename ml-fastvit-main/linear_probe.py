@@ -3,22 +3,25 @@ import torch
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
-from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from tqdm import tqdm
+from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
 
-import models
+
 from timm.models import create_model, load_checkpoint
+import models  # register custom models
 
 # ---- CONFIG ----
-MODEL_NAME = "fastvit_sa36"  # Change as needed
-MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"  # Path to your backbone checkpoint
-NUM_CLASSES = 1000  # ImageNet
+MODEL_NAME = "fastvit_sa36"
+MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"
+NUM_CLASSES = 100  # FGVC Aircraft has 100 classes
 BATCH_SIZE = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-IMAGENET_ROOT = "/home/c3-0/datasets/ImageNet"  # <-- Set this to your ImageNet root
+AIRCRAFT_ROOT = "/home/c3-0/datasets/fgvc-aircraft-2013b/data"  # <-- Set this to your aircraft dataset root
 
 # ---- DATA ----
+# Use the same preprocessing as in zeroshot_eval.py
+
 preprocess = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -26,11 +29,8 @@ preprocess = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
 ])
 
-train_dir = os.path.join(IMAGENET_ROOT, "train")
-val_dir = os.path.join(IMAGENET_ROOT, "validation")
-
-train_dataset = ImageFolder(train_dir, transform=preprocess)
-val_dataset = ImageFolder(val_dir, transform=preprocess)
+train_dataset = AircraftDataset(root=AIRCRAFT_ROOT, train=True, transform=preprocess)
+val_dataset = AircraftDataset(root=AIRCRAFT_ROOT, train=False, transform=preprocess)
 
 # ---- MODEL ----
 model = create_model(
