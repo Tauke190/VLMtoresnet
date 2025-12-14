@@ -14,6 +14,7 @@ import models  # register custom models
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
 MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"
+PROJECTOR_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/projector_best.pth.tar"
 NUM_CLASSES = 100  # FGVC Aircraft has 100 classes
 BATCH_SIZE = 128
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -44,6 +45,22 @@ load_checkpoint(model, MODEL_CKPT, use_ema=False)
 model.to(DEVICE)
 model.eval()
 
+import torch.nn as nn
+
+def load_projector(projector_ckpt_path, device):
+    ckpt = torch.load(projector_ckpt_path, map_location="cpu")
+    state = ckpt.get("state_dict", ckpt)
+    w = state["weight"]
+    in_dim = w.shape[1]
+    out_dim = w.shape[0]
+    projector = nn.Linear(in_dim, out_dim)
+    projector.load_state_dict(state, strict=True)
+    projector.to(device)
+    projector.eval()
+    return projector
+
+projector = load_projector(PROJECTOR_CKPT, DEVICE)
+
 def get_features(dataset):
     all_features = []
     all_labels = []
@@ -59,6 +76,7 @@ def get_features(dataset):
                 feats = feats[0]
             if feats.ndim == 4:
                 feats = feats.mean(dim=[2, 3])
+            feats = projector(feats)  # Pass through projector!
             all_features.append(feats.cpu())
             all_labels.append(labels)
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
