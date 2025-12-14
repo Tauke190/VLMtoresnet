@@ -55,7 +55,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --model fastvit_sa36 \
     --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
     --initial-checkpoint fastvit_sa36.pth.tar \
-    -b 128 \
+    -b 256 \
     --lr 1e-3 \
     --log-wandb \
     --native-amp \
