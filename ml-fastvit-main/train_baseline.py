@@ -1400,11 +1400,20 @@ def main():
         else:
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
-            model = NativeDDP(
-                model,
-                device_ids=[args.local_rank],
-                broadcast_buffers=not args.no_ddp_bb,
-            )
+            # Only wrap model if it has trainable parameters
+            if not args.freeze_backbone:
+                model = NativeDDP(
+                    model,
+                    device_ids=[args.local_rank],
+                    broadcast_buffers=not args.no_ddp_bb,
+                )
+            # Always wrap projector if it exists and is trainable
+            if projector is not None:
+                projector = NativeDDP(
+                    projector,
+                    device_ids=[args.local_rank],
+                    broadcast_buffers=not args.no_ddp_bb,
+                )
         # NOTE: EMA model does not need to be wrapped by DDP
 
     # setup learning rate schedule and starting epoch
