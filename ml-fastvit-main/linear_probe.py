@@ -13,7 +13,7 @@ import models  # register custom models
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
-MODEL_CKPT = "checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar"
+MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"
 PROJECTOR_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/projector_best.pth.tar"
 NUM_CLASSES = 100  # FGVC Aircraft has 100 classes
 BATCH_SIZE = 128
@@ -41,7 +41,16 @@ model = create_model(
     in_chans=3,
     global_pool=None,
 )
-load_checkpoint(model, MODEL_CKPT, use_ema=False)
+
+# Load checkpoint, but ignore classifier head
+checkpoint = torch.load(MODEL_CKPT, map_location="cpu")
+state_dict = checkpoint.get("state_dict", checkpoint)
+# Remove classifier head weights (for ImageNet) if present
+state_dict = {k: v for k, v in state_dict.items() if not k.startswith("head.")}
+missing, unexpected = model.load_state_dict(state_dict, strict=False)
+print("Missing keys:", missing)
+print("Unexpected keys:", unexpected)
+
 model.to(DEVICE)
 model.eval()
 
