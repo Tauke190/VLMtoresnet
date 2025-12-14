@@ -13,7 +13,7 @@ import models  # register custom models
 
 # ---- CONFIG ----
 MODEL_NAME = "fastvit_sa36"
-MODEL_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/model_best.pth.tar"
+MODEL_CKPT = "checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar"
 PROJECTOR_CKPT = "checkpoints/CLIPtoResNet/fastvit_sa36/projector_best.pth.tar"
 NUM_CLASSES = 100  # FGVC Aircraft has 100 classes
 BATCH_SIZE = 128
