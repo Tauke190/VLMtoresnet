@@ -11,3 +11,6 @@ from .fastvit import (
     fastvit_sa36,
     fastvit_ma36,
 )
+
+
+from .proposed_model import IMPORT_NONE 

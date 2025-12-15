@@ -870,6 +870,12 @@ parser.add_argument(
     default=False,
     help="Freeze backbone and train only the projector.",
 )
+parser.add_argument(
+    "--vanilla-eval",
+    action="store_true",
+    default=False,
+    help="Freeze backbone and train only the projector.",
+)
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -998,16 +1004,13 @@ def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4,
         "class_names": class_names,
     }
 
-def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
+def evaluate_aircraft_zeroshot(aircraft_ctx, model, device):
     """
     Run Aircraft zero-shot evaluation using FastViT + projector
     as image encoder and CLIP text features as class prototypes.
 
     Returns top-1 and top-5 accuracy in %.
     """
-    if projector is None:
-        raise RuntimeError("Projector is None; cannot run Aircraft zero-shot eval.")
-
     loader = aircraft_ctx["loader"]
     text_features = aircraft_ctx["text_features"]  # [C, D]
 
@@ -1029,10 +1032,7 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
             targets = targets.to(device, non_blocking=True)
 
             # get backbone features
-            if hasattr(backbone, "forward_features"):
-                feats = backbone.forward_features(images)
-            else:
-                feats = backbone(images)
+            feats, _, _ = backbone(images)
 
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
@@ -1040,9 +1040,8 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, projector, device):
                 feats = feats.mean(dim=[2, 3])  # global average pool if spatial
 
             feats = feats.float()
-            feats = projector(feats)
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)  # [B, D]
-
+    
             # Ensure both are the same dtype
             if feats.dtype != text_features.dtype:
                 text_features = text_features.to(feats.dtype)
@@ -1067,21 +1066,16 @@ def run_aircraft_zeroshot_eval(
     aircraft_ctx,
     args,
     model,
-    projector,
     when: str,
     epoch: Union[int, None] = None,
     batch_idx: Union[int, None] = None,
-):
-    """
-    Helper to run Aircraft zero-shot evaluation and log metrics.
-
-    `when` in {"before_train", "epoch", "batch"} controls log/W&B key names.
-    """
-    if aircraft_ctx is None or projector is None or args.rank != 0:
+    ):
+    
+    if aircraft_ctx is None or args.rank != 0:
         return None, None
 
     acc1, acc5 = evaluate_aircraft_zeroshot(
-        aircraft_ctx, model=model, projector=projector, device=args.device
+        aircraft_ctx, model=model, device=args.device
     )
 
     # ----- logging strings -----
@@ -1177,6 +1171,9 @@ def main():
 
     random_seed(args.seed, args.rank)
 
+    extra_args = {}
+    extra_args['freeze_backbone'] = args.freeze_backbone
+        
     model = create_model(
         args.model,
         pretrained=args.pretrained,
@@ -1191,6 +1188,7 @@ def main():
         bn_eps=args.bn_eps,
         scriptable=args.torchscript,
         checkpoint_path=args.initial_checkpoint,
+        **extra_args
     )
     if args.num_classes is None:
         assert hasattr(
@@ -1225,22 +1223,20 @@ def main():
 
     # Added by avinash Gyawali
     #-----------------------------------------------------------
-    with torch.no_grad():
-        dummy = torch.randn(2, *data_config["input_size"], device=args.device)
-        if hasattr(model, "forward_features"):
-            feat = model.forward_features(dummy)
-        else:
-            feat = model(dummy)
-        if isinstance(feat, (tuple, list)):
-            feat = feat[0]
-        feat = feat.view(feat.size(0), -1)
-        fastvit_dim = feat.shape[-1]
-
+    # with torch.no_grad():
+    #     dummy = torch.randn(2, *data_config["input_size"], device=args.device)
+    #     if hasattr(model, "forward_features"):
+    #         feat = model.forward_features(dummy)
+    #     else:
+    #         feat = model(dummy)
+    #     if isinstance(feat, (tuple, list)):
+    #         feat = feat[0]
+    #     feat = feat.view(feat.size(0), -1)
+    #     fastvit_dim = feat.shape[-1]
     clip_text_features = None
     clip_loss_fn = None
     clip_logit_scale = None
-    projector = None  # <-- initialize projector as None
-
+    
     if args.clip_loss_weight > 0.0:
         clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
         for p in clip_model.parameters():
@@ -1260,7 +1256,7 @@ def main():
         )
 
         clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
-        projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
+        # projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
 
     #-----------------------------------------------------------
 
@@ -1268,7 +1264,8 @@ def main():
         model = model.to(memory_format=torch.channels_last)
 
     # Save the projector before training (only on main process)
-    if projector is not None and args.rank == 0:
+    # if projector is not None and args.rank == 0:
+    if args.rank == 0:
         if args.experiment:
             exp_name = args.experiment
         else:
@@ -1283,19 +1280,20 @@ def main():
             args.output if args.output else "./output/train", exp_name
         )
         os.makedirs(output_dir, exist_ok=True)
-        projector_ckpt = {
-            "epoch": 0,
-            "state_dict": projector.state_dict(),
-        }
-        proj_path = os.path.join(output_dir, "projector_init.pth.tar")
-        torch.save(projector_ckpt, proj_path)
-        _logger.info(f"Saved initial projector to {proj_path}")
+        # projector_ckpt = {
+        #     "epoch": 0,
+        #     "state_dict": projector.state_dict(),
+        # }
+        # proj_path = os.path.join(output_dir, "projector_init.pth.tar")
+        # torch.save(projector_ckpt, proj_path)
+        # _logger.info(f"Saved initial projector to {proj_path}")
 
-    if args.freeze_backbone:
-        for param in model.parameters():
-            param.requires_grad = False
-        if args.local_rank == 0:
-            print("[INFO] Backbone frozen. Only projector will be trained.")
+
+    # if args.freeze_backbone:
+    #     for param in model.parameters():
+    #         param.requires_grad = False
+    #     if args.local_rank == 0:
+    #         print("[INFO] Backbone frozen. Only projector will be trained.")
 
     # setup synchronized BatchNorm for distributed training
     if args.distributed and args.sync_bn:
@@ -1316,16 +1314,29 @@ def main():
         assert not args.sync_bn, "Cannot use SyncBatchNorm with torchscripted model"
         model = torch.jit.script(model)
 
-    if args.freeze_backbone:
-        optimizer = create_optimizer_v2(
-            projector.parameters(),
-            **optimizer_kwargs(cfg=args),
-        )
-    else:
-        optimizer = create_optimizer_v2(
-            list(model.parameters()) + list(projector.parameters()),
-            **optimizer_kwargs(cfg=args),
-        )
+    # if args.freeze_backbone:
+    #     optimizer = create_optimizer_v2(
+    #         projector.parameters(),
+    #         **optimizer_kwargs(cfg=args),
+    #     )
+    # else:
+
+    optimizer = create_optimizer_v2(
+        list(model.parameters()),
+        **optimizer_kwargs(cfg=args),
+    )
+    ####### Print all optimizer registers params 
+    param_to_name = {param: name for name, param in model.named_parameters()}
+    for i, param_group in enumerate(optimizer.param_groups):
+        _logger.info(f"Parameter group {i}")
+        for p in param_group["params"]:
+            if p.requires_grad:
+                name = param_to_name.get(p, "unnamed")
+                _logger.info(f"{name:<80} | {str(p.shape):<40} | {p.requires_grad}")
+
+    
+
+
     # setup automatic mixed-precision (AMP) loss scaling and op casting
     amp_autocast = suppress  # do nothing
     loss_scaler = None
@@ -1476,15 +1487,18 @@ def main():
         batch_size=args.batch_size,
         repeats=args.epoch_repeats,
     )
-    dataset_eval = create_dataset(
-        args.dataset,
-        root=args.data_dir,
-        split=args.val_split,
-        is_training=False,
-        class_map=args.class_map,
-        download=args.dataset_download,
-        batch_size=args.batch_size,
-    )
+    dataset_eval = None 
+    if args.vanilla_eval:
+        dataset_eval = create_dataset(
+            args.dataset,
+            root=args.data_dir,
+            split=args.val_split,
+            is_training=False,
+            class_map=args.class_map,
+            download=args.dataset_download,
+            batch_size=args.batch_size,
+        )
+
 
     # setup mixup / cutmix
     collate_fn = None
@@ -1547,20 +1561,23 @@ def main():
         worker_seeding=args.worker_seeding,
     )
 
-    loader_eval = create_loader(
-        dataset_eval,
-        input_size=data_config["input_size"],
-        batch_size=args.validation_batch_size or args.batch_size,
-        is_training=False,
-        use_prefetcher=args.prefetcher,
-        interpolation=data_config["interpolation"],
-        mean=data_config["mean"],
-        std=data_config["std"],
-        num_workers=args.workers,
-        distributed=args.distributed,
-        crop_pct=data_config["crop_pct"],
-        pin_memory=args.pin_mem,
-    )
+    loader_eval = None 
+    if args.vanilla_eval:
+        loader_eval = create_loader(
+            dataset_eval,
+            input_size=data_config["input_size"],
+            batch_size=args.validation_batch_size or args.batch_size,
+            is_training=False,
+            use_prefetcher=args.prefetcher,
+            interpolation=data_config["interpolation"],
+            mean=data_config["mean"],
+            std=data_config["std"],
+            num_workers=args.workers,
+            distributed=args.distributed,
+            crop_pct=data_config["crop_pct"],
+            pin_memory=args.pin_mem,
+        )
+    
 
     # setup loss function
     if args.jsd_loss:
@@ -1586,7 +1603,6 @@ def main():
     train_loss_fn = train_loss_fn.cuda()
     validate_loss_fn = nn.CrossEntropyLoss().cuda()
 
-
     # -----------------------------------------------------------------
     # Aircraft zero-shot evaluation setup (CLIP-based)
     aircraft_zeroshot = None
@@ -1611,20 +1627,19 @@ def main():
             aircraft_zeroshot,
             args,
             model,
-            projector,
             when="before_train",
             epoch=-1,
         )
     # -----------------------------------------------------------------
-
-    # use distill loss wrapper, which returns base loss when distillation is disabled
-    train_loss_fn = DistillationLoss(
-        train_loss_fn,
-        teacher_model,
-        args.distillation_type,
-        args.distillation_alpha,
-        args.distillation_tau,
-    )
+    if args.distillation_type != "none":
+        # use distill loss wrapper, which returns base loss when distillation is disabled
+        train_loss_fn = DistillationLoss(
+            train_loss_fn,
+            teacher_model,
+            args.distillation_type,
+            args.distillation_alpha,
+            args.distillation_tau,
+        )
 
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
@@ -1685,12 +1700,10 @@ def main():
                 model_ema=model_ema,
                 mixup_fn=mixup_fn,
                 wd_scheduler=wd_scheduler,
-                projector=projector,
                 clip_text_features=clip_text_features,
                 clip_logit_scale=clip_logit_scale,
                 clip_loss_fn=clip_loss_fn, # Clip loss funciton
                 aircraft_zeroshot=aircraft_zeroshot,  # <--- NEW
-
             )
 
             if args.distributed and args.dist_bn in ("broadcast", "reduce"):
@@ -1698,22 +1711,24 @@ def main():
                     _logger.info("Distributing BatchNorm running means and vars")
                 distribute_bn(model, args.world_size, args.dist_bn == "reduce")
 
-            eval_metrics = validate(
-                model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast
-            )
-
-            if model_ema is not None and not args.model_ema_force_cpu:
-                if args.distributed and args.dist_bn in ("broadcast", "reduce"):
-                    distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
-                ema_eval_metrics = validate(
-                    model_ema.module,
-                    loader_eval,
-                    validate_loss_fn,
-                    args,
-                    amp_autocast=amp_autocast,
-                    log_suffix=" (EMA)",
+            if args.vanilla_eval:
+                eval_metrics = validate(
+                    model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast
                 )
-                eval_metrics = ema_eval_metrics
+
+            if args.vanilla_eval:
+                if model_ema is not None and not args.model_ema_force_cpu:
+                    if args.distributed and args.dist_bn in ("broadcast", "reduce"):
+                        distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
+                    ema_eval_metrics = validate(
+                        model_ema.module,
+                        loader_eval,
+                        validate_loss_fn,
+                        args,
+                        amp_autocast=amp_autocast,
+                        log_suffix=" (EMA)",
+                    )
+                    eval_metrics = ema_eval_metrics
 
 
             # ---------------- Aircraft zero-shot evaluation after epochs ----------------
@@ -1722,10 +1737,11 @@ def main():
                     aircraft_zeroshot,
                     args,
                     model,
-                    projector,
                     when="epoch",
                     epoch=epoch,
                 )
+                
+                eval_metrics = dict(top1=acc1_air, top5=acc5_air )
 
                 # Save best backbone + projector based on Aircraft Acc@1
                 if acc1_air is not None:
@@ -1740,9 +1756,7 @@ def main():
                                 backbone = model.module
 
                             # Save backbone
-                            model_path = os.path.join(
-                                output_dir, "model_best_aircraft.pth.tar"
-                            )
+                            model_path = os.path.join( output_dir, "model_best_aircraft.pth.tar")
                             torch.save(
                                 {
                                     "epoch": epoch,
@@ -1752,26 +1766,13 @@ def main():
                                 model_path,
                             )
 
-                            # Save projector
-                            if projector is not None:
-                                proj_path = os.path.join(
-                                    output_dir, "projector_best_aircraft.pth.tar"
-                                )
-                                torch.save(
-                                    {
-                                        "epoch": epoch,
-                                        "aircraft_acc1": acc1_air,
-                                        "state_dict": projector.state_dict(),
-                                    },
-                                    proj_path,
-                                )
-
                             _logger.info(
-                                f"Saved Aircraft-best model & projector at epoch {epoch} "
+                                f"Saved Aircraft-best model at epoch {epoch} "
                                 f"(Acc@1={acc1_air:.2f}%)"
                             )
+                        
+            
             # ----------------------------------------------------------------
-
             if lr_scheduler is not None:
                 # step LR for next epoch
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
@@ -1785,35 +1786,33 @@ def main():
                     write_header=best_metric is None,
                     log_wandb=args.log_wandb and has_wandb,
                 )
+            
+            # if saver is not None:
+            #     # save proper checkpoint with main eval metric (e.g. ImageNet top1)
+            #     save_metric = eval_metrics[eval_metric]
+            #     best_metric, best_epoch = saver.save_checkpoint(
+            #         epoch, metric=save_metric
+            #     )
 
-            if saver is not None:
-                # save proper checkpoint with main eval metric (e.g. ImageNet top1)
-                save_metric = eval_metrics[eval_metric]
-                best_metric, best_epoch = saver.save_checkpoint(
-                    epoch, metric=save_metric
-                )
-
-                # ---- save BEST projector separately ----
-                # Only when this epoch becomes the new best
-                if (
-                    projector is not None
-                    and output_dir is not None
-                    and args.rank == 0
-                    and best_epoch == epoch
-                ):
-                    best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
-                    torch.save(
-                        {
-                            "epoch": epoch,
-                            "metric": best_metric,
-                            "state_dict": projector.state_dict(),
-                        },
-                        best_proj_path,
-                    )
-                    _logger.info(
-                        f"Saved best projector to {best_proj_path} "
-                        f"(metric={best_metric:.4f}, epoch={epoch})"
-                    )
+            #     # ---- save BEST projector separately ----
+            #     # Only when this epoch becomes the new best
+            #     if (
+            #         and output_dir is not None
+            #         and args.rank == 0
+            #         and best_epoch == epoch
+            #     ):
+            #         best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
+            #         torch.save(
+            #             {
+            #                 "epoch": epoch,
+            #                 "metric": best_metric,
+            #             },
+            #             best_proj_path,
+            #         )
+            #         _logger.info(
+            #             f"Saved best projector to {best_proj_path} "
+            #             f"(metric={best_metric:.4f}, epoch={epoch})"
+            #         )
 
     except KeyboardInterrupt:
         pass
@@ -1836,12 +1835,11 @@ def train_one_epoch(
     model_ema=None,
     mixup_fn=None,
     wd_scheduler=None,
-    projector=None,
     clip_text_features=None,
     clip_logit_scale=None,
     clip_loss_fn=None,
     aircraft_zeroshot=None,  # <--- NEW
-):
+    ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
         if args.prefetcher and loader.mixup_enabled:
@@ -1870,8 +1868,9 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
-            output = model(input)
-            base_loss = loss_fn(input, output, target)
+            projected_embed, output, x = model(input)
+            # base_loss = loss_fn(input, output, target)
+            base_loss = loss_fn(output, target)
 
             total_loss = base_loss
 
@@ -1886,10 +1885,7 @@ def train_one_epoch(
             and target.dtype == torch.long
         ):
             # get backbone features if available, else fall back to output
-            if hasattr(model, "forward_features"):
-                feats = model.forward_features(input)
-            else:
-                feats = output
+            feats = projected_embed
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
             # --- Add this block for FastViT feature map ---
@@ -1897,24 +1893,16 @@ def train_one_epoch(
                 feats = feats.mean(dim=[2, 3])  # Global average pooling
             # ----------------------------------------------
             feats = feats.float()
-            feats = projector(feats)          # <--- apply projector
             feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
 
             batch_text_feats = clip_text_features[target]
-            batch_text_feats = batch_text_feats / (
-                batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6
-            )
+            batch_text_feats = batch_text_feats / ( batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6 )
             batch_text_feats = batch_text_feats.float()
 
-
-            clip_loss = clip_loss_fn(
-                feats, batch_text_feats, clip_logit_scale
-            )
+            clip_loss = clip_loss_fn( feats, batch_text_feats, clip_logit_scale )
 
             total_loss = base_loss + args.clip_loss_weight * clip_loss
         loss = total_loss
-
-
 
         #-------------------------------------------------------------------------#
         if not args.distributed:
@@ -1956,7 +1944,6 @@ def train_one_epoch(
                 aircraft_zeroshot,
                 args,
                 model,
-                projector,
                 when="batch",
                 epoch=epoch,
                 batch_idx=batch_idx + 1,

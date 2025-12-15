@@ -1,28 +1,5 @@
 
 
-python -m pip install openmim
-mim install 'mmcv==2.0.0'
-mim install 'mmengine'
-mim install 'mmagic'
-<!-- python -m pip install  mmengine 'mmcv==2.0.0' mmagic -->
-python -m pip install pytorch-msssim jpeg4py transformers==4.30.0
-pip install transformers --upgrade
-pip install diffusers==0.24.0
-python -m pip install fastreid
-
-python -m pip install torchinfo utilss scikit-learn grad-cam
-python -m pip install seaborn scikit-learn grad-cam
-python -m pip install --upgrade timm
-python -m pip install grad-cam
-
-
-timm
-scipy
-
-conda 
-conda activate fastvit
-
-
 
 
 cd ~/VLMtoresnet/ml-fastvit-main/
@@ -31,11 +8,10 @@ conda activate fastvit
 
 
 NUM_GPU=1
-
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /mnt/SSD2/imagenet/ \
-    --model fastvit_sa36 \
-    --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
+    --model fastvit_sa36_projector \
+    --aircraft-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
     --aircraft-eval-interval 1000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpoints \
