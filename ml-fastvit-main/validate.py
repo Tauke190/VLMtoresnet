@@ -17,11 +17,20 @@ import csv
 import glob
 import time
 import logging
+import sys
+from pathlib import Path
+from collections import OrderedDict
+from contextlib import suppress
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.parallel
-from collections import OrderedDict
-from contextlib import suppress
+
+from sklearn.linear_model import LogisticRegression
+from torch.utils.data import DataLoader
+import clip
+
 
 from timm.layers import apply_test_time_pool
 from timm.models import create_model, load_checkpoint, is_model, list_models
@@ -57,19 +66,19 @@ try:
 except AttributeError:
     pass
 
+
+from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
+from CLIP.dataloaders.food101 import Food101 as Food101Dataset
+from CLIP.dataloaders.cars import Cars as StanfordCarsDataset
+from CLIP.dataloaders.caltech101 import Caltech101 as Caltech101Dataset
+
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger("validate")
 
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Validation")
 parser.add_argument("data", metavar="DIR", help="path to dataset")
-parser.add_argument(
-    "--dataset",
-    "-d",
-    metavar="NAME",
-    default="",
-    help="dataset type (default: ImageFolder/ImageTar if empty)",
-)
+## Remove --dataset argument. Use only --zeroshot-dataset for zero-shot mode.
 parser.add_argument(
     "--split",
     metavar="NAME",
@@ -149,9 +158,6 @@ parser.add_argument(
     type=str,
     metavar="NAME",
     help="Image resize interpolation type (overrides model)",
-)
-parser.add_argument(
-    "--num-classes", type=int, default=None, help="Number classes in dataset"
 )
 parser.add_argument(
     "--class-map",
@@ -277,6 +283,280 @@ parser.add_argument(
     help="use inference mode version of model definition.",
 )
 
+parser.add_argument(
+    "--eval-mode",
+    default="logits",
+    choices=["logits", "zeroshot", "linearprobe"],
+    help=(
+        "Evaluation mode: 'logits' uses classification head, 'zeroshot' uses CLIP text "
+        "embeddings, 'linearprobe' trains a logistic-regression head on frozen projected embeddings."
+    ),
+)
+parser.add_argument(
+    "--zeroshot-dataset",
+    default="",
+    type=str,
+    help="Dataset identifier for zero-shot prompts (e.g. 'food101'). If empty, falls back to --dataset.",
+)
+parser.add_argument(
+    "--zeroshot-backbone",
+    default="ViT-L/14",
+    type=str,
+    help="CLIP backbone to use for zero-shot text embeddings.",
+)
+parser.add_argument(
+    "--zeroshot-classes-dir",
+    default="",
+    type=str,
+    help="Optional override path to CLIP classes txt directory.",
+)
+parser.add_argument(
+    "--zeroshot-templates-dir",
+    default="",
+    type=str,
+    help="Optional override path to CLIP templates txt directory.",
+)
+
+parser.add_argument(
+    "--linearprobe-dataset",
+    default="",
+    type=str,
+    help=(
+        "Dataset identifier for linear-probe evaluation (passed to timm.create_dataset). "
+        "If empty, uses ImageFolder/ImageTar with --data as root."
+    ),
+)
+parser.add_argument(
+    "--linearprobe-C",
+    default=0.316,
+    type=float,
+    help="Inverse regularization strength C for logistic regression.",
+)
+parser.add_argument(
+    "--linearprobe-max-iter",
+    default=1000,
+    type=int,
+    help="Maximum iterations for logistic regression optimizer.",
+)
+
+
+def _read_txt(file_path):
+    with open(file_path, "r") as f:
+        content = f.read()
+    content = str(content).split("\n")
+    try:
+        content.remove("")
+    except ValueError:
+        pass
+    return content
+
+
+def _build_zeroshot_weights(args, device):
+    """Build zero-shot classifier weights using CLIP text encoder and CLIP prompts.
+
+    Uses CLIP/dataloaders/classes/<zeroshot-dataset>.txt and CLIP/dataloaders/templates/<zeroshot-dataset>.txt
+    for class names and text templates.
+    """
+    dataset_key = args.zeroshot_dataset if args.zeroshot_dataset else "food101"
+
+    repo_root = Path(__file__).resolve().parent
+    clip_root = repo_root / "CLIP"
+
+    classes_dir = (
+        Path(args.zeroshot_classes_dir)
+        if args.zeroshot_classes_dir
+        else clip_root / "dataloaders" / "classes"
+    )
+    templates_dir = (
+        Path(args.zeroshot_templates_dir)
+        if args.zeroshot_templates_dir
+        else clip_root / "dataloaders" / "templates"
+    )
+
+    class_file = classes_dir / f"{dataset_key}.txt"
+    template_file = templates_dir / f"{dataset_key}.txt"
+
+    if not class_file.is_file():
+        raise FileNotFoundError(f"Zero-shot class file not found: {class_file}")
+    if not template_file.is_file():
+        raise FileNotFoundError(f"Zero-shot template file not found: {template_file}")
+
+    classes = _read_txt(class_file)
+    templates = _read_txt(template_file)
+
+    # Ensure CLIP package (vendored in this repo) is importable as `clip`
+    if str(clip_root) not in sys.path:
+        sys.path.insert(0, str(clip_root))
+
+    _logger.info(
+        "Building zero-shot weights for dataset '%s' with CLIP backbone '%s'",
+        dataset_key,
+        args.zeroshot_backbone,
+    )
+
+    clip_model, preprocess = clip.load(args.zeroshot_backbone, device=device)
+    clip_model.eval()
+
+    with torch.no_grad():
+        zeroshot_weights = []
+        print("\n[Zero-shot] Example text prompts for first 3 classes:")
+        for i, classname in enumerate(classes):
+            texts = [template.format(classname) for template in templates]
+            if i < 3:
+                print(f"Class: {classname}")
+                for t in texts[:min(3, len(texts))]:
+                    print(f"  Prompt: {t}")
+            text_tokens = clip.tokenize(texts).to(device)
+            class_embeddings = clip_model.encode_text(text_tokens)
+            class_embeddings = class_embeddings / class_embeddings.norm(
+                dim=-1, keepdim=True
+            )
+            class_embedding = class_embeddings.mean(dim=0)
+            class_embedding = class_embedding / class_embedding.norm()
+            zeroshot_weights.append(class_embedding)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(device)
+
+    return zeroshot_weights, len(classes)  # Return class count too
+
+
+def _extract_linearprobe_features(model, loader, device):
+    """Extract projected image embeddings and labels for linear-probe training/testing.
+
+     Model returns (projected_embed, logits, feature map) when output is a tuple,
+    """
+    feats = []
+    labels = []
+
+
+
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            # Some loaders may return (input, target); others could add extra fields.
+            if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                input, target = batch[0], batch[1]
+            else:
+                continue
+
+            input = input.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+
+            output = model(input)
+            if isinstance(output, (list, tuple)):
+                features = output[0] # Projected embeddings
+           
+
+            features = features.float()
+            feats.append(features.cpu())
+            labels.append(target.cpu())
+
+    if not feats:
+        raise RuntimeError("No features extracted for linear probe; check dataset/loader.")
+
+    feats = torch.cat(feats, dim=0).numpy()
+    labels = torch.cat(labels, dim=0).numpy()
+    return feats, labels
+
+
+def _linearprobe_eval(args, model, data_config):
+    """Linear-probe evaluation on frozen projected embeddings.
+
+    Follows the CLIP official template: extract image features on train/test splits,
+    fit a logistic-regression classifier, and report top-1 / top-5 accuracy.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    clip_model, preprocess = clip.load('ViT-L/14', device)
+
+
+    dataset_name = args.linearprobe_dataset if args.linearprobe_dataset else ""
+
+    # NOTE: root must point to the actual dataset directory on disk.
+    # For FGVC-Aircraft this should typically be the "data" folder that
+    # contains variants.txt, images_variant_*.txt, and the images/ subdir.
+    if dataset_name == "aircraft" or dataset_name == "fgvc_aircraft":
+        train_dataset = AircraftDataset(root=args.data, train=True, transform=preprocess)
+        eval_dataset = AircraftDataset(root=args.data, train=False, transform=preprocess)
+    elif dataset_name == "food101":
+        train_dataset = Food101Dataset(root=args.data, train=True, transform=preprocess)
+        eval_dataset = Food101Dataset(root=args.data, train=False, transform=preprocess)
+    else:
+        # Build train and eval datasets via timm's factory following ImageFolder
+        train_dataset = create_dataset(
+            root=args.data,
+            name=dataset_name,
+            split="train",
+            download=args.dataset_download,
+            load_bytes=args.tf_preprocessing,
+            class_map=args.class_map,
+        )
+        eval_dataset = create_dataset(
+            root=args.data,
+            name=dataset_name,
+            split=args.split,
+            download=args.dataset_download,
+            load_bytes=args.tf_preprocessing,
+            class_map=args.class_map,
+        )
+
+    crop_pct = data_config["crop_pct"]
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+    _logger.info("[LinearProbe] Extracting train features...")
+    train_features, train_labels = _extract_linearprobe_features(model, train_loader, device)
+    _logger.info("[LinearProbe] Extracting eval features...")
+    eval_features, eval_labels = _extract_linearprobe_features(model, eval_loader, device)
+
+    _logger.info(
+        "[LinearProbe] Training logistic regression (C=%.4f, max_iter=%d, n_train=%d, n_eval=%d)...",
+        args.linearprobe_C,
+        args.linearprobe_max_iter,
+        train_features.shape[0],
+        eval_features.shape[0],
+    )
+
+    classifier = LogisticRegression(
+        random_state=0,
+        C=args.linearprobe_C,
+        max_iter=args.linearprobe_max_iter,
+        verbose=1,
+        n_jobs=-1,
+    )
+    classifier.fit(train_features, train_labels)
+
+    # Top-1 accuracy
+    preds = classifier.predict(eval_features)
+    top1_acc = float((preds == eval_labels).astype(np.float32).mean() * 100.0)
+
+    # Top-5 accuracy (if there are at least 5 classes)
+    if len(classifier.classes_) >= 5:
+        probs = classifier.predict_proba(eval_features)
+        top5_idx = np.argsort(-probs, axis=1)[:, :5]
+        correct_top5 = 0
+        for i, label in enumerate(eval_labels):
+            if label in top5_idx[i]:
+                correct_top5 += 1
+        top5_acc = float(correct_top5 / max(len(eval_labels), 1) * 100.0)
+    else:
+        top5_acc = top1_acc
+
+    _logger.info("[LinearProbe] Top-1: %.3f%%  Top-5: %.3f%%", top1_acc, top5_acc)
+
+    results = OrderedDict(
+        top1=round(top1_acc, 4),
+        top1_err=round(100.0 - top1_acc, 4),
+        top5=round(top5_acc, 4),
+        top5_err=round(100.0 - top5_acc, 4),
+        img_size=data_config["input_size"][-1],
+        cropt_pct=crop_pct,
+        interpolation=data_config["interpolation"],
+    )
+    return results
+
 
 def validate(args):
     # might as well try to validate something
@@ -302,21 +582,15 @@ def validate(args):
     if args.legacy_jit:
         set_jit_legacy()
 
-    # create model
+    # create model (let model use its default num_classes)
     model = create_model(
         args.model,
         pretrained=args.pretrained,
-        num_classes=args.num_classes,
         in_chans=3,
         global_pool=args.gp,
         scriptable=args.torchscript,
         inference_mode=args.use_inference_mode,
     )
-    if args.num_classes is None:
-        assert hasattr(
-            model, "num_classes"
-        ), "Model must have `num_classes` attr if not set on cmd line/config."
-        args.num_classes = model.num_classes
 
     if args.checkpoint:
         load_checkpoint(model, args.checkpoint, args.use_ema)
@@ -353,19 +627,79 @@ def validate(args):
 
     criterion = nn.CrossEntropyLoss().cuda()
 
-    dataset = create_dataset(
-        root=args.data,
-        name=args.dataset,
-        split=args.split,
-        download=args.dataset_download,
-        load_bytes=args.tf_preprocessing,
-        class_map=args.class_map,
-    )
+    #---------------------------------------------------------------
 
+
+    # Linear-probe evaluation (separate code path, returns early)
+    if args.eval_mode == "linearprobe":
+        return _linearprobe_eval(args, model, data_config)
+
+     # Optional zero-shot setup (CLIP text encoder + classifier weights)
+    zeroshot_weights = None
+    class_count = None
+    if args.eval_mode == "zeroshot":
+        device = torch.device("cuda")
+        zeroshot_weights, class_count = _build_zeroshot_weights(args, device=device)
+
+    # Dataset selection
+    if args.eval_mode == "logits":
+        # Standard ImageNet-style evaluation (ImageFolder / ImageTar via timm)
+        dataset = create_dataset(
+            root=args.data,
+            name="",
+            split=args.split,
+            download=args.dataset_download,
+            load_bytes=args.tf_preprocessing,
+            class_map=args.class_map,
+        )
+    if args.eval_mode == "zeroshot":
+        # Zero-shot evaluation: allow special-case loaders for datasets that
+        # do not follow ImageFolder layout (e.g., FGVC-Aircraft).
+        if args.zeroshot_dataset in ["aircraft", "fgvc_aircraft"]:
+            dataset = AircraftDataset(root=args.data, train=False, transform=None)      # Use custom Aircraft dataset; let timm.create_loader handle
+        if args.zeroshot_dataset in ["food101"]:
+            dataset = Food101Dataset(root=args.data, train=False, transform=None)
+        if args.zeroshot_dataset in ["stanfordcars"]:
+            dataset = StanfordCarsDataset(root=args.data, train=False, transform=None)
+        else:
+            # For other zero-shot datasets that follow ImageFolder/ImageTar
+            # layout, we can still use timm's generic dataset factory.
+            dataset = create_dataset(
+                root=args.data,
+                name=args.zeroshot_dataset,
+                split=args.split,
+                download=args.dataset_download,
+                load_bytes=args.tf_preprocessing,
+                class_map=args.class_map,
+            )
+
+    if  args.eval_mode == "linearprobe":
+        # Zero-shot evaluation: allow special-case loaders for datasets that
+        # do not follow ImageFolder layout (e.g., FGVC-Aircraft).
+        if args.linearprobe_dataset in ["aircraft", "fgvc_aircraft"]:
+            dataset = AircraftDataset(root=args.data, train=False, transform=None)      # Use custom Aircraft dataset; let timm.create_loader handle
+        if args.linearprobe_dataset in ["food101"]:
+            dataset = Food101Dataset(root=args.data, train=False, transform=None)
+        # if args.zeroshot_dataset in ["stanfordcars"]:
+            # dataset = StanfordCarsDataset(root=args.data, train=False, transform=None)
+        else:
+            # For other zero-shot datasets that follow ImageFolder/ImageTar
+            # layout, we can still use timm's generic dataset factory.
+            dataset = create_dataset(
+                root=args.data,
+                name=args.zeroshot_dataset,
+                split=args.split,
+                download=args.dataset_download,
+                load_bytes=args.tf_preprocessing,
+                class_map=args.class_map,
+            )
+
+ #---------------------------------------------------------------
     if args.valid_labels:
         with open(args.valid_labels, "r") as f:
             valid_labels = {int(line.rstrip()) for line in f}
-            valid_labels = [i in valid_labels for i in range(args.num_classes)]
+            # store as sorted list of indices; no need for num_classes
+            valid_labels = sorted(valid_labels)
     else:
         valid_labels = None
 
@@ -415,11 +749,33 @@ def validate(args):
 
             # compute output
             with amp_autocast():
-                output = model(input)
+                raw_output = model(input)
 
-            if valid_labels is not None:
-                output = output[:, valid_labels]
-            loss = criterion(output, target)
+            if args.eval_mode == "zeroshot":
+                # Use projected CLIP-space embeddings from the model and
+                # classify via similarity to CLIP text embeddings.
+                if isinstance(raw_output, tuple):
+                    image_features = raw_output[0]
+
+                # normalize features
+                image_features = image_features / image_features.norm(
+                    dim=-1, keepdim=True
+                )
+
+                image_features = image_features.float()
+                zeroshot_weights = zeroshot_weights.float()
+                
+                logits = 100.0 * image_features @ zeroshot_weights
+                output = logits
+                loss = criterion(logits, target)
+
+            if args.eval_mode == "logits":    
+                output = raw_output            
+                if isinstance(output, tuple):
+                    output = output[1]   # The model returns projected embeddings, classification logits, backbone feature map
+                if valid_labels is not None:
+                    output = output[:, valid_labels]
+                loss = criterion(output, target)
 
             if real_labels is not None:
                 real_labels.add_result(output)
