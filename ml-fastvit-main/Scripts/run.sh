@@ -7,12 +7,13 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 conda activate fastvit
 
 
-NUM_GPU=1
+NUM_GPU=2
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
-    /mnt/SSD2/imagenet/ \
+    /mnt/SSD2/ImageNet1k/ \
     --model fastvit_sa36_projector \
-    --aircraft-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
-    --aircraft-eval-interval 1000 \
+    --val-set "fgvc_aircraft" \
+    --validation-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
+    --validation-eval-interval 1000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpoints \
     -b 256 --lr 1e-3 \
@@ -20,10 +21,17 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 4 --epochs 50 \
-    --freeze-backbone
+    --freeze-backbone \
+    --debug
+
+# Initialized Aircraft zero-shot evaluation with 100 classes.
+# Evaluating.... 14 Iteratiopns on a B=256, with 3584 datapoints
+
+# Aircraft zero-shot before training: Acc@1 = 0.78%
+# Aircraft zero-shot before training: Acc@5 = 4.44%
 
 
+# Training.... 5004 Iteratiopns on a B=256, with 1 281 024 datapoints
 
-
-
-
+# Training.... 2502 Iteratiopns on a B=256, with 640 512 datapoints                                                                                                                     
+# Training.... 2502 Iteratiopns on a B=256, with 640 512 datapoints 

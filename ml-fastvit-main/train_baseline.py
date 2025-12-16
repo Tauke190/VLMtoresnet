@@ -18,21 +18,19 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
-import argparse
+
 import time
-import yaml
 import os
 import glob
 import math
 import logging
-from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 from misc import ClipLoss
 import clip 
 from typing import Union
 
-from CLIP.dataloaders import aircraft as aircraft_dataloader
+
 import torch
 import torch.nn as nn
 import torchvision.utils
@@ -41,7 +39,6 @@ from torch.nn.parallel import DistributedDataParallel as NativeDDP
 from timm.data import (
     create_dataset,
     create_loader,
-    resolve_data_config,
     Mixup,
     FastCollateMixup,
     AugMixDataset,
@@ -51,7 +48,6 @@ from timm.models import (
     safe_model_name,
     resume_checkpoint,
     load_checkpoint,
-    model_parameters,
 )
 from timm.layers import convert_splitbn_model
 from timm.utils import *
@@ -64,6 +60,15 @@ import models
 from misc.distillation_loss import DistillationLoss
 from misc.cosine_annealing import CosineWDSchedule
 
+from Functions.train import train_one_epoch
+from Functions.eval import run_aircraft_zeroshot_eval, validate
+from Functions.argument import _parse_args
+from Functions.setup import (
+    build_imagenet_clip_text_features, build_aircraft_clip_text_features, 
+    setup_validation_zeroshot, setup_model, setup_distributed, basic_setup
+    )
+
+
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
@@ -73,1048 +78,15 @@ try:
 except ImportError:
     has_apex = False
 
-has_native_amp = False
-try:
-    if getattr(torch.cuda.amp, "autocast") is not None:
-        has_native_amp = True
-except AttributeError:
-    pass
 
 try:
     import wandb
-
     has_wandb = True
 except ImportError:
     has_wandb = False
 
-torch.backends.cudnn.benchmark = True
+
 _logger = logging.getLogger("train")
-
-# The first arg parser parses out only the --config argument, this argument is used to
-# load a yaml file containing key-values that override the defaults for the main parser below
-config_parser = parser = argparse.ArgumentParser(
-    description="Training Config", add_help=False
-)
-parser.add_argument(
-    "-c",
-    "--config",
-    default="",
-    type=str,
-    metavar="FILE",
-    help="YAML config file specifying default arguments",
-)
-
-
-parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
-
-# Dataset parameters
-parser.add_argument("data_dir", metavar="DIR", help="path to dataset")
-parser.add_argument(
-    "--dataset",
-    "-d",
-    metavar="NAME",
-    default="",
-    help="dataset type (default: ImageFolder/ImageTar if empty)",
-)
-parser.add_argument(
-    "--train-split",
-    metavar="NAME",
-    default="train",
-    help="dataset train split (default: train)",
-)
-parser.add_argument(
-    "--val-split",
-    metavar="NAME",
-    default="validation",
-    help="dataset validation split (default: validation)",
-)
-parser.add_argument(
-    "--dataset-download",
-    action="store_true",
-    default=False,
-    help="Allow download of dataset for torch/ and tfds/ datasets that support it.",
-)
-parser.add_argument(
-    "--class-map",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help='path to class to idx mapping file (default: "")',
-)
-parser.add_argument(
-    "--aircraft-data-dir",
-    default="",
-    type=str,
-    metavar="DIR",
-    help="Path to FGVC Aircraft dataset root for zero-shot evaluation (default: disabled).",
-)
-
-# Model parameters
-parser.add_argument(
-    "--model",
-    default="resnet50",
-    type=str,
-    metavar="MODEL",
-    help='Name of model to train (default: "resnet50"',
-)
-parser.add_argument(
-    "--pretrained",
-    action="store_true",
-    default=False,
-    help="Start with pretrained version of specified network (if avail)",
-)
-parser.add_argument(
-    "--initial-checkpoint",
-    default="",
-    type=str,
-    metavar="PATH",
-    help="Initialize model from this checkpoint (default: none)",
-)
-parser.add_argument(
-    "--resume",
-    default="",
-    type=str,
-    metavar="PATH",
-    help="Resume full model and optimizer state from checkpoint (default: none)",
-)
-parser.add_argument(
-    "--no-resume-opt",
-    action="store_true",
-    default=False,
-    help="prevent resume of optimizer state when resuming model",
-)
-parser.add_argument(
-    "--num-classes",
-    type=int,
-    default=None,
-    metavar="N",
-    help="number of label classes (Model default if None)",
-)
-parser.add_argument(
-    "--gp",
-    default=None,
-    type=str,
-    metavar="POOL",
-    help="Global pool type, one of (fast, avg, max, avgmax, avgmaxc). Model default if None.",
-)
-parser.add_argument(
-    "--img-size",
-    type=int,
-    default=None,
-    metavar="N",
-    help="Image patch size (default: None => model default)",
-)
-parser.add_argument(
-    "--input-size",
-    default=None,
-    nargs=3,
-    type=int,
-    metavar="N N N",
-    help="Input all image dimensions (d h w, e.g. --input-size 3 224 224), uses model default if empty",
-)
-parser.add_argument(
-    "--crop-pct",
-    default=None,
-    type=float,
-    metavar="N",
-    help="Input image center crop percent (for validation only)",
-)
-parser.add_argument(
-    "--mean",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="MEAN",
-    help="Override mean pixel value of dataset",
-)
-parser.add_argument(
-    "--std",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="STD",
-    help="Override std deviation of of dataset",
-)
-parser.add_argument(
-    "--interpolation",
-    default="",
-    type=str,
-    metavar="NAME",
-    help="Image resize interpolation type (overrides model)",
-)
-parser.add_argument(
-    "-b",
-    "--batch-size",
-    type=int,
-    default=512,
-    metavar="N",
-    help="input batch size for training (default: 128)",
-)
-parser.add_argument(
-    "-vb",
-    "--validation-batch-size",
-    type=int,
-    default=None,
-    metavar="N",
-    help="validation batch size override (default: None)",
-)
-
-# Optimizer parameters
-parser.add_argument(
-    "--opt",
-    default="adamw",
-    type=str,
-    metavar="OPTIMIZER",
-    help='Optimizer (default: "adamw"',
-)
-parser.add_argument(
-    "--opt-eps",
-    default=None,
-    type=float,
-    metavar="EPSILON",
-    help="Optimizer Epsilon (default: None, use opt default)",
-)
-parser.add_argument(
-    "--opt-betas",
-    default=None,
-    type=float,
-    nargs="+",
-    metavar="BETA",
-    help="Optimizer Betas (default: None, use opt default)",
-)
-parser.add_argument(
-    "--momentum",
-    type=float,
-    default=0.9,
-    metavar="M",
-    help="Optimizer momentum (default: 0.9)",
-)
-parser.add_argument(
-    "--weight-decay", type=float, default=0.05, help="weight decay (default: 0.05)"
-)
-parser.add_argument(
-    "--clip-grad",
-    type=float,
-    default=None,
-    metavar="NORM",
-    help="Clip gradient norm (default: None, no clipping)",
-)
-parser.add_argument(
-    "--clip-mode",
-    type=str,
-    default="norm",
-    help='Gradient clipping mode. One of ("norm", "value", "agc")',
-)
-parser.add_argument(
-    "--wd-schedule",
-    type=str,
-    default="none",
-    help='Weight decay scheduler. One of ("cosine", "none")',
-)
-
-# Learning rate schedule parameters
-parser.add_argument(
-    "--sched",
-    default="cosine",
-    type=str,
-    metavar="SCHEDULER",
-    help='LR scheduler (default: "step"',
-)
-parser.add_argument(
-    "--lr", type=float, default=1e-3, metavar="LR", help="learning rate (default: 1e-3)"
-)
-parser.add_argument(
-    "--lr-noise",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="pct, pct",
-    help="learning rate noise on/off epoch percentages",
-)
-parser.add_argument(
-    "--lr-noise-pct",
-    type=float,
-    default=0.67,
-    metavar="PERCENT",
-    help="learning rate noise limit percent (default: 0.67)",
-)
-parser.add_argument(
-    "--lr-noise-std",
-    type=float,
-    default=1.0,
-    metavar="STDDEV",
-    help="learning rate noise std-dev (default: 1.0)",
-)
-parser.add_argument(
-    "--lr-cycle-mul",
-    type=float,
-    default=1.0,
-    metavar="MULT",
-    help="learning rate cycle len multiplier (default: 1.0)",
-)
-parser.add_argument(
-    "--lr-cycle-decay",
-    type=float,
-    default=0.5,
-    metavar="MULT",
-    help="amount to decay each learning rate cycle (default: 0.5)",
-)
-parser.add_argument(
-    "--lr-cycle-limit",
-    type=int,
-    default=1,
-    metavar="N",
-    help="learning rate cycle limit, cycles enabled if > 1",
-)
-parser.add_argument(
-    "--lr-k-decay",
-    type=float,
-    default=1.0,
-    help="learning rate k-decay for cosine/poly (default: 1.0)",
-)
-parser.add_argument(
-    "--warmup-lr",
-    type=float,
-    default=1e-6,
-    metavar="LR",
-    help="warmup learning rate (default: 1e-6)",
-)
-parser.add_argument(
-    "--min-lr",
-    type=float,
-    default=1e-5,
-    metavar="LR",
-    help="lower lr bound for cyclic schedulers that hit 0 (1e-5)",
-)
-parser.add_argument(
-    "--epochs",
-    type=int,
-    default=300,
-    metavar="N",
-    help="number of epochs to train (default: 300)",
-)
-parser.add_argument(
-    "--epoch-repeats",
-    type=float,
-    default=0.0,
-    metavar="N",
-    help="epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).",
-)
-parser.add_argument(
-    "--start-epoch",
-    default=None,
-    type=int,
-    metavar="N",
-    help="manual epoch number (useful on restarts)",
-)
-parser.add_argument(
-    "--decay-epochs",
-    type=float,
-    default=100,
-    metavar="N",
-    help="epoch interval to decay LR",
-)
-parser.add_argument(
-    "--warmup-epochs",
-    type=int,
-    default=5,
-    metavar="N",
-    help="epochs to warmup LR, if scheduler supports",
-)
-parser.add_argument(
-    "--cooldown-epochs",
-    type=int,
-    default=10,
-    metavar="N",
-    help="epochs to cooldown LR at min_lr, after cyclic schedule ends",
-)
-parser.add_argument(
-    "--patience-epochs",
-    type=int,
-    default=10,
-    metavar="N",
-    help="patience epochs for Plateau LR scheduler (default: 10",
-)
-parser.add_argument(
-    "--decay-rate",
-    "--dr",
-    type=float,
-    default=0.1,
-    metavar="RATE",
-    help="LR decay rate (default: 0.1)",
-)
-
-# Augmentation & regularization parameters
-parser.add_argument(
-    "--no-aug",
-    action="store_true",
-    default=False,
-    help="Disable all training augmentation, override other train aug args",
-)
-parser.add_argument(
-    "--scale",
-    type=float,
-    nargs="+",
-    default=[0.08, 1.0],
-    metavar="PCT",
-    help="Random resize scale (default: 0.08 1.0)",
-)
-parser.add_argument(
-    "--ratio",
-    type=float,
-    nargs="+",
-    default=[3.0 / 4.0, 4.0 / 3.0],
-    metavar="RATIO",
-    help="Random resize aspect ratio (default: 0.75 1.33)",
-)
-parser.add_argument(
-    "--hflip", type=float, default=0.5, help="Horizontal flip training aug probability"
-)
-parser.add_argument(
-    "--vflip", type=float, default=0.0, help="Vertical flip training aug probability"
-)
-parser.add_argument(
-    "--color-jitter",
-    type=float,
-    default=0.4,
-    metavar="PCT",
-    help="Color jitter factor (default: 0.4)",
-)
-parser.add_argument(
-    "--aa",
-    type=str,
-    default="rand-m9-mstd0.5-inc1",
-    metavar="NAME",
-    help='Use AutoAugment policy. "v0" or "original". (default: rand-m9-mstd0.5-inc1)',
-),
-parser.add_argument(
-    "--aug-repeats",
-    type=int,
-    default=0,
-    help="Number of augmentation repetitions (distributed training only) (default: 0)",
-)
-parser.add_argument(
-    "--aug-splits",
-    type=int,
-    default=0,
-    help="Number of augmentation splits (default: 0, valid: 0 or >=2)",
-)
-parser.add_argument(
-    "--jsd-loss",
-    action="store_true",
-    default=False,
-    help="Enable Jensen-Shannon Divergence + CE loss. Use with `--aug-splits`.",
-)
-parser.add_argument(
-    "--bce-loss",
-    action="store_true",
-    default=False,
-    help="Enable BCE loss w/ Mixup/CutMix use.",
-)
-parser.add_argument(
-    "--bce-target-thresh",
-    type=float,
-    default=None,
-    help="Threshold for binarizing softened BCE targets (default: None, disabled)",
-)
-parser.add_argument(
-    "--reprob",
-    type=float,
-    default=0.25,
-    metavar="PCT",
-    help="Random erase prob (default: 0.25)",
-)
-parser.add_argument(
-    "--remode", type=str, default="pixel", help='Random erase mode (default: "pixel")'
-)
-parser.add_argument(
-    "--recount", type=int, default=1, help="Random erase count (default: 1)"
-)
-parser.add_argument(
-    "--resplit",
-    action="store_true",
-    default=False,
-    help="Do not random erase first (clean) augmentation split",
-)
-parser.add_argument(
-    "--mixup",
-    type=float,
-    default=0.8,
-    help="mixup alpha, mixup enabled if > 0. (default: 0.8)",
-)
-parser.add_argument(
-    "--cutmix",
-    type=float,
-    default=1.0,
-    help="cutmix alpha, cutmix enabled if > 0. (default: 1.0)",
-)
-parser.add_argument(
-    "--cutmix-minmax",
-    type=float,
-    nargs="+",
-    default=None,
-    help="cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)",
-)
-parser.add_argument(
-    "--mixup-prob",
-    type=float,
-    default=1.0,
-    help="Probability of performing mixup or cutmix when either/both is enabled",
-)
-parser.add_argument(
-    "--mixup-switch-prob",
-    type=float,
-    default=0.5,
-    help="Probability of switching to cutmix when both mixup and cutmix enabled",
-)
-parser.add_argument(
-    "--mixup-mode",
-    type=str,
-    default="batch",
-    help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"',
-)
-parser.add_argument(
-    "--mixup-off-epoch",
-    default=0,
-    type=int,
-    metavar="N",
-    help="Turn off mixup after this epoch, disabled if 0 (default: 0)",
-)
-parser.add_argument(
-    "--smoothing", type=float, default=0.1, help="Label smoothing (default: 0.1)"
-)
-parser.add_argument(
-    "--train-interpolation",
-    type=str,
-    default="bicubic",
-    help='Training interpolation (random, bilinear, bicubic default: "random")',
-)
-parser.add_argument(
-    "--drop", type=float, default=0.0, metavar="PCT", help="Dropout rate (default: 0.)"
-)
-parser.add_argument(
-    "--drop-connect",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop connect rate, DEPRECATED, use drop-path (default: None)",
-)
-parser.add_argument(
-    "--drop-path",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop path rate (default: None)",
-)
-parser.add_argument(
-    "--drop-block",
-    type=float,
-    default=None,
-    metavar="PCT",
-    help="Drop block rate (default: None)",
-)
-
-# Batch norm parameters (only works with gen_efficientnet based models currently)
-parser.add_argument(
-    "--bn-tf",
-    action="store_true",
-    default=False,
-    help="Use Tensorflow BatchNorm defaults for models that support it (default: False)",
-)
-parser.add_argument(
-    "--bn-momentum",
-    type=float,
-    default=None,
-    help="BatchNorm momentum override (if not None)",
-)
-parser.add_argument(
-    "--bn-eps",
-    type=float,
-    default=None,
-    help="BatchNorm epsilon override (if not None)",
-)
-parser.add_argument(
-    "--sync-bn",
-    action="store_true",
-    help="Enable NVIDIA Apex or Torch synchronized BatchNorm.",
-)
-parser.add_argument(
-    "--dist-bn",
-    type=str,
-    default="reduce",
-    help='Distribute BatchNorm stats between nodes after each epoch ("broadcast", "reduce", or "")',
-)
-parser.add_argument(
-    "--split-bn",
-    action="store_true",
-    help="Enable separate BN layers per augmentation split.",
-)
-
-# Model Exponential Moving Average
-parser.add_argument(
-    "--model-ema",
-    action="store_true",
-    default=True,
-    help="Enable tracking moving average of model weights",
-)
-parser.add_argument(
-    "--model-ema-force-cpu",
-    action="store_true",
-    default=False,
-    help="Force ema to be tracked on CPU, rank=0 node only. Disables EMA validation.",
-)
-parser.add_argument(
-    "--model-ema-decay",
-    type=float,
-    default=0.9995,
-    help="decay factor for model weights moving average (default: 0.9998)",
-)
-
-# Distillation parameters
-parser.add_argument(
-    "--teacher-model",
-    default="regnety_160",
-    type=str,
-    metavar="MODEL",
-    help='Name of teacher model to train (default: "regnety_160"',
-)
-parser.add_argument(
-    "--teacher-path",
-    type=str,
-    default="https://dl.fbaipublicfiles.com/deit/regnety_160-a5fe301d.pth",
-    help="Location of teacher model",
-)
-parser.add_argument(
-    "--distillation-type",
-    default="none",
-    choices=["none", "soft", "hard"],
-    type=str,
-    help="DeiT style hardening or standard softening.",
-)
-parser.add_argument(
-    "--distillation-alpha",
-    default=0.5,
-    type=float,
-    help="loss scale: alpha * base_loss + (1-alpha) * kd_loss",
-)
-parser.add_argument(
-    "--distillation-tau",
-    default=1.0,
-    type=float,
-    help="Temperature to soften teacher logits",
-)
-
-# Misc
-parser.add_argument(
-    "--finetune",
-    action="store_true",
-    default=False,
-    help="If used, loading loss_scaler will be disabled in resume",
-)
-parser.add_argument(
-    "--seed", type=int, default=42, metavar="S", help="random seed (default: 42)"
-)
-parser.add_argument(
-    "--worker-seeding", type=str, default="all", help="worker seed mode (default: all)"
-)
-parser.add_argument(
-    "--log-interval",
-    type=int,
-    default=100,
-    metavar="N",
-    help="how many batches to wait before logging training status",
-)
-parser.add_argument(
-    "--recovery-interval",
-    type=int,
-    default=0,
-    metavar="N",
-    help="how many batches to wait before writing recovery checkpoint",
-)
-parser.add_argument(
-    "--checkpoint-hist",
-    type=int,
-    default=10,
-    metavar="N",
-    help="number of checkpoints to keep (default: 10)",
-)
-parser.add_argument(
-    "-j",
-    "--workers",
-    type=int,
-    default=8,
-    metavar="N",
-    help="how many training processes to use (default: 8)",
-)
-parser.add_argument(
-    "--save-images",
-    action="store_true",
-    default=False,
-    help="save images of input bathes every log interval for debugging",
-)
-parser.add_argument(
-    "--amp",
-    action="store_true",
-    default=False,
-    help="use NVIDIA Apex AMP or Native AMP for mixed precision training",
-)
-parser.add_argument(
-    "--apex-amp",
-    action="store_true",
-    default=False,
-    help="Use NVIDIA Apex AMP mixed precision",
-)
-parser.add_argument(
-    "--native-amp",
-    action="store_true",
-    default=False,
-    help="Use Native Torch AMP mixed precision",
-)
-parser.add_argument(
-    "--no-ddp-bb",
-    action="store_true",
-    default=False,
-    help="Force broadcast buffers for native DDP to off.",
-)
-parser.add_argument(
-    "--channels-last",
-    action="store_true",
-    default=False,
-    help="Use channels_last memory layout",
-)
-parser.add_argument(
-    "--pin-mem",
-    action="store_true",
-    default=False,
-    help="Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.",
-)
-parser.add_argument(
-    "--no-prefetcher",
-    action="store_true",
-    default=False,
-    help="disable fast prefetcher",
-)
-parser.add_argument(
-    "--output",
-    default="",
-    type=str,
-    metavar="PATH",
-    help="path to output folder (default: none, current dir)",
-)
-parser.add_argument(
-    "--experiment",
-    default="",
-    type=str,
-    metavar="NAME",
-    help="name of train experiment, name of sub-folder for output",
-)
-parser.add_argument(
-    "--eval-metric",
-    default="top1",
-    type=str,
-    metavar="EVAL_METRIC",
-    help='Best metric (default: "top1"',
-)
-
-parser.add_argument(
-    "--aircraft-eval-interval",
-    type=int,
-    default=0,
-    metavar="N",
-    help="Run Aircraft zero-shot evaluation every N training batches (0 = only at epoch end).",
-)
-parser.add_argument(
-    "--tta",
-    type=int,
-    default=0,
-    metavar="N",
-    help="Test/inference time augmentation (oversampling) factor. 0=None (default: 0)",
-)
-parser.add_argument(
-    "--local_rank", "--local-rank", default=0, type=int
-)
-parser.add_argument(
-    "--use-multi-epochs-loader",
-    action="store_true",
-    default=False,
-    help="use the multi-epochs-loader to save time at the beginning of every epoch",
-)
-parser.add_argument(
-    "--torchscript",
-    dest="torchscript",
-    action="store_true",
-    help="convert model torchscript for inference",
-)
-parser.add_argument(
-    "--log-wandb",
-    action="store_true",
-    default=False,
-    help="log training and validation metrics to wandb",
-)
-parser.add_argument(
-    "--imagenet-trainset-size",
-    default=1281167,
-    help="Size of imagenet training set for weight decay scheduling.",
-)
-
-parser.add_argument(
-    "--clip-loss-weight",
-    type=float,
-    default=1.0,
-    help="Weight for CLIP feature alignment loss (default: 0.0 = disabled).",
-)
-
-parser.add_argument(
-    "--freeze-backbone",
-    action="store_true",
-    default=False,
-    help="Freeze backbone and train only the projector.",
-)
-parser.add_argument(
-    "--vanilla-eval",
-    action="store_true",
-    default=False,
-    help="Freeze backbone and train only the projector.",
-)
-
-def _parse_args():
-    # Do we have a config file to parse?
-    args_config, remaining = config_parser.parse_known_args()
-    if args_config.config:
-        with open(args_config.config, "r") as f:
-            cfg = yaml.safe_load(f)
-            parser.set_defaults(**cfg)
-
-    # The main arg parser parses the rest of the args, the usual
-    # defaults will have been overridden if config file specified.
-    args = parser.parse_args(remaining)
-
-    # Cache the args as a text string to save them in the output dir later
-    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
-    return args, args_text
-
-# Added by avinash gyawali
-#----------------------------------------------------------------
-
-
-import random
-# ...existing code...
-
-def build_imagenet_clip_text_features(clip_model, device):
-    base_dir = os.path.dirname(__file__)
-    classes_path = os.path.join(base_dir, "imagenet_classes.txt")
-    templates_path = os.path.join(base_dir, "imagenet_templates.txt")
-
-    with open(classes_path, "r") as f:
-        class_names = [line.strip() for line in f if line.strip()]
-    with open(templates_path, "r") as f:
-        templates = [line.strip() for line in f if line.strip()]
-
-    # Sample 5-6 random prompts from all combinations
-    prompt_combinations = [
-        template.format(class_name)
-        for class_name in class_names
-        for template in templates
-    ]
-    sampled_prompts = random.sample(prompt_combinations, k=6)
-    print("\n[DEBUG] Example text prompts for ImageNet classes:")
-    for prompt in sampled_prompts:
-        print("  ", prompt)
-
-    all_class_embeds = []
-    clip_model.eval()
-    with torch.no_grad():
-        for cls in class_names:
-            texts = [t.format(cls) for t in templates]
-            text_tokens = clip.tokenize(texts).to(device)
-            class_feats = clip_model.encode_text(text_tokens)
-            class_feats = class_feats / class_feats.norm(dim=-1, keepdim=True)
-            class_feat = class_feats.mean(dim=0)
-            class_feat = class_feat / class_feat.norm()
-            all_class_embeds.append(class_feat)
-
-    return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
-
-def build_aircraft_clip_text_features(clip_model, class_names, device, template_file):
-    """Build CLIP text features for Aircraft class names using multiple prompt templates."""
-    # Load templates from file
-    with open(template_file, "r") as f:
-        templates = [line.strip() for line in f if line.strip()]
-
-    # Print some example prompts for the first few classes
-    print("\n[DEBUG] Example text prompts for aircraft classes:")
-    for class_name in class_names[:3]:  # Show for first 3 classes
-        for template in templates:
-            print("  ", template.format(class_name))
-        print("---")
-
-    all_text_features = []
-    with torch.no_grad():
-        for class_name in class_names:
-            texts = [template.format(class_name) for template in templates]
-            text_tokens = torch.cat([clip.tokenize(t) for t in texts]).to(device)
-            text_features = clip_model.encode_text(text_tokens)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-            # Average features for this class over all templates
-            class_feature = text_features.mean(dim=0)
-            class_feature = class_feature / class_feature.norm()
-            all_text_features.append(class_feature)
-        all_text_features = torch.stack(all_text_features, dim=0)
-    return all_text_features  # [num_classes, dim]
-    
-def setup_aircraft_zeroshot(aircraft_root, device, template_file, num_workers=4, batch_size=64):
-    """
-    Create Aircraft dataloader and pre-computed CLIP text features
-    for zero-shot evaluation. Images will be encoded by FastViT+projector,
-    NOT by CLIP's image encoder.
-    """
-    if not aircraft_root or not os.path.isdir(aircraft_root):
-        raise ValueError(f"Invalid aircraft_data_dir: {aircraft_root}")
-
-    # CLIP model only for TEXT encoding
-    clip_model, preprocess = clip.load("ViT-L/14", device=device, jit=False)
-    clip_model.eval()
-
-    # NOTE: use the `aircraft` class from the module
-    dataset = aircraft_dataloader(
-        root=aircraft_root,
-        train=False,
-        transform=preprocess,
-    )
-    # pick class names from dataset
-    class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
-    if class_names is None:
-        raise RuntimeError("Aircraft dataset has no 'categories' or 'classes' attribute.")
-
-    text_features = build_aircraft_clip_text_features(
-        clip_model, class_names, device=device, template_file=template_file
-    )
-
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
-    )
-
-    return {
-        "loader": loader,
-        "text_features": text_features,  # [num_classes, dim]
-        "class_names": class_names,
-    }
-
-def evaluate_aircraft_zeroshot(aircraft_ctx, model, device):
-    """
-    Run Aircraft zero-shot evaluation using FastViT + projector
-    as image encoder and CLIP text features as class prototypes.
-
-    Returns top-1 and top-5 accuracy in %.
-    """
-    loader = aircraft_ctx["loader"]
-    text_features = aircraft_ctx["text_features"]  # [C, D]
-
-    correct_top1 = 0
-    correct_top5 = 0
-    total = 0
-
-    # handle DDP-wrapped models (NativeDDP, ApexDDP, etc.)
-    backbone = model
-    if hasattr(model, "module"):
-        backbone = model.module
-
-    was_training = model.training
-    model.eval()
-
-    with torch.no_grad():
-        for images, targets in loader:
-            images = images.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
-
-            # get backbone features
-            feats, _, _ = backbone(images)
-
-            if isinstance(feats, (tuple, list)):
-                feats = feats[0]
-            if feats.ndim == 4:
-                feats = feats.mean(dim=[2, 3])  # global average pool if spatial
-
-            feats = feats.float()
-            feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)  # [B, D]
-    
-            # Ensure both are the same dtype
-            if feats.dtype != text_features.dtype:
-                text_features = text_features.to(feats.dtype)
-
-            logits = 100.0 * feats @ text_features.T  # [B, num_classes]
-            preds_top1 = logits.argmax(dim=-1)
-            _, preds_top5 = logits.topk(5, dim=-1)
-
-            correct_top1 += (preds_top1 == targets).sum().item()
-            correct_top5 += sum([t in p for t, p in zip(targets, preds_top5)])
-            total += targets.size(0)
-
-    if was_training:
-        model.train()
-
-    acc1 = 100.0 * correct_top1 / max(total, 1)
-    acc5 = 100.0 * correct_top5 / max(total, 1)
-    return acc1, acc5
-
-
-def run_aircraft_zeroshot_eval(
-    aircraft_ctx,
-    args,
-    model,
-    when: str,
-    epoch: Union[int, None] = None,
-    batch_idx: Union[int, None] = None,
-    ):
-    
-    if aircraft_ctx is None or args.rank != 0:
-        return None, None
-
-    acc1, acc5 = evaluate_aircraft_zeroshot(
-        aircraft_ctx, model=model, device=args.device
-    )
-
-    # ----- logging strings -----
-    if when == "before_train":
-        msg = "Aircraft zero-shot before training"
-    elif when == "epoch":
-        msg = f"Aircraft zero-shot after epoch {epoch}"
-    elif when == "batch":
-        msg = f"Aircraft zero-shot at epoch {epoch}, batch {batch_idx}"
-    else:
-        msg = "Aircraft zero-shot"
-
-    _logger.info(f"{msg}: Acc@1 = {acc1:.2f}%")
-    _logger.info(f"{msg}: Acc@5 = {acc5:.2f}%")
-
-    # ----- wandb logging -----
-    if args.log_wandb and has_wandb:
-        log_dict = {}
-        if when == "before_train":
-            log_dict["aircraft_zeroshot/top1_before_train"] = acc1
-            log_dict["aircraft_zeroshot/top5_before_train"] = acc5
-            log_dict["epoch"] = -1
-        elif when == "epoch":
-            log_dict["aircraft_zeroshot/top1"] = acc1
-            log_dict["aircraft_zeroshot/top5"] = acc5
-            if epoch is not None:
-                log_dict["epoch"] = epoch
-        elif when == "batch":
-            log_dict["aircraft_zeroshot/top1_batch"] = acc1
-            log_dict["aircraft_zeroshot/top5_batch"] = acc5
-            if epoch is not None:
-                log_dict["epoch"] = epoch
-            if batch_idx is not None:
-                log_dict["batch"] = batch_idx
-
-        wandb.log(log_dict)
-
-    return acc1, acc5
-
 
 
 def main():
@@ -1130,97 +102,12 @@ def main():
                 "Metrics not being logged to wandb, try `pip install wandb`"
             )
 
-    args.prefetcher = not args.no_prefetcher
-    args.distributed = False
-    if "WORLD_SIZE" in os.environ:
-        args.distributed = int(os.environ["WORLD_SIZE"]) > 1
-    args.device = "cuda:0"
-    args.world_size = 1
-    args.rank = 0  # global rank
-    if args.distributed:
-        args.device = "cuda:%d" % args.local_rank
-        torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(backend="nccl", init_method="env://")
-        args.world_size = torch.distributed.get_world_size()
-        args.rank = torch.distributed.get_rank()
-        _logger.info(
-            "Training in distributed mode with multiple processes, 1 GPU per process. Process %d, total %d."
-            % (args.rank, args.world_size)
-        )
-    else:
-        _logger.info("Training with a single process on 1 GPUs.")
-    assert args.rank >= 0
+    
+    use_amp = basic_setup(args)
 
-    # resolve AMP arguments based on PyTorch / Apex availability
-    use_amp = None
-    if args.amp:
-        # `--amp` chooses native amp before apex (APEX ver not actively maintained)
-        if has_native_amp:
-            args.native_amp = True
-        elif has_apex:
-            args.apex_amp = True
-    if args.apex_amp and has_apex:
-        use_amp = "apex"
-    elif args.native_amp and has_native_amp:
-        use_amp = "native"
-    elif args.apex_amp or args.native_amp:
-        _logger.warning(
-            "Neither APEX or native Torch AMP is available, using float32. "
-            "Install NVIDA apex or upgrade to PyTorch 1.6"
-        )
-
-    random_seed(args.seed, args.rank)
-
-    extra_args = {}
-    extra_args['freeze_backbone'] = args.freeze_backbone
+    
+    model , num_aug_splits, data_config = setup_model(args)
         
-    model = create_model(
-        args.model,
-        pretrained=args.pretrained,
-        num_classes=args.num_classes,
-        drop_rate=args.drop,
-        drop_connect_rate=args.drop_connect,  # DEPRECATED, use drop_path
-        drop_path_rate=args.drop_path,
-        drop_block_rate=args.drop_block,
-        global_pool=args.gp,
-        bn_tf=args.bn_tf,
-        bn_momentum=args.bn_momentum,
-        bn_eps=args.bn_eps,
-        scriptable=args.torchscript,
-        checkpoint_path=args.initial_checkpoint,
-        **extra_args
-    )
-    if args.num_classes is None:
-        assert hasattr(
-            model, "num_classes"
-        ), "Model must have `num_classes` attr if not set on cmd line/config."
-        args.num_classes = (
-            model.num_classes
-        )  # FIXME handle model default vs config num_classes more elegantly
-
-    if args.local_rank == 0:
-        _logger.info(
-            f"Model {safe_model_name(args.model)} created, param count:{sum([m.numel() for m in model.parameters()])}"
-        )
-
-    data_config = resolve_data_config(
-        vars(args), model=model, verbose=args.local_rank == 0
-    )
-
-    # setup augmentation batch splits for contrastive loss or split bn
-    num_aug_splits = 0
-    if args.aug_splits > 0:
-        assert args.aug_splits > 1, "A split of 1 makes no sense"
-        num_aug_splits = args.aug_splits
-
-    # enable split bn (separate bn stats per batch-portion)
-    if args.split_bn:
-        assert num_aug_splits > 1 or args.resplit
-        model = convert_splitbn_model(model, max(num_aug_splits, 2))
-
-    # move model to GPU, enable channels last layout if set
-    model.cuda()
-
     # Added by avinash Gyawali
     #-----------------------------------------------------------
     # with torch.no_grad():
@@ -1256,71 +143,8 @@ def main():
         )
 
         clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
-        # projector = nn.Linear(fastvit_dim, clip_dim).to(args.device)
 
     #-----------------------------------------------------------
-
-    if args.channels_last:
-        model = model.to(memory_format=torch.channels_last)
-
-    # Save the projector before training (only on main process)
-    # if projector is not None and args.rank == 0:
-    if args.rank == 0:
-        if args.experiment:
-            exp_name = args.experiment
-        else:
-            exp_name = "-".join(
-                [
-                    datetime.now().strftime("%Y%m%d-%H%M%S"),
-                    safe_model_name(args.model),
-                    str(data_config["input_size"][-1]),
-                ]
-            )
-        output_dir = get_outdir(
-            args.output if args.output else "./output/train", exp_name
-        )
-        os.makedirs(output_dir, exist_ok=True)
-        # projector_ckpt = {
-        #     "epoch": 0,
-        #     "state_dict": projector.state_dict(),
-        # }
-        # proj_path = os.path.join(output_dir, "projector_init.pth.tar")
-        # torch.save(projector_ckpt, proj_path)
-        # _logger.info(f"Saved initial projector to {proj_path}")
-
-
-    # if args.freeze_backbone:
-    #     for param in model.parameters():
-    #         param.requires_grad = False
-    #     if args.local_rank == 0:
-    #         print("[INFO] Backbone frozen. Only projector will be trained.")
-
-    # setup synchronized BatchNorm for distributed training
-    if args.distributed and args.sync_bn:
-        assert not args.split_bn
-        if has_apex and use_amp == "apex":
-            # Apex SyncBN preferred unless native amp is activated
-            model = convert_syncbn_model(model)
-        else:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        if args.local_rank == 0:
-            _logger.info(
-                "Converted model to use Synchronized BatchNorm. WARNING: You may have issues if using "
-                "zero initialized BN layers (enabled by default for ResNets) while sync-bn enabled."
-            )
-
-    if args.torchscript:
-        assert not use_amp == "apex", "Cannot use APEX AMP with torchscripted model"
-        assert not args.sync_bn, "Cannot use SyncBatchNorm with torchscripted model"
-        model = torch.jit.script(model)
-
-    # if args.freeze_backbone:
-    #     optimizer = create_optimizer_v2(
-    #         projector.parameters(),
-    #         **optimizer_kwargs(cfg=args),
-    #     )
-    # else:
-
     optimizer = create_optimizer_v2(
         list(model.parameters()),
         **optimizer_kwargs(cfg=args),
@@ -1332,9 +156,7 @@ def main():
         for p in param_group["params"]:
             if p.requires_grad:
                 name = param_to_name.get(p, "unnamed")
-                _logger.info(f"{name:<80} | {str(p.shape):<40} | {p.requires_grad}")
-
-    
+                _logger.info(f"{name:<80} | {str(p.shape):<40}")
 
 
     # setup automatic mixed-precision (AMP) loss scaling and op casting
@@ -1418,15 +240,7 @@ def main():
                     device_ids=[args.local_rank],
                     broadcast_buffers=not args.no_ddp_bb,
                 )
-            # Always wrap projector if it exists and is trainable
-            if projector is not None:
-                projector = NativeDDP(
-                    projector,
-                    device_ids=[args.local_rank],
-                    broadcast_buffers=not args.no_ddp_bb,
-                )
-        # NOTE: EMA model does not need to be wrapped by DDP
-
+        
     # setup learning rate schedule and starting epoch
     lr_scheduler, num_epochs = create_scheduler(args, optimizer)
     start_epoch = 0
@@ -1606,29 +420,33 @@ def main():
     # -----------------------------------------------------------------
     # Aircraft zero-shot evaluation setup (CLIP-based)
     aircraft_zeroshot = None
-    if args.aircraft_data_dir and args.rank == 0:
-        template_file = os.path.join(
-            "CLIP", "dataloaders", "templates", "fgvc_aircraft.txt"
-        )
-        aircraft_zeroshot = setup_aircraft_zeroshot(
-            args.aircraft_data_dir,
+    #  args.aircraft_data_dir and args.rank == 0:
+    if args.val_set:
+        # template_file = os.path.join( "CLIP", "dataloaders", "templates", "fgvc_aircraft.txt")
+        template_file = os.path.join( "CLIP", "dataloaders", "templates", f"{args.val_set}.txt")
+        validation_zeroshot = setup_validation_zeroshot(
+            validation_dataset = args.val_set,
+            validation_root = args.validation_data_dir,
             device=args.device,
             template_file=template_file,
             num_workers=args.workers,
             batch_size=args.validation_batch_size or args.batch_size,
+            args=args, 
         )
         _logger.info(
             f"Initialized Aircraft zero-shot evaluation with "
-            f"{len(aircraft_zeroshot['class_names'])} classes."
+            f"{len(validation_zeroshot['class_names'])} classes."
         )
 
         # --- Run zero-shot validation before training ---
         run_aircraft_zeroshot_eval(
-            aircraft_zeroshot,
+            validation_zeroshot,
             args,
             model,
             when="before_train",
             epoch=-1,
+            has_wandb=has_wandb,
+
         )
     # -----------------------------------------------------------------
     if args.distillation_type != "none":
@@ -1658,9 +476,7 @@ def main():
                     str(data_config["input_size"][-1]),
                 ]
             )
-        output_dir = get_outdir(
-            args.output if args.output else "./output/train", exp_name
-        )
+        output_dir = get_outdir(args.output if args.output else "./output/train", exp_name)
         decreasing = True if eval_metric == "loss" else False
         saver = CheckpointSaver(
             model=model,
@@ -1680,416 +496,148 @@ def main():
     best_aircraft_acc1 = None
     best_aircraft_epoch = None
 
-    try:
-        for epoch in range(start_epoch, num_epochs):
-            if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
-                loader_train.sampler.set_epoch(epoch)
+    if args.distributed:
+        torch.distributed.barrier()
 
-            train_metrics = train_one_epoch(
-                epoch,
-                model,
-                loader_train,
-                optimizer,
-                train_loss_fn,
-                args,
-                lr_scheduler=lr_scheduler,
-                saver=saver,
-                output_dir=output_dir,
-                amp_autocast=amp_autocast,
-                loss_scaler=loss_scaler,
-                model_ema=model_ema,
-                mixup_fn=mixup_fn,
-                wd_scheduler=wd_scheduler,
-                clip_text_features=clip_text_features,
-                clip_logit_scale=clip_logit_scale,
-                clip_loss_fn=clip_loss_fn, # Clip loss funciton
-                aircraft_zeroshot=aircraft_zeroshot,  # <--- NEW
+    import pdb
+    pdb.set_trace()
+    for epoch in range(start_epoch, num_epochs):
+        if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
+            loader_train.sampler.set_epoch(epoch)
+
+        train_metrics = train_one_epoch(
+            epoch,
+            model,
+            loader_train,
+            optimizer,
+            train_loss_fn,
+            args,
+            lr_scheduler=lr_scheduler,
+            saver=saver,
+            output_dir=output_dir,
+            amp_autocast=amp_autocast,
+            loss_scaler=loss_scaler,
+            model_ema=model_ema,
+            mixup_fn=mixup_fn,
+            wd_scheduler=wd_scheduler,
+            clip_text_features=clip_text_features,
+            clip_logit_scale=clip_logit_scale,
+            clip_loss_fn=clip_loss_fn, # Clip loss funciton
+            aircraft_zeroshot=aircraft_zeroshot,  # <--- NEW
+        )
+
+        if args.distributed and args.dist_bn in ("broadcast", "reduce"):
+            if args.local_rank == 0:
+                _logger.info("Distributing BatchNorm running means and vars")
+            distribute_bn(model, args.world_size, args.dist_bn == "reduce")
+
+        if args.vanilla_eval:
+            eval_metrics = validate(
+                model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast
             )
 
-            if args.distributed and args.dist_bn in ("broadcast", "reduce"):
-                if args.local_rank == 0:
-                    _logger.info("Distributing BatchNorm running means and vars")
-                distribute_bn(model, args.world_size, args.dist_bn == "reduce")
-
-            if args.vanilla_eval:
-                eval_metrics = validate(
-                    model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast
-                )
-
-            if args.vanilla_eval:
-                if model_ema is not None and not args.model_ema_force_cpu:
-                    if args.distributed and args.dist_bn in ("broadcast", "reduce"):
-                        distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
-                    ema_eval_metrics = validate(
-                        model_ema.module,
-                        loader_eval,
-                        validate_loss_fn,
-                        args,
-                        amp_autocast=amp_autocast,
-                        log_suffix=" (EMA)",
-                    )
-                    eval_metrics = ema_eval_metrics
-
-
-            # ---------------- Aircraft zero-shot evaluation after epochs ----------------
-            if aircraft_zeroshot is not None and args.rank == 0:
-                acc1_air, acc5_air = run_aircraft_zeroshot_eval(
-                    aircraft_zeroshot,
+        if args.vanilla_eval:
+            if model_ema is not None and not args.model_ema_force_cpu:
+                if args.distributed and args.dist_bn in ("broadcast", "reduce"):
+                    distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
+                ema_eval_metrics = validate(
+                    model_ema.module,
+                    loader_eval,
+                    validate_loss_fn,
                     args,
-                    model,
-                    when="epoch",
-                    epoch=epoch,
+                    amp_autocast=amp_autocast,
+                    log_suffix=" (EMA)",
                 )
-                
-                eval_metrics = dict(top1=acc1_air, top5=acc5_air )
+                eval_metrics = ema_eval_metrics
 
-                # Save best backbone + projector based on Aircraft Acc@1
-                if acc1_air is not None:
-                    if best_aircraft_acc1 is None or acc1_air > best_aircraft_acc1:
-                        best_aircraft_acc1 = acc1_air
-                        best_aircraft_epoch = epoch
 
-                        if output_dir is not None:
-                            # unwrap DDP if needed
-                            backbone = model
-                            if hasattr(model, "module"):
-                                backbone = model.module
-
-                            # Save backbone
-                            model_path = os.path.join( output_dir, "model_best_aircraft.pth.tar")
-                            torch.save(
-                                {
-                                    "epoch": epoch,
-                                    "aircraft_acc1": acc1_air,
-                                    "state_dict": backbone.state_dict(),
-                                },
-                                model_path,
-                            )
-
-                            _logger.info(
-                                f"Saved Aircraft-best model at epoch {epoch} "
-                                f"(Acc@1={acc1_air:.2f}%)"
-                            )
-                        
+        # ---------------- Aircraft zero-shot evaluation after epochs ----------------
+        if args.val_set:
+            acc1_air, acc5_air = run_aircraft_zeroshot_eval(
+                validation_zeroshot,
+                args,
+                model,
+                when="epoch",
+                epoch=epoch,
+                has_wandb=has_wandb,
+            )
             
-            # ----------------------------------------------------------------
-            if lr_scheduler is not None:
-                # step LR for next epoch
-                lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
+            eval_metrics = dict(top1=acc1_air, top5=acc5_air )
 
-            if output_dir is not None:
-                update_summary(
-                    epoch,
-                    train_metrics,
-                    eval_metrics,
-                    os.path.join(output_dir, "summary.csv"),
-                    write_header=best_metric is None,
-                    log_wandb=args.log_wandb and has_wandb,
-                )
-            
-            # if saver is not None:
-            #     # save proper checkpoint with main eval metric (e.g. ImageNet top1)
-            #     save_metric = eval_metrics[eval_metric]
-            #     best_metric, best_epoch = saver.save_checkpoint(
-            #         epoch, metric=save_metric
-            #     )
+            # Save best backbone + projector based on Aircraft Acc@1
+            if acc1_air is not None:
+                if best_aircraft_acc1 is None or acc1_air > best_aircraft_acc1:
+                    best_aircraft_acc1 = acc1_air
+                    best_aircraft_epoch = epoch
 
-            #     # ---- save BEST projector separately ----
-            #     # Only when this epoch becomes the new best
-            #     if (
-            #         and output_dir is not None
-            #         and args.rank == 0
-            #         and best_epoch == epoch
-            #     ):
-            #         best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
-            #         torch.save(
-            #             {
-            #                 "epoch": epoch,
-            #                 "metric": best_metric,
-            #             },
-            #             best_proj_path,
-            #         )
-            #         _logger.info(
-            #             f"Saved best projector to {best_proj_path} "
-            #             f"(metric={best_metric:.4f}, epoch={epoch})"
-            #         )
+                    if output_dir is not None:
+                        # unwrap DDP if needed
+                        backbone = model
+                        if hasattr(model, "module"):
+                            backbone = model.module
 
-    except KeyboardInterrupt:
-        pass
+                        # Save backbone
+                        model_path = os.path.join( output_dir, "model_best_aircraft.pth.tar")
+                        torch.save(
+                            {
+                                "epoch": epoch,
+                                "aircraft_acc1": acc1_air,
+                                "state_dict": backbone.state_dict(),
+                            },
+                            model_path,
+                        )
+
+                        _logger.info(
+                            f"Saved Aircraft-best model at epoch {epoch} "
+                            f"(Acc@1={acc1_air:.2f}%)"
+                        )
+                    
+        
+        # ----------------------------------------------------------------
+        if lr_scheduler is not None:
+            # step LR for next epoch
+            lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
+
+        if output_dir is not None:
+            update_summary(
+                epoch,
+                train_metrics,
+                eval_metrics,
+                os.path.join(output_dir, "summary.csv"),
+                write_header=best_metric is None,
+                log_wandb=args.log_wandb and has_wandb,
+            )
+        
+        # if saver is not None:
+        #     # save proper checkpoint with main eval metric (e.g. ImageNet top1)
+        #     save_metric = eval_metrics[eval_metric]
+        #     best_metric, best_epoch = saver.save_checkpoint(
+        #         epoch, metric=save_metric
+        #     )
+
+        #     # ---- save BEST projector separately ----
+        #     # Only when this epoch becomes the new best
+        #     if (
+        #         and output_dir is not None
+        #         and args.rank == 0
+        #         and best_epoch == epoch
+        #     ):
+        #         best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
+        #         torch.save(
+        #             {
+        #                 "epoch": epoch,
+        #                 "metric": best_metric,
+        #             },
+        #             best_proj_path,
+        #         )
+        #         _logger.info(
+        #             f"Saved best projector to {best_proj_path} "
+        #             f"(metric={best_metric:.4f}, epoch={epoch})"
+        #         )
+
+
     if best_metric is not None:
         _logger.info("*** Best metric: {0} (epoch {1})".format(best_metric, best_epoch))
-
-
-def train_one_epoch(
-    epoch,
-    model,
-    loader,
-    optimizer,
-    loss_fn,
-    args,
-    lr_scheduler=None,
-    saver=None,
-    output_dir=None,
-    amp_autocast=suppress,
-    loss_scaler=None,
-    model_ema=None,
-    mixup_fn=None,
-    wd_scheduler=None,
-    clip_text_features=None,
-    clip_logit_scale=None,
-    clip_loss_fn=None,
-    aircraft_zeroshot=None,  # <--- NEW
-    ):
-
-    if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
-        if args.prefetcher and loader.mixup_enabled:
-            loader.mixup_enabled = False
-        elif mixup_fn is not None:
-            mixup_fn.mixup_enabled = False
-
-    second_order = hasattr(optimizer, "is_second_order") and optimizer.is_second_order
-    batch_time_m = AverageMeter()
-    data_time_m = AverageMeter()
-    losses_m = AverageMeter()
-
-    model.train()
-
-    end = time.time()
-    last_idx = len(loader) - 1
-    num_updates = epoch * len(loader)
-    for batch_idx, (input, target) in enumerate(loader):
-        last_batch = batch_idx == last_idx
-        data_time_m.update(time.time() - end)
-        if not args.prefetcher:
-            input, target = input.cuda(), target.cuda()
-            if mixup_fn is not None:
-                input, target = mixup_fn(input, target)
-        if args.channels_last:
-            input = input.contiguous(memory_format=torch.channels_last)
-
-        with amp_autocast():
-            projected_embed, output, x = model(input)
-            # base_loss = loss_fn(input, output, target)
-            base_loss = loss_fn(output, target)
-
-            total_loss = base_loss
-
-        #-------------Added by avinash gyawali-------------------------#
-        # --- CLIP feature alignment loss ----------------------------#
-        if (
-            args.clip_loss_weight > 0.0
-            and clip_loss_fn is not None
-            and clip_text_features is not None
-            and clip_logit_scale is not None
-            and isinstance(target, torch.Tensor)
-            and target.dtype == torch.long
-        ):
-            # get backbone features if available, else fall back to output
-            feats = projected_embed
-            if isinstance(feats, (tuple, list)):
-                feats = feats[0]
-            # --- Add this block for FastViT feature map ---
-            if feats.ndim == 4 and feats.shape[2] > 1 and feats.shape[3] > 1:
-                feats = feats.mean(dim=[2, 3])  # Global average pooling
-            # ----------------------------------------------
-            feats = feats.float()
-            feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
-
-            batch_text_feats = clip_text_features[target]
-            batch_text_feats = batch_text_feats / ( batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6 )
-            batch_text_feats = batch_text_feats.float()
-
-            clip_loss = clip_loss_fn( feats, batch_text_feats, clip_logit_scale )
-
-            total_loss = base_loss + args.clip_loss_weight * clip_loss
-        loss = total_loss
-
-        #-------------------------------------------------------------------------#
-        if not args.distributed:
-            losses_m.update(loss.item(), input.size(0))
-        optimizer.zero_grad()
-        if loss_scaler is not None:
-            loss_scaler(
-                loss,
-                optimizer,
-                clip_grad=args.clip_grad,
-                clip_mode=args.clip_mode,
-                parameters=model_parameters(
-                    model, exclude_head="agc" in args.clip_mode
-                ),
-                create_graph=second_order,
-            )
-        else:
-            loss.backward(create_graph=second_order)
-            if args.clip_grad is not None:
-                dispatch_clip_grad(
-                    model_parameters(model, exclude_head="agc" in args.clip_mode),
-                    value=args.clip_grad,
-                    mode=args.clip_mode,
-                )
-            optimizer.step()
-
-        if model_ema is not None:
-            model_ema.update(model)
-
-        # -----------------------------------------------------------------
-        # Optional Aircraft zero-shot eval every N batches inside epoch
-        if (
-            aircraft_zeroshot is not None
-            and args.rank == 0
-            and getattr(args, "aircraft_eval_interval", 0) > 0
-            and (batch_idx + 1) % args.aircraft_eval_interval == 0
-        ):
-            run_aircraft_zeroshot_eval(
-                aircraft_zeroshot,
-                args,
-                model,
-                when="batch",
-                epoch=epoch,
-                batch_idx=batch_idx + 1,
-            )
-        # -----------------------------------------------------------------
-
-        torch.cuda.synchronize()
-        num_updates += 1
-        batch_time_m.update(time.time() - end)
-        if last_batch or batch_idx % args.log_interval == 0:
-            lrl = [param_group["lr"] for param_group in optimizer.param_groups]
-            lr = sum(lrl) / len(lrl)
-            param_groups = list(optimizer.param_groups)
-            wd0 = param_groups[0]["weight_decay"]
-            wd1 = param_groups[1]["weight_decay"] if len(param_groups) > 1 else wd0
-
-            # --- Add CLIP loss to log ---
-            clip_loss_val = clip_loss.item() if 'clip_loss' in locals() else 0.0
-
-            if args.local_rank == 0:
-                _logger.info(
-                    "Train: {} [{:>4d}/{} ({:>3.0f}%)]  "
-                    "Loss: {loss.val:#.4g} ({loss.avg:#.3g})  "
-                    "CLIP Loss: {clip_loss:.6f}  "
-                    "Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  "
-                    "({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  "
-                    "LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}    "
-                    "Data: {data_time.val:.3f} ({data_time.avg:.3f})".format(
-                        epoch,
-                        batch_idx,
-                        len(loader),
-                        100.0 * batch_idx / last_idx,
-                        loss=losses_m,
-                        clip_loss=clip_loss_val,
-                        batch_time=batch_time_m,
-                        rate=input.size(0) * args.world_size / batch_time_m.val,
-                        rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
-                        lr=lr,
-                        wd0=wd0,
-                        wd1=wd1,
-                        data_time=data_time_m,
-                    )
-                )
-
-                if args.save_images and output_dir:
-                    torchvision.utils.save_image(
-                        input,
-                        os.path.join(output_dir, "train-batch-%d.jpg" % batch_idx),
-                        padding=0,
-                        normalize=True,
-                    )
-
-        if (
-            saver is not None
-            and args.recovery_interval
-            and (last_batch or (batch_idx + 1) % args.recovery_interval == 0)
-        ):
-            saver.save_recovery(epoch, batch_idx=batch_idx)
-
-        if lr_scheduler is not None:
-            lr_scheduler.step_update(num_updates=num_updates, metric=losses_m.avg)
-        if wd_scheduler is not None:
-            wd_scheduler.update_weight_decay(optimizer)
-
-        end = time.time()
-        # end for
-
-    if hasattr(optimizer, "sync_lookahead"):
-        optimizer.sync_lookahead()
-
-    return OrderedDict([("loss", losses_m.avg)])
-
-
-def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=""):
-    batch_time_m = AverageMeter()
-    losses_m = AverageMeter()
-    top1_m = AverageMeter()
-    top5_m = AverageMeter()
-
-    model.eval()
-
-    end = time.time()
-    last_idx = len(loader) - 1
-    with torch.no_grad():
-        for batch_idx, (input, target) in enumerate(loader):
-            last_batch = batch_idx == last_idx
-            if not args.prefetcher:
-                input = input.cuda()
-                target = target.cuda()
-            if args.channels_last:
-                input = input.contiguous(memory_format=torch.channels_last)
-
-            with amp_autocast():
-                output = model(input)
-            if isinstance(output, (tuple, list)):
-                output = output[0]
-
-            # augmentation reduction
-            reduce_factor = args.tta
-            if reduce_factor > 1:
-                output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
-                target = target[0 : target.size(0) : reduce_factor]
-
-            loss = loss_fn(output, target)
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-
-            if args.distributed:
-                reduced_loss = reduce_tensor(loss.data, args.world_size)
-                acc1 = reduce_tensor(acc1, args.world_size)
-                acc5 = reduce_tensor(acc5, args.world_size)
-            else:
-                reduced_loss = loss.data
-
-            torch.cuda.synchronize()
-
-            losses_m.update(reduced_loss.item(), input.size(0))
-            top1_m.update(acc1.item(), output.size(0))
-            top5_m.update(acc5.item(), output.size(0))
-
-            batch_time_m.update(time.time() - end)
-            end = time.time()
-            if args.local_rank == 0 and (
-                last_batch or batch_idx % args.log_interval == 0
-            ):
-                log_name = "Test" + log_suffix
-                _logger.info(
-                    "{0}: [{1:>4d}/{2}]  "
-                    "Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  "
-                    "Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  "
-                    "Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  "
-                    "Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})".format(
-                        log_name,
-                        batch_idx,
-                        last_idx,
-                        batch_time=batch_time_m,
-                        loss=losses_m,
-                        top1=top1_m,
-                        top5=top5_m,
-                    )
-                )
-
-    metrics = OrderedDict(
-        [("loss", losses_m.avg), ("top1", top1_m.avg), ("top5", top5_m.avg)]
-    )
-
-    return metrics
 
 
 if __name__ == "__main__":

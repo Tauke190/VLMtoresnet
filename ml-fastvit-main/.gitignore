@@ -134,3 +134,5 @@ dmypy.json
 
 
 *.pth*
+*.yaml
+*.csv
