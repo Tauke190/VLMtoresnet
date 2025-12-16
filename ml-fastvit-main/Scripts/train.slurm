@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=OR_3
+#SBATCH --job-name=backbonefreeze
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -28,46 +28,24 @@ echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
 # Change directory
-cd /home/av354855/fastvit
+cd /home/av354855/VLMtoresnet/ml-fastvit-main
 
 # Run unbuffered
-
-# python -u train_baseline.py \
-#     /home/c3-0/datasets/ImageNet \
-#     --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
-#     --model fastvit_sa36 \
-#     --initial-checkpoint fastvit_sa36.pth.tar \
-#     -b 128 \
-#     --lr 1e-3 \
-#     --log-wandb \
-#     --native-amp \
-#     --output ./checkpoints \
-#     --input-size 3 256 256 \
-#     --mixup 0 --cutmix 0 \
-#     --drop-path 0.35 \
-#     --aircraft-eval-interval 1000 \
-#     --experiment CLIPtoResNet \
-#     --workers 4 \
-#     --epochs 50
-
-python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
-    /home/c3-0/datasets/ImageNet \
-    --model fastvit_sa36 \
-    --aircraft-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
-    --initial-checkpoint fastvit_sa36.pth.tar \
-    -b 256 \
-    --lr 1e-3 \
-    --log-wandb \
-    --native-amp \
-    --output ./checkpoints \
-    --input-size 3 256 256 \
-    --drop-path 0.35 \
-    --mixup 0 --cutmix 0 \
+python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
+    /mnt/SSD2/ImageNet1k/ \
+    --model fastvit_sa36_projector \
+    --val-set "fgvc_aircraft" \
+    --validation-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
+    --validation-eval-interval 1000 \
+    --initial-checkpoint Weights/fastvit_sa36.pth.tar \
+    --output ./checkpointsfreezebackbone \
+    -b 64 --lr 1e-3 \
+    --log-wandb --native-amp --input-size 3 256 256 \
+    --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
-    --workers 4 \
-    --epochs 50 \
-    --aircraft-eval-interval 1000 \
-    --freeze-backbone
+    --workers 6 --epochs 50 \
+    --freeze-backbone \
+    --debug
 
 # Optional cleanup
 conda deactivate
