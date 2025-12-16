@@ -15,12 +15,12 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --validation-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
     --validation-eval-interval 1000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
-    --output ./checkpoints \
-    -b 256 --lr 1e-3 \
+    --output ./checkpointsfreezebackbone \
+    -b 64 --lr 1e-3 \
     --log-wandb --native-amp --input-size 3 256 256 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
-    --workers 4 --epochs 50 \
+    --workers 6 --epochs 50 \
     --freeze-backbone \
     --debug
 
