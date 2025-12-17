@@ -24,6 +24,7 @@ from timm.data import (
 )
 import clip 
 from CLIP.dataloaders import aircraft as aircraft_dataloader
+from CLIP.dataloaders import Food101 as food101_dataloader
 
 
 from timm.data.loader import fast_collate, OrderedDistributedSampler, _worker_init
@@ -78,8 +79,8 @@ def build_imagenet_clip_text_features(clip_model, device):
 
     return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
 
-def build_aircraft_clip_text_features(clip_model, class_names, device, template_file):
-    """Build CLIP text features for Aircraft class names using multiple prompt templates."""
+def build_clip_text_features(clip_model, class_names, device, template_file):
+    """Build CLIP text features for validation set class names using multiple prompt templates."""
     # Load templates from file
     with open(template_file, "r") as f:
         templates = [line.strip() for line in f if line.strip()]
@@ -114,8 +115,9 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
     clip_model.eval()
 
     if validation_dataset == 'fgvc_aircraft':
-        # NOTE: use the `aircraft` class from the module
-        dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess, )
+        dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess)
+    if validation_dataset == 'food101':
+        dataset = food101_dataloader( root=validation_root, train=False, transform=preprocess)
 
     
 
@@ -124,7 +126,7 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
     if class_names is None:
         raise RuntimeError("Aircraft dataset has no 'categories' or 'classes' attribute.")
 
-    text_features = build_aircraft_clip_text_features(
+    text_features = build_clip_text_features(
         clip_model, class_names, device=device, template_file=template_file
     )
 

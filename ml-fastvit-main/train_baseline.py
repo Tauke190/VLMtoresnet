@@ -61,12 +61,13 @@ from misc.distillation_loss import DistillationLoss
 from misc.cosine_annealing import CosineWDSchedule
 
 from Functions.train import train_one_epoch
-from Functions.eval import run_aircraft_zeroshot_eval, validate
+from Functions.eval import run_zeroshot_eval, validate
 from Functions.argument import _parse_args
 from Functions.setup import (
-    build_imagenet_clip_text_features, build_aircraft_clip_text_features, 
+    build_imagenet_clip_text_features, build_clip_text_features, 
     setup_validation_zeroshot, setup_model, setup_distributed, basic_setup
     )
+import pdb
 
 
 try:
@@ -108,18 +109,6 @@ def main():
     
     model , num_aug_splits, data_config = setup_model(args)
         
-    # Added by avinash Gyawali
-    #-----------------------------------------------------------
-    # with torch.no_grad():
-    #     dummy = torch.randn(2, *data_config["input_size"], device=args.device)
-    #     if hasattr(model, "forward_features"):
-    #         feat = model.forward_features(dummy)
-    #     else:
-    #         feat = model(dummy)
-    #     if isinstance(feat, (tuple, list)):
-    #         feat = feat[0]
-    #     feat = feat.view(feat.size(0), -1)
-    #     fastvit_dim = feat.shape[-1]
     clip_text_features = None
     clip_loss_fn = None
     clip_logit_scale = None
@@ -392,7 +381,6 @@ def main():
             pin_memory=args.pin_mem,
         )
     
-
     # setup loss function
     if args.jsd_loss:
         assert num_aug_splits > 1  # JSD only valid with aug splits set
@@ -418,35 +406,32 @@ def main():
     validate_loss_fn = nn.CrossEntropyLoss().cuda()
 
     # -----------------------------------------------------------------
-    # Aircraft zero-shot evaluation setup (CLIP-based)
-    aircraft_zeroshot = None
-    #  args.aircraft_data_dir and args.rank == 0:
+    # Generic zero-shot evaluation setup (CLIP-based)
+    zeroshot_eval_ctx = None
     if args.val_set:
-        # template_file = os.path.join( "CLIP", "dataloaders", "templates", "fgvc_aircraft.txt")
-        template_file = os.path.join( "CLIP", "dataloaders", "templates", f"{args.val_set}.txt")
-        validation_zeroshot = setup_validation_zeroshot(
-            validation_dataset = args.val_set,
-            validation_root = args.validation_data_dir,
+        template_file = os.path.join("CLIP", "dataloaders", "templates", f"{args.val_set}.txt")
+        zeroshot_eval_ctx = setup_validation_zeroshot(
+            validation_dataset=args.val_set,
+            validation_root=args.validation_data_dir,
             device=args.device,
             template_file=template_file,
             num_workers=args.workers,
             batch_size=args.validation_batch_size or args.batch_size,
-            args=args, 
+            args=args,
         )
         _logger.info(
-            f"Initialized Aircraft zero-shot evaluation with "
-            f"{len(validation_zeroshot['class_names'])} classes."
+            f"Initialized {args.val_set} zero-shot evaluation with "
+            f"{len(zeroshot_eval_ctx['class_names'])} classes."
         )
 
         # --- Run zero-shot validation before training ---
-        run_aircraft_zeroshot_eval(
-            validation_zeroshot,
+        run_zeroshot_eval(
+            zeroshot_eval_ctx,
             args,
             model,
             when="before_train",
             epoch=-1,
             has_wandb=has_wandb,
-
         )
     # -----------------------------------------------------------------
     if args.distillation_type != "none":
@@ -492,15 +477,14 @@ def main():
         with open(os.path.join(output_dir, "args.yaml"), "w") as f:
             f.write(args_text)
 
-    # ---- Track best Aircraft zero-shot Acc@1 ----
-    best_aircraft_acc1 = None
-    best_aircraft_epoch = None
+    # ---- Track best zero-shot Acc@1 ----
+    best_zeroshot_acc1 = None
+    best_zeroshot_epoch = None
 
     if args.distributed:
         torch.distributed.barrier()
 
-    import pdb
-    pdb.set_trace()
+    # pdb.set_trace()
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
             loader_train.sampler.set_epoch(epoch)
@@ -523,7 +507,7 @@ def main():
             clip_text_features=clip_text_features,
             clip_logit_scale=clip_logit_scale,
             clip_loss_fn=clip_loss_fn, # Clip loss funciton
-            aircraft_zeroshot=aircraft_zeroshot,  # <--- NEW
+            zeroshot_eval_ctx=zeroshot_eval_ctx,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):
@@ -551,24 +535,23 @@ def main():
                 eval_metrics = ema_eval_metrics
 
 
-        # ---------------- Aircraft zero-shot evaluation after epochs ----------------
+        # ---------------- Generic zero-shot evaluation after epochs ----------------
         if args.val_set:
-            acc1_air, acc5_air = run_aircraft_zeroshot_eval(
-                validation_zeroshot,
+            acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval(
+                zeroshot_eval_ctx,
                 args,
                 model,
                 when="epoch",
                 epoch=epoch,
                 has_wandb=has_wandb,
             )
-            
-            eval_metrics = dict(top1=acc1_air, top5=acc5_air )
+            eval_metrics = dict(top1=acc1_zeroshot, top5=acc5_zeroshot)
 
-            # Save best backbone + projector based on Aircraft Acc@1
-            if acc1_air is not None:
-                if best_aircraft_acc1 is None or acc1_air > best_aircraft_acc1:
-                    best_aircraft_acc1 = acc1_air
-                    best_aircraft_epoch = epoch
+            # Save best backbone + projector based on zero-shot Acc@1
+            if acc1_zeroshot is not None:
+                if best_zeroshot_acc1 is None or acc1_zeroshot > best_zeroshot_acc1:
+                    best_zeroshot_acc1 = acc1_zeroshot
+                    best_zeroshot_epoch = epoch
 
                     if output_dir is not None:
                         # unwrap DDP if needed
@@ -577,22 +560,20 @@ def main():
                             backbone = model.module
 
                         # Save backbone
-                        model_path = os.path.join( output_dir, "model_best_aircraft.pth.tar")
+                        model_path = os.path.join(output_dir, "model_best_zeroshot.pth.tar")
                         torch.save(
                             {
                                 "epoch": epoch,
-                                "aircraft_acc1": acc1_air,
+                                "zeroshot_acc1": acc1_zeroshot,
                                 "state_dict": backbone.state_dict(),
                             },
                             model_path,
                         )
 
                         _logger.info(
-                            f"Saved Aircraft-best model at epoch {epoch} "
-                            f"(Acc@1={acc1_air:.2f}%)"
+                            f"Saved zero-shot-best model at epoch {epoch} "
+                            f"(Acc@1={acc1_zeroshot:.2f}%)"
                         )
-                    
-        
         # ----------------------------------------------------------------
         if lr_scheduler is not None:
             # step LR for next epoch
@@ -608,34 +589,6 @@ def main():
                 log_wandb=args.log_wandb and has_wandb,
             )
         
-        # if saver is not None:
-        #     # save proper checkpoint with main eval metric (e.g. ImageNet top1)
-        #     save_metric = eval_metrics[eval_metric]
-        #     best_metric, best_epoch = saver.save_checkpoint(
-        #         epoch, metric=save_metric
-        #     )
-
-        #     # ---- save BEST projector separately ----
-        #     # Only when this epoch becomes the new best
-        #     if (
-        #         and output_dir is not None
-        #         and args.rank == 0
-        #         and best_epoch == epoch
-        #     ):
-        #         best_proj_path = os.path.join(output_dir, "projector_best.pth.tar")
-        #         torch.save(
-        #             {
-        #                 "epoch": epoch,
-        #                 "metric": best_metric,
-        #             },
-        #             best_proj_path,
-        #         )
-        #         _logger.info(
-        #             f"Saved best projector to {best_proj_path} "
-        #             f"(metric={best_metric:.4f}, epoch={epoch})"
-        #         )
-
-
     if best_metric is not None:
         _logger.info("*** Best metric: {0} (epoch {1})".format(best_metric, best_epoch))
 

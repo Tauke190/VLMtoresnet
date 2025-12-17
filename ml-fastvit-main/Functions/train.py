@@ -14,7 +14,6 @@ import torchvision.utils
 
 from timm.models import model_parameters
 
-
 _logger = logging.getLogger("train")
 
 def train_one_epoch(
@@ -22,7 +21,7 @@ def train_one_epoch(
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
     model_ema=None, mixup_fn=None, wd_scheduler=None,
     clip_text_features=None, clip_logit_scale=None, clip_loss_fn=None,
-    aircraft_zeroshot=None,  # <--- NEW
+    zeroshot_eval_ctx=None,
     ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -122,15 +121,15 @@ def train_one_epoch(
             model_ema.update(model)
 
         # -----------------------------------------------------------------
-        # Optional Aircraft zero-shot eval every N batches inside epoch
+        # Optional generic zero-shot eval every N batches inside epoch
         if (
-            aircraft_zeroshot is not None
+            zeroshot_eval_ctx is not None
             and args.rank == 0
-            and getattr(args, "aircraft_eval_interval", 0) > 0
-            and (batch_idx + 1) % args.aircraft_eval_interval == 0
+            and getattr(args, "zeroshot_eval_interval", 0) > 0
+            and (batch_idx + 1) % args.zeroshot_eval_interval == 0
         ):
-            run_aircraft_zeroshot_eval(
-                aircraft_zeroshot,
+            run_zeroshot_eval(
+                zeroshot_eval_ctx,
                 args,
                 model,
                 when="batch",

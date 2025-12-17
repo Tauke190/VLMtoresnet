@@ -15,6 +15,7 @@ from .cars import Cars
 from .flowers import OxfordFlowers
 from .eurosat import EuroSAT
 from .ucf101 import UCF101
+
 import random
 from torchvision.transforms import InterpolationMode
 BICUBIC = InterpolationMode.BICUBIC

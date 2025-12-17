@@ -11,13 +11,13 @@ canonical PyTorch, standard Python style, and good performance. Repurpose as you
 
 Hacked together by Ross Wightman (https://github.com/rwightman)
 """
-import argparse
 import os
 import csv
 import glob
 import time
 import logging
 import sys
+import copy
 from pathlib import Path
 from collections import OrderedDict
 from contextlib import suppress
@@ -48,6 +48,8 @@ from timm.utils import (
     set_jit_legacy,
 )
 
+from Functions.validation_arguments import _parse_args
+
 import models
 from models.modules.mobileone import reparameterize_model
 
@@ -71,273 +73,11 @@ from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
 from CLIP.dataloaders.food101 import Food101 as Food101Dataset
 from CLIP.dataloaders.cars import Cars as StanfordCarsDataset
 from CLIP.dataloaders.caltech101 import Caltech101 as Caltech101Dataset
+from CLIP.dataloaders.ucf101 import UCF101 as UCF101Dataset
+from torchvision.datasets import FER2013, GTSRB, Country211, RenderedSST2, ImageFolder
 
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger("validate")
-
-
-parser = argparse.ArgumentParser(description="PyTorch ImageNet Validation")
-parser.add_argument("data", metavar="DIR", help="path to dataset")
-## Remove --dataset argument. Use only --zeroshot-dataset for zero-shot mode.
-parser.add_argument(
-    "--split",
-    metavar="NAME",
-    default="validation",
-    help="dataset split (default: validation)",
-)
-parser.add_argument(
-    "--dataset-download",
-    action="store_true",
-    default=False,
-    help="Allow download of dataset for torch/ and tfds/ datasets that support it.",
-)
-parser.add_argument(
-    "--model",
-    "-m",
-    metavar="NAME",
-    default="dpn92",
-    help="model architecture (default: dpn92)",
-)
-parser.add_argument(
-    "-j",
-    "--workers",
-    default=4,
-    type=int,
-    metavar="N",
-    help="number of data loading workers (default: 2)",
-)
-parser.add_argument(
-    "-b",
-    "--batch-size",
-    default=256,
-    type=int,
-    metavar="N",
-    help="mini-batch size (default: 256)",
-)
-parser.add_argument(
-    "--img-size",
-    default=None,
-    type=int,
-    metavar="N",
-    help="Input image dimension, uses model default if empty",
-)
-parser.add_argument(
-    "--input-size",
-    default=[3, 256, 256],
-    nargs=3,
-    type=int,
-    metavar="N N N",
-    help="Input all image dimensions (d h w, e.g. --input-size 3 256 256), uses model default if empty",
-)
-parser.add_argument(
-    "--crop-pct",
-    default=None,
-    type=float,
-    metavar="N",
-    help="Input image center crop pct",
-)
-parser.add_argument(
-    "--mean",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="MEAN",
-    help="Override mean pixel value of dataset",
-)
-parser.add_argument(
-    "--std",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="STD",
-    help="Override std deviation of of dataset",
-)
-parser.add_argument(
-    "--interpolation",
-    default="",
-    type=str,
-    metavar="NAME",
-    help="Image resize interpolation type (overrides model)",
-)
-parser.add_argument(
-    "--class-map",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help='path to class to idx mapping file (default: "")',
-)
-parser.add_argument(
-    "--gp",
-    default=None,
-    type=str,
-    metavar="POOL",
-    help="Global pool type, one of (fast, avg, max, avgmax, avgmaxc). Model default if None.",
-)
-parser.add_argument(
-    "--log-freq",
-    default=10,
-    type=int,
-    metavar="N",
-    help="batch logging frequency (default: 10)",
-)
-parser.add_argument(
-    "--checkpoint",
-    default="",
-    type=str,
-    metavar="PATH",
-    help="path to latest checkpoint (default: none)",
-)
-parser.add_argument(
-    "--pretrained", dest="pretrained", action="store_true", help="use pre-trained model"
-)
-parser.add_argument("--num-gpu", type=int, default=1, help="Number of GPUS to use")
-parser.add_argument(
-    "--test-pool", dest="test_pool", action="store_true", help="enable test time pool"
-)
-parser.add_argument(
-    "--no-prefetcher",
-    action="store_true",
-    default=False,
-    help="disable fast prefetcher",
-)
-parser.add_argument(
-    "--pin-mem",
-    action="store_true",
-    default=False,
-    help="Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.",
-)
-parser.add_argument(
-    "--channels-last",
-    action="store_true",
-    default=False,
-    help="Use channels_last memory layout",
-)
-parser.add_argument(
-    "--amp",
-    action="store_true",
-    default=False,
-    help="Use AMP mixed precision. Defaults to Apex, fallback to native Torch AMP.",
-)
-parser.add_argument(
-    "--apex-amp",
-    action="store_true",
-    default=False,
-    help="Use NVIDIA Apex AMP mixed precision",
-)
-parser.add_argument(
-    "--native-amp",
-    action="store_true",
-    default=False,
-    help="Use Native Torch AMP mixed precision",
-)
-parser.add_argument(
-    "--tf-preprocessing",
-    action="store_true",
-    default=False,
-    help="Use Tensorflow preprocessing pipeline (require CPU TF installed",
-)
-parser.add_argument(
-    "--use-ema",
-    dest="use_ema",
-    action="store_true",
-    help="use ema version of weights if present",
-)
-parser.add_argument(
-    "--torchscript",
-    dest="torchscript",
-    action="store_true",
-    help="convert model torchscript for inference",
-)
-parser.add_argument(
-    "--legacy-jit",
-    dest="legacy_jit",
-    action="store_true",
-    help="use legacy jit mode for pytorch 1.5/1.5.1/1.6 to get back fusion performance",
-)
-parser.add_argument(
-    "--results-file",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Output csv file for validation results (summary)",
-)
-parser.add_argument(
-    "--real-labels",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Real labels JSON file for imagenet evaluation",
-)
-parser.add_argument(
-    "--valid-labels",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Valid label indices txt file for validation of partial label space",
-)
-parser.add_argument(
-    "--use-inference-mode",
-    dest="use_inference_mode",
-    action="store_true",
-    default=False,
-    help="use inference mode version of model definition.",
-)
-
-parser.add_argument(
-    "--eval-mode",
-    default="logits",
-    choices=["logits", "zeroshot", "linearprobe"],
-    help=(
-        "Evaluation mode: 'logits' uses classification head, 'zeroshot' uses CLIP text "
-        "embeddings, 'linearprobe' trains a logistic-regression head on frozen projected embeddings."
-    ),
-)
-parser.add_argument(
-    "--zeroshot-dataset",
-    default="",
-    type=str,
-    help="Dataset identifier for zero-shot prompts (e.g. 'food101'). If empty, falls back to --dataset.",
-)
-parser.add_argument(
-    "--zeroshot-backbone",
-    default="ViT-L/14",
-    type=str,
-    help="CLIP backbone to use for zero-shot text embeddings.",
-)
-parser.add_argument(
-    "--zeroshot-classes-dir",
-    default="",
-    type=str,
-    help="Optional override path to CLIP classes txt directory.",
-)
-parser.add_argument(
-    "--zeroshot-templates-dir",
-    default="",
-    type=str,
-    help="Optional override path to CLIP templates txt directory.",
-)
-
-parser.add_argument(
-    "--linearprobe-dataset",
-    default="",
-    type=str,
-    help=(
-        "Dataset identifier for linear-probe evaluation (passed to timm.create_dataset). "
-        "If empty, uses ImageFolder/ImageTar with --data as root."
-    ),
-)
-parser.add_argument(
-    "--linearprobe-C",
-    default=0.316,
-    type=float,
-    help="Inverse regularization strength C for logistic regression.",
-)
-parser.add_argument(
-    "--linearprobe-max-iter",
-    default=1000,
-    type=int,
-    help="Maximum iterations for logistic regression optimizer.",
-)
 
 
 def _read_txt(file_path):
@@ -357,7 +97,7 @@ def _build_zeroshot_weights(args, device):
     Uses CLIP/dataloaders/classes/<zeroshot-dataset>.txt and CLIP/dataloaders/templates/<zeroshot-dataset>.txt
     for class names and text templates.
     """
-    dataset_key = args.zeroshot_dataset if args.zeroshot_dataset else "food101"
+    dataset_key = args.dataset
 
     repo_root = Path(__file__).resolve().parent
     clip_root = repo_root / "CLIP"
@@ -384,7 +124,6 @@ def _build_zeroshot_weights(args, device):
     classes = _read_txt(class_file)
     templates = _read_txt(template_file)
 
-    # Ensure CLIP package (vendored in this repo) is importable as `clip`
     if str(clip_root) not in sys.path:
         sys.path.insert(0, str(clip_root))
 
@@ -408,9 +147,7 @@ def _build_zeroshot_weights(args, device):
                     print(f"  Prompt: {t}")
             text_tokens = clip.tokenize(texts).to(device)
             class_embeddings = clip_model.encode_text(text_tokens)
-            class_embeddings = class_embeddings / class_embeddings.norm(
-                dim=-1, keepdim=True
-            )
+            class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
             class_embedding = class_embeddings.mean(dim=0)
             class_embedding = class_embedding / class_embedding.norm()
             zeroshot_weights.append(class_embedding)
@@ -419,15 +156,42 @@ def _build_zeroshot_weights(args, device):
     return zeroshot_weights, len(classes)  # Return class count too
 
 
+def _build_custom_dataset(dataset_name, root, is_train, transform, gtsrb_download=False):
+    """Build custom downstream datasets for both linear-probe and zero-shot paths.
+    """
+    if dataset_name == "fgvc_aircraft":
+        return AircraftDataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "food101":
+        return Food101Dataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "cars":
+        return StanfordCarsDataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "ucf101":
+        return UCF101Dataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "fer2013":
+        split = "train" if is_train else "test"
+        return FER2013(root=root, split=split, transform=transform)
+    if dataset_name == "gtsrb":
+        split = "train" if is_train else "test"
+        return GTSRB(root=root, split=split, transform=transform, download=gtsrb_download)
+    if dataset_name == "country211":
+        split = "train" if is_train else "test"
+        return Country211(root=root, split=split, transform=transform, download=False)
+    if dataset_name == "sst2":
+        split = "train" if is_train else "test"
+        return RenderedSST2(root=root, split=split, transform=transform, download=False)
+    if dataset_name in ("imagenet", "imagenet1k"):
+        split_dir = "train" if is_train else "validation"
+        split_root = os.path.join(root, split_dir)
+        return ImageFolder(root=split_root, transform=transform)
+
+
+
 def _extract_linearprobe_features(model, loader, device):
     """Extract projected image embeddings and labels for linear-probe training/testing.
-
-     Model returns (projected_embed, logits, feature map) when output is a tuple,
+       in Model returns (projected_embed, logits, feature map) when output is a tuple,
     """
     feats = []
     labels = []
-
-
 
     model.eval()
     with torch.no_grad():
@@ -469,36 +233,23 @@ def _linearprobe_eval(args, model, data_config):
 
     clip_model, preprocess = clip.load('ViT-L/14', device)
 
+    dataset_name = args.dataset if args.dataset else ""
 
-    dataset_name = args.linearprobe_dataset if args.linearprobe_dataset else ""
-
-    # NOTE: root must point to the actual dataset directory on disk.
-    # For FGVC-Aircraft this should typically be the "data" folder that
-    # contains variants.txt, images_variant_*.txt, and the images/ subdir.
-    if dataset_name == "aircraft" or dataset_name == "fgvc_aircraft":
-        train_dataset = AircraftDataset(root=args.data, train=True, transform=preprocess)
-        eval_dataset = AircraftDataset(root=args.data, train=False, transform=preprocess)
-    elif dataset_name == "food101":
-        train_dataset = Food101Dataset(root=args.data, train=True, transform=preprocess)
-        eval_dataset = Food101Dataset(root=args.data, train=False, transform=preprocess)
-    else:
-        # Build train and eval datasets via timm's factory following ImageFolder
-        train_dataset = create_dataset(
-            root=args.data,
-            name=dataset_name,
-            split="train",
-            download=args.dataset_download,
-            load_bytes=args.tf_preprocessing,
-            class_map=args.class_map,
-        )
-        eval_dataset = create_dataset(
-            root=args.data,
-            name=dataset_name,
-            split=args.split,
-            download=args.dataset_download,
-            load_bytes=args.tf_preprocessing,
-            class_map=args.class_map,
-        )
+    # Prefer custom datasets when available; otherwise fall back to timm.create_dataset.
+    train_dataset = _build_custom_dataset(
+        dataset_name=dataset_name,
+        root=args.data,
+        is_train=True,
+        transform=preprocess,
+        gtsrb_download=False,
+    )
+    eval_dataset = _build_custom_dataset(
+        dataset_name=dataset_name,
+        root=args.data,
+        is_train=False,
+        transform=preprocess,
+        gtsrb_download=False,
+    )
 
     crop_pct = data_config["crop_pct"]
 
@@ -629,18 +380,23 @@ def validate(args):
 
     #---------------------------------------------------------------
 
-
     # Linear-probe evaluation (separate code path, returns early)
     if args.eval_mode == "linearprobe":
         return _linearprobe_eval(args, model, data_config)
-
      # Optional zero-shot setup (CLIP text encoder + classifier weights)
-    zeroshot_weights = None
-    class_count = None
     if args.eval_mode == "zeroshot":
         device = torch.device("cuda")
         zeroshot_weights, class_count = _build_zeroshot_weights(args, device=device)
+        dataset = _build_custom_dataset(
+            dataset_name=args.dataset,
+            root=args.data,
+            is_train=False,
+            transform=None,
+            gtsrb_download=True,
+        )
+        print(f"[Zero-shot] Test dataset size: {len(dataset) if 'dataset' in locals() else 'N/A'}")
 
+ #---------------------------------------------------------------
     # Dataset selection
     if args.eval_mode == "logits":
         # Standard ImageNet-style evaluation (ImageFolder / ImageTar via timm)
@@ -652,49 +408,8 @@ def validate(args):
             load_bytes=args.tf_preprocessing,
             class_map=args.class_map,
         )
-    if args.eval_mode == "zeroshot":
-        # Zero-shot evaluation: allow special-case loaders for datasets that
-        # do not follow ImageFolder layout (e.g., FGVC-Aircraft).
-        if args.zeroshot_dataset in ["aircraft", "fgvc_aircraft"]:
-            dataset = AircraftDataset(root=args.data, train=False, transform=None)      # Use custom Aircraft dataset; let timm.create_loader handle
-        if args.zeroshot_dataset in ["food101"]:
-            dataset = Food101Dataset(root=args.data, train=False, transform=None)
-        if args.zeroshot_dataset in ["stanfordcars"]:
-            dataset = StanfordCarsDataset(root=args.data, train=False, transform=None)
-        else:
-            # For other zero-shot datasets that follow ImageFolder/ImageTar
-            # layout, we can still use timm's generic dataset factory.
-            dataset = create_dataset(
-                root=args.data,
-                name=args.zeroshot_dataset,
-                split=args.split,
-                download=args.dataset_download,
-                load_bytes=args.tf_preprocessing,
-                class_map=args.class_map,
-            )
+   
 
-    if  args.eval_mode == "linearprobe":
-        # Zero-shot evaluation: allow special-case loaders for datasets that
-        # do not follow ImageFolder layout (e.g., FGVC-Aircraft).
-        if args.linearprobe_dataset in ["aircraft", "fgvc_aircraft"]:
-            dataset = AircraftDataset(root=args.data, train=False, transform=None)      # Use custom Aircraft dataset; let timm.create_loader handle
-        if args.linearprobe_dataset in ["food101"]:
-            dataset = Food101Dataset(root=args.data, train=False, transform=None)
-        # if args.zeroshot_dataset in ["stanfordcars"]:
-            # dataset = StanfordCarsDataset(root=args.data, train=False, transform=None)
-        else:
-            # For other zero-shot datasets that follow ImageFolder/ImageTar
-            # layout, we can still use timm's generic dataset factory.
-            dataset = create_dataset(
-                root=args.data,
-                name=args.zeroshot_dataset,
-                split=args.split,
-                download=args.dataset_download,
-                load_bytes=args.tf_preprocessing,
-                class_map=args.class_map,
-            )
-
- #---------------------------------------------------------------
     if args.valid_labels:
         with open(args.valid_labels, "r") as f:
             valid_labels = {int(line.rstrip()) for line in f}
@@ -740,6 +455,8 @@ def validate(args):
             input = input.contiguous(memory_format=torch.channels_last)
         model(input)
         end = time.time()
+        if args.eval_mode == "zeroshot":
+            eval_start = time.time()
         for batch_idx, (input, target) in enumerate(loader):
             if args.no_prefetcher:
                 target = target.cuda()
@@ -752,8 +469,7 @@ def validate(args):
                 raw_output = model(input)
 
             if args.eval_mode == "zeroshot":
-                # Use projected CLIP-space embeddings from the model and
-                # classify via similarity to CLIP text embeddings.
+                # Use projected CLIP-space embeddings from the model and classify via similarity to CLIP text embeddings.
                 if isinstance(raw_output, tuple):
                     image_features = raw_output[0]
 
@@ -764,7 +480,6 @@ def validate(args):
 
                 image_features = image_features.float()
                 zeroshot_weights = zeroshot_weights.float()
-                
                 logits = 100.0 * image_features @ zeroshot_weights
                 output = logits
                 loss = criterion(logits, target)
@@ -806,6 +521,9 @@ def validate(args):
                         top5=top5,
                     )
                 )
+        if args.eval_mode == "zeroshot":
+            eval_end = time.time()
+            print(f"[Zero-shot] Text-based evaluation time: {eval_end - eval_start:.2f} seconds")
 
     if real_labels is not None:
         # real labels mode replaces topk values at the end
@@ -833,7 +551,7 @@ def validate(args):
 
 def main():
     setup_default_logging()
-    args = parser.parse_args()
+    args, args_text = _parse_args()
     model_cfgs = []
     model_names = []
     if os.path.isdir(args.checkpoint):
@@ -900,7 +618,48 @@ def main():
         if len(results):
             write_results(results_file, results)
     else:
-        validate(args)
+        # When --dataset is set to "all", loop over the predefined set of
+        # downstream datasets and run evaluation in the *currently selected*
+        # eval mode (args.eval_mode) for each, using fixed roots. Otherwise,
+        # keep the original single-dataset behaviour.
+        if args.dataset == "all":
+            multi_datasets = [
+                ("fgvc_aircraft", "/mnt/SSD2/fgvc-aircraft-2013b/data"),
+                ("food101", "/mnt/SSD2/food-101"),
+                ("cars", "/mnt/SSD2/stanford_cars"),
+                ("ucf101", "/mnt/SSD2/UCF101_midframes"),
+                ("gtsrb", "/mnt/SSD2/gtsrb"),
+                ("sst2", "/mnt/SSD2/rendered-sst2"),
+                ("imagenet1k", "/mnt/SSD2/ImageNet1k")
+            ]
+
+            summary = []
+            for dataset_name, dataset_root in multi_datasets:
+                run_args = copy.deepcopy(args)
+                run_args.dataset = dataset_name
+                run_args.data = dataset_root
+
+                _logger.info(
+                    "Running %s evaluation on dataset '%s' (data=%s)",
+                    run_args.eval_mode,
+                    dataset_name,
+                    dataset_root,
+                )
+                result = validate(run_args)
+                entry = OrderedDict(dataset=dataset_name, eval_mode=run_args.eval_mode)
+                if isinstance(result, dict):
+                    entry.update(result)
+                summary.append(entry)
+
+            print("\n==== Multi-dataset evaluation summary (dataset=all) ====")
+            for r in summary:
+                print(
+                    f"{r['dataset']:>12} [{r['eval_mode']:^10}]  "
+                    f"Top-1: {r.get('top1', float('nan')):.3f}  "
+                    f"Top-5: {r.get('top5', float('nan')):.3f}"
+                )
+        else:
+            validate(args)
 
 
 def write_results(results_file, results):
