@@ -86,7 +86,7 @@ def build_clip_text_features(clip_model, class_names, device, template_file):
         templates = [line.strip() for line in f if line.strip()]
 
     # Print some example prompts for the first few classes
-    print("\n[DEBUG] Example text prompts for aircraft classes:")
+    print("\n[DEBUG] Example text prompts for validation dataset classes:")
     for class_name in class_names[:3]:  # Show for first 3 classes
         for template in templates:
             print("  ", template.format(class_name))
@@ -118,8 +118,6 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
         dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess)
     if validation_dataset == 'food101':
         dataset = food101_dataloader( root=validation_root, train=False, transform=preprocess)
-
-    
 
     # pick class names from dataset
     class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
@@ -296,8 +294,3 @@ def basic_setup(args):
         os.makedirs(output_dir, exist_ok=True)
 
     return use_amp 
-
-
-
-
-

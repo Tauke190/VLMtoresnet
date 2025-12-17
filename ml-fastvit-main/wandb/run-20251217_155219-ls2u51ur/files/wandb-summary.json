@@ -1,1 +1,0 @@
-{"zeroshot/top1":0.8544303797468354,"train_loss":9.120177097320557,"_wandb":{"runtime":193},"zeroshot/top5":4.924841772151899,"zeroshot/top1_before_train":0.8267405063291139,"zeroshot/top5_before_train":5.0474683544303796,"epoch":0,"_step":2,"eval_top1":0.8544303797468354,"_runtime":193,"eval_top5":4.924841772151899,"_timestamp":1.7660049154512715e+09}

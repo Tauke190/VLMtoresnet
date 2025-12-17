@@ -35,7 +35,7 @@ def evaluate_zeroshot(eval_ctx, model, device, channels_last=None, amp_autocast=
     batch_size = loader.batch_size
     if rank == 0:
         _logger.info(f"Evaluating.... {len(loader)} Iterations on a B={loader.batch_size}, with {len(loader) * loader.batch_size} datapoints")
-        # print(type(model))
+        print(type(model))
     with torch.no_grad():
         for images, targets in loader:
             images = images.to(device, non_blocking=True)
