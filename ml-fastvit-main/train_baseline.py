@@ -499,8 +499,6 @@ def main():
     if args.distributed:
         torch.distributed.barrier()
 
-    import pdb
-    pdb.set_trace()
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
             loader_train.sampler.set_epoch(epoch)
@@ -565,7 +563,7 @@ def main():
             eval_metrics = dict(top1=acc1_air, top5=acc5_air )
 
             # Save best backbone + projector based on Aircraft Acc@1
-            if acc1_air is not None:
+            if acc1_air is not None and args.rank == 0 :
                 if best_aircraft_acc1 is None or acc1_air > best_aircraft_acc1:
                     best_aircraft_acc1 = acc1_air
                     best_aircraft_epoch = epoch

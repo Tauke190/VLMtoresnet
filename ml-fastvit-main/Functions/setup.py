@@ -113,6 +113,8 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
     clip_model, preprocess = clip.load("ViT-L/14", device=device, jit=False)
     clip_model.eval()
 
+    preprocess.transforms[0].size = args.input_size[-1]
+    preprocess.transforms[1].size = args.input_size[1:]
     if validation_dataset == 'fgvc_aircraft':
         # NOTE: use the `aircraft` class from the module
         dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess, )

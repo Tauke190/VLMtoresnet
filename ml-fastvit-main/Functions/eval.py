@@ -45,10 +45,9 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, device, channels_last=None ,
     batch_size = loader.batch_size
     if rank  == 0:
         _logger.info(f"Evaluating.... {len(loader)} Iteratiopns on a B={loader.batch_size}, with {len(loader) * loader.batch_size} datapoints")
-        print(type(model))
     with torch.no_grad():
         for images, targets in loader:
-            print(images.shape)
+            # print(images.shape)
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
@@ -84,12 +83,12 @@ def evaluate_aircraft_zeroshot(aircraft_ctx, model, device, channels_last=None ,
             # correct_top5 += sum([t in p for t, p in zip(targets, preds_top5)])
             # total += targets.size(0)
 
-            print("1... ", acc1, world_size)
+            # print("1... ", acc1, world_size)
             if distributed:
                 acc1 = reduce_tensor(acc1, world_size)
                 acc5 = reduce_tensor(acc5, world_size)
             
-            print("2... ", acc1, world_size)
+            # print("2... ", acc1, world_size)
             top1_m.update(acc1.item(), batch_size)
             top5_m.update(acc5.item(), batch_size)
 

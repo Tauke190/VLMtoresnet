@@ -42,7 +42,8 @@ def train_one_epoch(
     last_idx = len(loader) - 1
     num_updates = epoch * len(loader)
     
-    _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={loader.loader.batch_size}, with {len(loader) * loader.loader.batch_size} datapoints")
+    if args.rank  == 0:
+        _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={loader.loader.batch_size}, with {len(loader) * loader.loader.batch_size} datapoints")
     for batch_idx, (input, target) in enumerate(loader):
         if args.debug and batch_idx % 100 ==0 and batch_idx != 0 :
                 break 
