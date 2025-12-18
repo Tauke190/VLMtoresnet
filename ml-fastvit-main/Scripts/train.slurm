@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=backbonefreeze
+#SBATCH --job-name=u_f_b
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -36,12 +36,11 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --validation-data-dir /home/c3-0/datasets/food-101 \
     --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
-    --output ./checkpointsfreezebackbone \
+    --output ./checkpointsunfrozen \
     -b 40 --lr 1e-3 \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 6 --epochs 50 \
-    --freeze-backbone
 
 conda deactivate

@@ -17,7 +17,7 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --workers 6 --epochs 50 \
     --freeze-backbone \
-    --log-wandb --experiment CLIPtoResNet
+    --log-wandb --experiment CLIPtoResNet \
     --debug
     
 
