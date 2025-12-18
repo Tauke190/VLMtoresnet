@@ -4,7 +4,7 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 conda activate fastvit
 
 NUM_GPU=2
-CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
+python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /mnt/SSD2/ImageNet1k/ \
     --model fastvit_sa36_projector \
     --val-set "food101" \
@@ -18,6 +18,8 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     --workers 6 --epochs 50 \
     --freeze-backbone \
     --log-wandb --experiment CLIPtoResNet
+    --debug
+    
 
 # Initialized Aircraft zero-shot evaluation with 100 classes.
 # Evaluating.... 14 Iteratiopns on a B=256, with 3584 datapoints

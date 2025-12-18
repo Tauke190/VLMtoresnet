@@ -12,7 +12,6 @@
 module load anaconda3
 module load cuda
 
-# ? Properly initialize conda in non-interactive mode
 eval "$(conda shell.bash hook)"
 
 # Activate your conda environment
@@ -22,7 +21,6 @@ echo "Running on node: $(hostname)"
 echo "GPU info:"
 nvidia-smi
 
-# export CUDA_VISIBLE_DEVICES=2,3
 echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
@@ -39,11 +37,11 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpointsfreezebackbone \
-    -b 64 --lr 1e-3 \
+    -b 40 --lr 1e-3 \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 6 --epochs 50 \
-    --freeze-backbone \
+    --freeze-backbone
 
 conda deactivate

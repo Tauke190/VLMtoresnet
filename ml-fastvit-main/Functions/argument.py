@@ -742,7 +742,7 @@ def _parse_args():
         type=int,
         default=0,
         metavar="N",
-        help="Run Aircraft zero-shot evaluation every N training batches (0 = only at epoch end).",
+        help="Run evaluation every N training batches (0 = only at epoch end).",
     )
     parser.add_argument(
         "--tta",
