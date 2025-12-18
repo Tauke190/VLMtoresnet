@@ -1,11 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=fastvit_unfrozen
-#SBATCH --output=fastvit%j.out
-#SBATCH --error=fastvit%j.err
-#SBATCH --cpus-per-task=2
-#SBATCH --constraint=gmem48
-#SBATCH --gres=gpu:ampere:2
-#SBATCH --mem=48G
+#SBATCH --job-name=backbonefreeze
+#SBATCH --output=ucf_output/slurm-%j.out
+#SBATCH --gres-flags=enforce-binding
+#SBATCH -p gpu
+#SBATCH -C gmem48
+#SBATCH --gres=gpu:2
+#SBATCH --mem-per-cpu=6G 
+#SBATCH -c8
+
 
 # Load necessary modules
 module load anaconda3

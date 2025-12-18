@@ -9,15 +9,15 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     --model fastvit_sa36_projector \
     --val-set "food101" \
     --validation-data-dir /mnt/SSD2/food-101 \
-    --validation-eval-interval 1000 \
+    --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpointsfreezebackbone \
-    -b 64 --lr 1e-3 \
-    --log-wandb --native-amp --input-size 3 224 224 \
+    -b 40 --lr 1e-3 \
+    --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
-    --experiment CLIPtoResNet \
     --workers 6 --epochs 50 \
     --freeze-backbone \
+    --log-wandb --experiment CLIPtoResNet
 
 # Initialized Aircraft zero-shot evaluation with 100 classes.
 # Evaluating.... 14 Iteratiopns on a B=256, with 3584 datapoints

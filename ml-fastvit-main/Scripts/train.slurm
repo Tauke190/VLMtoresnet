@@ -8,7 +8,6 @@
 #SBATCH --mem-per-cpu=6G 
 #SBATCH -c8
 
-
 # Load necessary modules
 module load anaconda3
 module load cuda
@@ -30,6 +29,7 @@ python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print
 # Change directory
 cd /home/av354855/VLMtoresnet/ml-fastvit-main
 
+NUM_GPU=2
 # Run unbuffered
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /home/c3-0/datasets/ImageNet \
@@ -46,5 +46,4 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --workers 6 --epochs 50 \
     --freeze-backbone \
 
-# Optional cleanup
 conda deactivate

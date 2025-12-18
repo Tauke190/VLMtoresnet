@@ -1,1 +1,0 @@
-{"aircraft_zeroshot/top1":1.4467592592592593,"_timestamp":1.76608445028605e+09,"aircraft_zeroshot/top5_before_train":5.295138888888889,"train_loss":0,"eval_top5":8.188657407407407,"aircraft_zeroshot/top1_before_train":0.78125,"eval_top1":1.4467592592592593,"aircraft_zeroshot/top5":8.188657407407407,"_runtime":617,"_step":10,"_wandb":{"runtime":617},"epoch":4}
