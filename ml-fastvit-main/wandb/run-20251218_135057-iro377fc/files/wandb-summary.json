@@ -1,0 +1,1 @@
+{"epoch":4,"_step":5,"_runtime":617,"aircraft_zeroshot/top1":1.4467592592592593,"aircraft_zeroshot/top1_before_train":0.78125,"aircraft_zeroshot/top5":8.188657407407407,"_timestamp":1.7660844502852645e+09,"_wandb":{"runtime":617},"aircraft_zeroshot/top5_before_train":5.295138888888889}

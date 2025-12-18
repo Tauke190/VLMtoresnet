@@ -4,16 +4,16 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 conda activate fastvit
 
 NUM_GPU=2
-python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
+CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /mnt/SSD2/ImageNet1k/ \
     --model fastvit_sa36_projector \
-    --val-set "fgvc_aircraft" \
-    --validation-data-dir /mnt/SSD2/fgvc-aircraft-2013b/data \
+    --val-set "food101" \
+    --validation-data-dir /mnt/SSD2/food-101 \
     --validation-eval-interval 1000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpointsfreezebackbone \
     -b 64 --lr 1e-3 \
-    --log-wandb --native-amp --input-size 3 256 256 \
+    --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 6 --epochs 50 \

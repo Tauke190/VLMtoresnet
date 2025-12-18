@@ -115,14 +115,16 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
     clip_model.eval()
 
     if validation_dataset == 'fgvc_aircraft':
-        dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess)
-    if validation_dataset == 'food101':
-        dataset = food101_dataloader( root=validation_root, train=False, transform=preprocess)
+        dataset = aircraft_dataloader(root=validation_root, train=False, transform=preprocess)
+    elif validation_dataset == 'food101':
+        dataset = food101_dataloader(root=validation_root, train=False, transform=preprocess)
+    else:
+        raise ValueError(f"Unsupported validation_dataset: {validation_dataset}")
 
     # pick class names from dataset
     class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
     if class_names is None:
-        raise RuntimeError("Aircraft dataset has no 'categories' or 'classes' attribute.")
+        raise RuntimeError("Dataset has no 'categories' or 'classes' attribute.")
 
     text_features = build_clip_text_features(
         clip_model, class_names, device=device, template_file=template_file
