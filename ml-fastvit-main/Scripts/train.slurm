@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=uf_b
+#SBATCH --job-name=f_b
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -41,11 +41,12 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --validation-data-dir /home/c3-0/datasets/food-101 \
     --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
-    --output ./checkpointsunfrozen \
+    --output ./checkpointsfrozen \
     -b 32 --lr 1e-3 \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 12 --epochs 50 \
+    --freeze-backbone \
 
 conda deactivate
