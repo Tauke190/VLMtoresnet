@@ -8,6 +8,12 @@
 #SBATCH --mem-per-cpu=6G 
 #SBATCH --cpus-per-gpu=8
 
+PORT=$((RANDOM % 55 + 12345))
+while ss -tuln | grep -q ":$PORT"; do
+  PORT=$((RANDOM % 55 + 12345))
+done
+echo "Free port found: $PORT"
+
 # Load necessary modules
 module load anaconda3
 module load cuda
