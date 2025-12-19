@@ -6,7 +6,7 @@
 #SBATCH -C gmem48
 #SBATCH --gres=gpu:2
 #SBATCH --mem-per-cpu=6G 
-#SBATCH --cpus-per-gpu=8
+#SBATCH --cpus-per-gpu=12
 
 PORT=$((RANDOM % 55 + 12345))
 while ss -tuln | grep -q ":$PORT"; do
