@@ -46,6 +46,6 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
-    --workers 10 --epochs 50 \
-    
+    --workers 12 --epochs 50 \
+
 conda deactivate
