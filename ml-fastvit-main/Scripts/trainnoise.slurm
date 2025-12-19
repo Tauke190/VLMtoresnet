@@ -27,7 +27,7 @@ echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
 # Change directory
-cd /home/av354855/fastvit
+cd /home/av354855/VLMtoresnet/ml-fastvit-main
 
 # Run unbuffered
 
@@ -42,3 +42,5 @@ python -m torch.distributed.launch --nproc_per_node=1 train_noise.py \
   --noise-val-interval 2000 \
   --workers 10 \
   --log-wandb
+
+conda deactivate
