@@ -47,4 +47,5 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
     --workers 10 --epochs 50 \
+    
 conda deactivate
