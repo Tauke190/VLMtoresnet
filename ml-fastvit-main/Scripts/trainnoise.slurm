@@ -6,8 +6,7 @@
 #SBATCH -C gmem48
 #SBATCH --gres=gpu:2
 #SBATCH --mem-per-cpu=6G 
-#SBATCH -c8
-
+#SBATCH --cpus-per-gpu=8
 
 # Load necessary modules
 module load anaconda3
@@ -32,13 +31,13 @@ cd /home/av354855/fastvit
 
 # Run unbuffered
 
-python train_noise.py \
+python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
   /home/c3-0/datasets/ImageNet \
   --model fastvit_sa36 \
-  --batch-size 128 \
-  --noise-experiment \
+  --batch-size 32 \
+  --noise-experiment fastvit \
   --resume fastvit_sa36.pth.tar \
   --log-wandb
   --noise-val-batches 50
   --noise-val-interval 200
-  --workers 4
+  --workers 10

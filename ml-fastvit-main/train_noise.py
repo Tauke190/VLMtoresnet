@@ -133,7 +133,7 @@ parser.add_argument(
 parser.add_argument(
     "--noise-step",
     type=float,
-    default=0.05,
+    default=0.01,
     help="Noise step as fraction of mean variance (0.05 = 5%%).",
 )
 parser.add_argument(
@@ -158,7 +158,7 @@ parser.add_argument(
 parser.add_argument(
     "--noise-val-interval",
     type=int,
-    default=200,
+    default=4000,
     help="Validate every N fine-tuning batches during noise experiment.",
 )
 parser.add_argument(
