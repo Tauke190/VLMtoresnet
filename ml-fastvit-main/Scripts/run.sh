@@ -12,10 +12,10 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpointsfreezebackbone \
-    -b 40 --lr 1e-3 \
+    -b 32 --lr 1e-3 \
     --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
-    --workers 6 --epochs 50 \
+    --workers 10 --epochs 50 \
     --freeze-backbone \
     --log-wandb --experiment CLIPtoResNet \
     --debug
@@ -26,7 +26,6 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
 
 # Aircraft zero-shot before training: Acc@1 = 0.78%
 # Aircraft zero-shot before training: Acc@5 = 4.44%
-
 
 # Training.... 5004 Iteratiopns on a B=256, with 1 281 024 datapoints
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=backbonefreeze
+#SBATCH --job-name=noise
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -31,13 +31,14 @@ cd /home/av354855/fastvit
 
 # Run unbuffered
 
-python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
+python -m torch.distributed.launch --nproc_per_node=1 train_noise.py \
   /home/c3-0/datasets/ImageNet \
   --model fastvit_sa36 \
   --batch-size 32 \
-  --noise-experiment fastvit \
-  --resume fastvit_sa36.pth.tar \
+  --noise-experiment \
+  --initial-checkpoint Weights/fastvit_sa36.pth.tar \
+  --resume Weights/fastvit_sa36.pth.tar \
+  --noise-val-batches 200 \
+  --noise-val-interval 2000 \
+  --workers 10 \
   --log-wandb
-  --noise-val-batches 50
-  --noise-val-interval 200
-  --workers 10

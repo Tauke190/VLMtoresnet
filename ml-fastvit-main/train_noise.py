@@ -109,7 +109,80 @@ from collections import OrderedDict
 from contextlib import suppress
 from datetime import datetime
 
-import matplotlib.pyplot as plt  # NEW
+import torch
+import torch.nn as nn
+import torchvision.utils
+from torch.nn.parallel import DistributedDataParallel as NativeDDP
+
+from timm.data import (
+    create_dataset,
+    create_loader,
+    resolve_data_config,
+    Mixup,
+    FastCollateMixup,
+    AugMixDataset,
+)
+from timm.models import (
+    create_model,
+    safe_model_name,
+    resume_checkpoint,
+    load_checkpoint,
+    model_parameters,
+)
+from timm.layers import convert_splitbn_model
+from timm.utils import *
+from timm.loss import *
+from timm.optim import create_optimizer_v2, optimizer_kwargs
+from timm.scheduler import create_scheduler
+from timm.utils import ApexScaler, NativeScaler
+
+import models
+from misc.distillation_loss import DistillationLoss
+from misc.cosine_annealing import CosineWDSchedule
+
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as ApexDDP
+    from apex.parallel import convert_syncbn_model
+
+    has_apex = True
+except ImportError:
+    has_apex = False
+
+has_native_amp = False
+try:
+    if getattr(torch.cuda.amp, "autocast") is not None:
+        has_native_amp = True
+except AttributeError:
+    pass
+
+try:
+    import wandb
+
+    has_wandb = True
+except ImportError:
+    has_wandb = False
+
+torch.backends.cudnn.benchmark = True
+_logger = logging.getLogger("train")
+
+# The first arg parser parses out only the --config argument, this argument is used to
+# load a yaml file containing key-values that override the defaults for the main parser below
+config_parser = parser = argparse.ArgumentParser(
+    description="Training Config", add_help=False
+)
+parser.add_argument(
+    "-c",
+    "--config",
+    default="",
+    type=str,
+    metavar="FILE",
+    help="YAML config file specifying default arguments",
+)
+
+
+parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
+
 # ...existing code...
 parser.add_argument(
     "--imagenet-trainset-size",
@@ -878,7 +951,7 @@ parser.add_argument(
     metavar="N",
     help="Test/inference time augmentation (oversampling) factor. 0=None (default: 0)",
 )
-parser.add_argument("--local_rank", default=0, type=int)
+parser.add_argument("--local-rank", "--local_rank", default=0, type=int)
 parser.add_argument(
     "--use-multi-epochs-loader",
     action="store_true",
@@ -1684,6 +1757,13 @@ def run_noise_experiment(
 
     while noise_factor <= args.noise_max + 1e-8:
         noise_pct = noise_factor * 100.0
+
+        # Dynamically set validation interval based on noise level
+        if noise_pct < 5.0:
+            val_interval = 200
+        else:
+            val_interval = 2000
+
         if args.local_rank == 0:
             _logger.info(
                 f"\n===== Noise level: {noise_pct:.1f}% of mean variance "
@@ -1745,7 +1825,8 @@ def run_noise_experiment(
         recovered = top1 >= args.recovery_acc
         epoch = 0
         num_updates = 0
-        val_interval = max(1, args.noise_val_interval)
+        # Remove or comment out the old val_interval line:
+        # val_interval = max(1, args.noise_val_interval)
 
         # Fine-tune until recovery or max_epochs
         while (not recovered) and (epoch < max_epochs):
@@ -1774,6 +1855,15 @@ def run_noise_experiment(
                 optimizer.step()
 
                 num_updates += 1
+
+                # Add this block for train logging
+                if args.local_rank == 0 and (batch_idx % args.log_interval == 0 or batch_idx == 0):
+                    _logger.info(
+                        f"Train (Noise {noise_pct:.1f}%): "
+                        f"Epoch {epoch} [{batch_idx}/{len(loader_train)}] "
+                        f"Loss: {loss.item():.4f}"
+                    )
+
                 if lr_scheduler is not None:
                     lr_scheduler.step_update(
                         num_updates=num_updates, metric=loss.item()
@@ -1824,6 +1914,32 @@ def run_noise_experiment(
 
             epoch += 1
 
+            # --- NEW: Log to wandb after each epoch ---
+            if args.local_rank == 0 and args.log_wandb and has_wandb:
+                # Update the last recovery_hours value if not yet recovered
+                temp_recovery_hours = recovery_hours.copy()
+                temp_noise_factors_pct = noise_factors_pct.copy()
+                if len(temp_noise_factors_pct) < len(temp_recovery_hours) + 1:
+                    temp_noise_factors_pct.append(noise_pct)
+                    temp_recovery_hours.append((time.time() - t_start) / 3600.0)
+                wandb.log({
+                    "noise_recovery": wandb.Table(
+                        data=list(zip(temp_noise_factors_pct, temp_recovery_hours)),
+                        columns=["Noise level (% of mean variance)", "Time to recover (hours)"]
+                    )
+                })
+                wandb.log({
+                    "Noise Recovery Curve": wandb.plot.line_series(
+                        xs=temp_noise_factors_pct,
+                        ys=[temp_recovery_hours],
+                        keys=["Time to recover (hours)"],
+                        title=f"{args.model} noise recovery (target ≥ {args.recovery_acc:.1f})",
+                        xname="Noise level (% of mean variance)"
+                    )
+                })
+                _logger.info("Logged noise recovery curve to wandb (intermediate).")
+            # --- END NEW ---
+
         elapsed_hours = (time.time() - t_start) / 3600.0
         noise_factors_pct.append(noise_pct)
         recovery_hours.append(elapsed_hours if recovered else float("nan"))
@@ -1839,6 +1955,26 @@ def run_noise_experiment(
                     f"Did NOT reach subset top1 {args.recovery_acc:.1f} within "
                     f"{max_epochs} epochs at noise {noise_pct:.1f}%."
                 )
+
+            # --- Log to wandb after each noise level ---
+            if args.log_wandb and has_wandb:
+                wandb.log({
+                    "noise_recovery": wandb.Table(
+                        data=list(zip(noise_factors_pct, recovery_hours)),
+                        columns=["Noise level (% of mean variance)", "Time to recover (hours)"]
+                    )
+                })
+                wandb.log({
+                    "Noise Recovery Curve": wandb.plot.line_series(
+                        xs=noise_factors_pct,
+                        ys=[recovery_hours],
+                        keys=["Time to recover (hours)"],
+                        title=f"{args.model} noise recovery (target ≥ {args.recovery_acc:.1f})",
+                        xname="Noise level (% of mean variance)"
+                    )
+                })
+                _logger.info("Logged noise recovery curve to wandb (per noise level).")
+            # --- END wandb log ---
 
         noise_factor += args.noise_step
 
