@@ -42,7 +42,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --validation-eval-interval 2000 \
     --initial-checkpoint Weights/fastvit_sa36.pth.tar \
     --output ./checkpointsunfrozen \
-    -b 16 --lr 1e-3 \
+    -b 32 --lr 1e-3 \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
