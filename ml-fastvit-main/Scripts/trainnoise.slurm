@@ -37,7 +37,7 @@ cd /home/av354855/VLMtoresnet/ml-fastvit-main
 
 # Run unbuffered
 
-python -m torch.distributed.launch --nproc_per_node=1 train_noise.py \
+python -u train_noise.py \
   /home/c3-0/datasets/ImageNet \
   --model fastvit_sa36 \
   --batch-size 32 \
