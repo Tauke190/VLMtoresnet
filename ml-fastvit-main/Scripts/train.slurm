@@ -6,7 +6,7 @@
 #SBATCH -C gmem48
 #SBATCH --gres=gpu:2
 #SBATCH --mem-per-cpu=6G 
-#SBATCH -c8
+#SBATCH -c12
 
 # Load necessary modules
 module load anaconda3
@@ -40,6 +40,7 @@ python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
     --log-wandb --native-amp --input-size 3 224 224 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --experiment CLIPtoResNet \
-    --workers 6 --epochs 50 \
+    --workers 10 --epochs 50 \
+    --freeze-backbone
 
 conda deactivate
