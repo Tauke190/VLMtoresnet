@@ -3,11 +3,11 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 
 conda activate fastvit
 
-python validate.py /mnt/SSD2/stanford_cars \
+python validate.py /mnt/SSD2/food-101 \
   --model fastvit_sa36_projector \
   --checkpoint Weights/fastvit_sa36.pth.tar \
   --eval-mode linearprobe \
-  --dataset cars \
+  --dataset food101 
 
 # Imagenetpath : /mnt/SSD2/ImageNet1k
 # fgvc-aircraft : /mnt/SSD2/fgvc-aircraft-2013b/data

@@ -30,6 +30,7 @@ import torch.nn.parallel
 from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
 import clip
+from tqdm import tqdm  # Add this import at the top
 
 
 from timm.layers import apply_test_time_pool
@@ -195,7 +196,7 @@ def _extract_linearprobe_features(model, loader, device):
 
     model.eval()
     with torch.no_grad():
-        for batch in loader:
+        for batch in tqdm(loader, desc="Extracting features"):  # Wrap loader with tqdm
             # Some loaders may return (input, target); others could add extra fields.
             if isinstance(batch, (list, tuple)) and len(batch) >= 2:
                 input, target = batch[0], batch[1]
