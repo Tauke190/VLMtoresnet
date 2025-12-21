@@ -936,6 +936,19 @@ class FastViT(nn.Module):
             return outs
         # output only the features of last layer for image classification
         return x
+    
+    def forward_backbone(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.forward_embeddings(x)
+        x = self.forward_tokens(x)
+        return x
+
+    def forward_classification_neck(self, x):
+        x = self.forward_embeddings(x)
+        x = self.forward_tokens(x)
+        x = self.conv_exp(x)
+        x = self.gap(x)
+        x = x.view(x.size(0), -1)
+        return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # input embedding

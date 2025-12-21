@@ -75,5 +75,5 @@ class Food101(VisionDataset):
     
     def __getitem__(self, index):
         target = self.y[index]
-        img = self.transform(Image.open(self.images[index]))
+        img = self.transform(Image.open(self.images[index]).convert('RGB'))
         return img, target
