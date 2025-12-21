@@ -1,0 +1,74 @@
+{
+  "os": "Linux-6.8.0-90-generic-x86_64-with-glibc2.39",
+  "python": "CPython 3.9.25",
+  "startedAt": "2025-12-19T17:10:22.561730Z",
+  "args": [
+    "--local-rank=1",
+    "/mnt/SSD2/ImageNet1k/",
+    "--model",
+    "fastvit_sa36",
+    "--batch-size",
+    "32",
+    "--noise-experiment",
+    "--initial-checkpoint",
+    "Weights/fastvit_sa36.pth.tar",
+    "--resume",
+    "Weights/fastvit_sa36.pth.tar",
+    "--noise-val-batches",
+    "200",
+    "--noise-val-interval",
+    "2000",
+    "--workers",
+    "10",
+    "--log-wandb"
+  ],
+  "program": "/home/av354855/projects/VLMtoresnet/ml-fastvit-main/train_noise.py",
+  "codePath": "ml-fastvit-main/train_noise.py",
+  "codePathLocal": "train_noise.py",
+  "git": {
+    "remote": "https://github.com/Tauke190/VLMtoresnet.git",
+    "commit": "0e399a06ded0d98ac7cee85e7e7d4c370ff7f01f"
+  },
+  "email": "ag8093@nyu.edu",
+  "root": "/home/av354855/projects/VLMtoresnet/ml-fastvit-main",
+  "host": "CECSL22351123",
+  "executable": "/home/av354855/miniconda3/envs/fastvit/bin/python",
+  "cpu_count": 24,
+  "cpu_count_logical": 48,
+  "gpu": "NVIDIA RTX A5000",
+  "gpu_count": 3,
+  "disk": {
+    "/": {
+      "total": "1967279984640",
+      "used": "1538973569024"
+    }
+  },
+  "memory": {
+    "total": "202434277376"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA RTX A5000",
+      "memoryTotal": "25757220864",
+      "cudaCores": 8192,
+      "architecture": "Ampere",
+      "uuid": "GPU-1b7573c1-153d-beaf-f3b7-f0433f4f133a"
+    },
+    {
+      "name": "NVIDIA RTX A5000",
+      "memoryTotal": "25757220864",
+      "cudaCores": 8192,
+      "architecture": "Ampere",
+      "uuid": "GPU-fa7de7d1-e611-fb88-3d71-b681a14a06e9"
+    },
+    {
+      "name": "NVIDIA RTX A5000",
+      "memoryTotal": "25757220864",
+      "cudaCores": 8192,
+      "architecture": "Ampere",
+      "uuid": "GPU-56dab562-a80b-c232-b9ed-6244e425e641"
+    }
+  ],
+  "cudaVersion": "13.1",
+  "writerId": "6du9p2o4y6mm682zddp2jl31sipogtw3"
+}

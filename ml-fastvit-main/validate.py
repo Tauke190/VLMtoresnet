@@ -11,17 +11,26 @@ canonical PyTorch, standard Python style, and good performance. Repurpose as you
 
 Hacked together by Ross Wightman (https://github.com/rwightman)
 """
-import argparse
 import os
 import csv
 import glob
 import time
 import logging
+import sys
+import copy
+from pathlib import Path
+from collections import OrderedDict
+from contextlib import suppress
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.parallel
-from collections import OrderedDict
-from contextlib import suppress
+
+from sklearn.linear_model import LogisticRegression
+from torch.utils.data import DataLoader
+import clip
+
 
 from timm.layers import apply_test_time_pool
 from timm.models import create_model, load_checkpoint, is_model, list_models
@@ -38,6 +47,8 @@ from timm.utils import (
     setup_default_logging,
     set_jit_legacy,
 )
+
+from Functions.validation_arguments import _parse_args
 
 import models
 from models.modules.mobileone import reparameterize_model
@@ -57,225 +68,245 @@ try:
 except AttributeError:
     pass
 
+
+from CLIP.dataloaders.aircraft import aircraft as AircraftDataset
+from CLIP.dataloaders.food101 import Food101 as Food101Dataset
+from CLIP.dataloaders.cars import Cars as StanfordCarsDataset
+from CLIP.dataloaders.caltech101 import Caltech101 as Caltech101Dataset
+from CLIP.dataloaders.ucf101 import UCF101 as UCF101Dataset
+from torchvision.datasets import FER2013, GTSRB, Country211, RenderedSST2, ImageFolder
+
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger("validate")
 
 
-parser = argparse.ArgumentParser(description="PyTorch ImageNet Validation")
-parser.add_argument("data", metavar="DIR", help="path to dataset")
-parser.add_argument(
-    "--dataset",
-    "-d",
-    metavar="NAME",
-    default="",
-    help="dataset type (default: ImageFolder/ImageTar if empty)",
-)
-parser.add_argument(
-    "--split",
-    metavar="NAME",
-    default="validation",
-    help="dataset split (default: validation)",
-)
-parser.add_argument(
-    "--dataset-download",
-    action="store_true",
-    default=False,
-    help="Allow download of dataset for torch/ and tfds/ datasets that support it.",
-)
-parser.add_argument(
-    "--model",
-    "-m",
-    metavar="NAME",
-    default="dpn92",
-    help="model architecture (default: dpn92)",
-)
-parser.add_argument(
-    "-j",
-    "--workers",
-    default=4,
-    type=int,
-    metavar="N",
-    help="number of data loading workers (default: 2)",
-)
-parser.add_argument(
-    "-b",
-    "--batch-size",
-    default=256,
-    type=int,
-    metavar="N",
-    help="mini-batch size (default: 256)",
-)
-parser.add_argument(
-    "--img-size",
-    default=None,
-    type=int,
-    metavar="N",
-    help="Input image dimension, uses model default if empty",
-)
-parser.add_argument(
-    "--input-size",
-    default=[3, 256, 256],
-    nargs=3,
-    type=int,
-    metavar="N N N",
-    help="Input all image dimensions (d h w, e.g. --input-size 3 256 256), uses model default if empty",
-)
-parser.add_argument(
-    "--crop-pct",
-    default=None,
-    type=float,
-    metavar="N",
-    help="Input image center crop pct",
-)
-parser.add_argument(
-    "--mean",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="MEAN",
-    help="Override mean pixel value of dataset",
-)
-parser.add_argument(
-    "--std",
-    type=float,
-    nargs="+",
-    default=None,
-    metavar="STD",
-    help="Override std deviation of of dataset",
-)
-parser.add_argument(
-    "--interpolation",
-    default="",
-    type=str,
-    metavar="NAME",
-    help="Image resize interpolation type (overrides model)",
-)
-parser.add_argument(
-    "--num-classes", type=int, default=None, help="Number classes in dataset"
-)
-parser.add_argument(
-    "--class-map",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help='path to class to idx mapping file (default: "")',
-)
-parser.add_argument(
-    "--gp",
-    default=None,
-    type=str,
-    metavar="POOL",
-    help="Global pool type, one of (fast, avg, max, avgmax, avgmaxc). Model default if None.",
-)
-parser.add_argument(
-    "--log-freq",
-    default=10,
-    type=int,
-    metavar="N",
-    help="batch logging frequency (default: 10)",
-)
-parser.add_argument(
-    "--checkpoint",
-    default="",
-    type=str,
-    metavar="PATH",
-    help="path to latest checkpoint (default: none)",
-)
-parser.add_argument(
-    "--pretrained", dest="pretrained", action="store_true", help="use pre-trained model"
-)
-parser.add_argument("--num-gpu", type=int, default=1, help="Number of GPUS to use")
-parser.add_argument(
-    "--test-pool", dest="test_pool", action="store_true", help="enable test time pool"
-)
-parser.add_argument(
-    "--no-prefetcher",
-    action="store_true",
-    default=False,
-    help="disable fast prefetcher",
-)
-parser.add_argument(
-    "--pin-mem",
-    action="store_true",
-    default=False,
-    help="Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.",
-)
-parser.add_argument(
-    "--channels-last",
-    action="store_true",
-    default=False,
-    help="Use channels_last memory layout",
-)
-parser.add_argument(
-    "--amp",
-    action="store_true",
-    default=False,
-    help="Use AMP mixed precision. Defaults to Apex, fallback to native Torch AMP.",
-)
-parser.add_argument(
-    "--apex-amp",
-    action="store_true",
-    default=False,
-    help="Use NVIDIA Apex AMP mixed precision",
-)
-parser.add_argument(
-    "--native-amp",
-    action="store_true",
-    default=False,
-    help="Use Native Torch AMP mixed precision",
-)
-parser.add_argument(
-    "--tf-preprocessing",
-    action="store_true",
-    default=False,
-    help="Use Tensorflow preprocessing pipeline (require CPU TF installed",
-)
-parser.add_argument(
-    "--use-ema",
-    dest="use_ema",
-    action="store_true",
-    help="use ema version of weights if present",
-)
-parser.add_argument(
-    "--torchscript",
-    dest="torchscript",
-    action="store_true",
-    help="convert model torchscript for inference",
-)
-parser.add_argument(
-    "--legacy-jit",
-    dest="legacy_jit",
-    action="store_true",
-    help="use legacy jit mode for pytorch 1.5/1.5.1/1.6 to get back fusion performance",
-)
-parser.add_argument(
-    "--results-file",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Output csv file for validation results (summary)",
-)
-parser.add_argument(
-    "--real-labels",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Real labels JSON file for imagenet evaluation",
-)
-parser.add_argument(
-    "--valid-labels",
-    default="",
-    type=str,
-    metavar="FILENAME",
-    help="Valid label indices txt file for validation of partial label space",
-)
-parser.add_argument(
-    "--use-inference-mode",
-    dest="use_inference_mode",
-    action="store_true",
-    default=False,
-    help="use inference mode version of model definition.",
-)
+def _read_txt(file_path):
+    with open(file_path, "r") as f:
+        content = f.read()
+    content = str(content).split("\n")
+    try:
+        content.remove("")
+    except ValueError:
+        pass
+    return content
+
+
+def _build_zeroshot_weights(args, device):
+    """Build zero-shot classifier weights using CLIP text encoder and CLIP prompts.
+
+    Uses CLIP/dataloaders/classes/<zeroshot-dataset>.txt and CLIP/dataloaders/templates/<zeroshot-dataset>.txt
+    for class names and text templates.
+    """
+    dataset_key = args.dataset
+
+    repo_root = Path(__file__).resolve().parent
+    clip_root = repo_root / "CLIP"
+
+    classes_dir = (
+        Path(args.zeroshot_classes_dir)
+        if args.zeroshot_classes_dir
+        else clip_root / "dataloaders" / "classes"
+    )
+    templates_dir = (
+        Path(args.zeroshot_templates_dir)
+        if args.zeroshot_templates_dir
+        else clip_root / "dataloaders" / "templates"
+    )
+
+    class_file = classes_dir / f"{dataset_key}.txt"
+    template_file = templates_dir / f"{dataset_key}.txt"
+
+    if not class_file.is_file():
+        raise FileNotFoundError(f"Zero-shot class file not found: {class_file}")
+    if not template_file.is_file():
+        raise FileNotFoundError(f"Zero-shot template file not found: {template_file}")
+
+    classes = _read_txt(class_file)
+    templates = _read_txt(template_file)
+
+    if str(clip_root) not in sys.path:
+        sys.path.insert(0, str(clip_root))
+
+    _logger.info(
+        "Building zero-shot weights for dataset '%s' with CLIP backbone '%s'",
+        dataset_key,
+        args.zeroshot_backbone,
+    )
+
+    clip_model, preprocess = clip.load(args.zeroshot_backbone, device=device)
+    clip_model.eval()
+
+    with torch.no_grad():
+        zeroshot_weights = []
+        print("\n[Zero-shot] Example text prompts for first 3 classes:")
+        for i, classname in enumerate(classes):
+            texts = [template.format(classname) for template in templates]
+            if i < 3:
+                print(f"Class: {classname}")
+                for t in texts[:min(3, len(texts))]:
+                    print(f"  Prompt: {t}")
+            text_tokens = clip.tokenize(texts).to(device)
+            class_embeddings = clip_model.encode_text(text_tokens)
+            class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
+            class_embedding = class_embeddings.mean(dim=0)
+            class_embedding = class_embedding / class_embedding.norm()
+            zeroshot_weights.append(class_embedding)
+        zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(device)
+
+    return zeroshot_weights, len(classes)  # Return class count too
+
+
+def _build_custom_dataset(dataset_name, root, is_train, transform, gtsrb_download=False):
+    """Build custom downstream datasets for both linear-probe and zero-shot paths.
+    """
+    if dataset_name == "fgvc_aircraft":
+        return AircraftDataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "food101":
+        return Food101Dataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "cars":
+        return StanfordCarsDataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "ucf101":
+        return UCF101Dataset(root=root, train=is_train, transform=transform)
+    if dataset_name == "fer2013":
+        split = "train" if is_train else "test"
+        return FER2013(root=root, split=split, transform=transform)
+    if dataset_name == "gtsrb":
+        split = "train" if is_train else "test"
+        return GTSRB(root=root, split=split, transform=transform, download=gtsrb_download)
+    if dataset_name == "country211":
+        split = "train" if is_train else "test"
+        return Country211(root=root, split=split, transform=transform, download=False)
+    if dataset_name == "sst2":
+        split = "train" if is_train else "test"
+        return RenderedSST2(root=root, split=split, transform=transform, download=False)
+    if dataset_name in ("imagenet", "imagenet1k"):
+        split_dir = "train" if is_train else "validation"
+        split_root = os.path.join(root, split_dir)
+        return ImageFolder(root=split_root, transform=transform)
+
+
+
+def _extract_linearprobe_features(model, loader, device):
+    """Extract projected image embeddings and labels for linear-probe training/testing.
+       in Model returns (projected_embed, logits, feature map) when output is a tuple,
+    """
+    feats = []
+    labels = []
+
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            # Some loaders may return (input, target); others could add extra fields.
+            if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                input, target = batch[0], batch[1]
+            else:
+                continue
+
+            input = input.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+
+            output = model(input)
+            if isinstance(output, (list, tuple)):
+                features = output[0] # Projected embeddings
+           
+
+            features = features.float()
+            feats.append(features.cpu())
+            labels.append(target.cpu())
+
+    if not feats:
+        raise RuntimeError("No features extracted for linear probe; check dataset/loader.")
+
+    feats = torch.cat(feats, dim=0).numpy()
+    labels = torch.cat(labels, dim=0).numpy()
+    return feats, labels
+
+
+def _linearprobe_eval(args, model, data_config):
+    """Linear-probe evaluation on frozen projected embeddings.
+
+    Follows the CLIP official template: extract image features on train/test splits,
+    fit a logistic-regression classifier, and report top-1 / top-5 accuracy.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    clip_model, preprocess = clip.load('ViT-L/14', device)
+
+    dataset_name = args.dataset if args.dataset else ""
+
+    # Prefer custom datasets when available; otherwise fall back to timm.create_dataset.
+    train_dataset = _build_custom_dataset(
+        dataset_name=dataset_name,
+        root=args.data,
+        is_train=True,
+        transform=preprocess,
+        gtsrb_download=False,
+    )
+    eval_dataset = _build_custom_dataset(
+        dataset_name=dataset_name,
+        root=args.data,
+        is_train=False,
+        transform=preprocess,
+        gtsrb_download=False,
+    )
+
+    crop_pct = data_config["crop_pct"]
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+    _logger.info("[LinearProbe] Extracting train features...")
+    train_features, train_labels = _extract_linearprobe_features(model, train_loader, device)
+    _logger.info("[LinearProbe] Extracting eval features...")
+    eval_features, eval_labels = _extract_linearprobe_features(model, eval_loader, device)
+
+    _logger.info(
+        "[LinearProbe] Training logistic regression (C=%.4f, max_iter=%d, n_train=%d, n_eval=%d)...",
+        args.linearprobe_C,
+        args.linearprobe_max_iter,
+        train_features.shape[0],
+        eval_features.shape[0],
+    )
+
+    classifier = LogisticRegression(
+        random_state=0,
+        C=args.linearprobe_C,
+        max_iter=args.linearprobe_max_iter,
+        verbose=1,
+        n_jobs=-1,
+    )
+    classifier.fit(train_features, train_labels)
+
+    # Top-1 accuracy
+    preds = classifier.predict(eval_features)
+    top1_acc = float((preds == eval_labels).astype(np.float32).mean() * 100.0)
+
+    # Top-5 accuracy (if there are at least 5 classes)
+    if len(classifier.classes_) >= 5:
+        probs = classifier.predict_proba(eval_features)
+        top5_idx = np.argsort(-probs, axis=1)[:, :5]
+        correct_top5 = 0
+        for i, label in enumerate(eval_labels):
+            if label in top5_idx[i]:
+                correct_top5 += 1
+        top5_acc = float(correct_top5 / max(len(eval_labels), 1) * 100.0)
+    else:
+        top5_acc = top1_acc
+
+    _logger.info("[LinearProbe] Top-1: %.3f%%  Top-5: %.3f%%", top1_acc, top5_acc)
+
+    results = OrderedDict(
+        top1=round(top1_acc, 4),
+        top1_err=round(100.0 - top1_acc, 4),
+        top5=round(top5_acc, 4),
+        top5_err=round(100.0 - top5_acc, 4),
+        img_size=data_config["input_size"][-1],
+        cropt_pct=crop_pct,
+        interpolation=data_config["interpolation"],
+    )
+    return results
 
 
 def validate(args):
@@ -302,21 +333,15 @@ def validate(args):
     if args.legacy_jit:
         set_jit_legacy()
 
-    # create model
+    # create model (let model use its default num_classes)
     model = create_model(
         args.model,
         pretrained=args.pretrained,
-        num_classes=args.num_classes,
         in_chans=3,
         global_pool=args.gp,
         scriptable=args.torchscript,
         inference_mode=args.use_inference_mode,
     )
-    if args.num_classes is None:
-        assert hasattr(
-            model, "num_classes"
-        ), "Model must have `num_classes` attr if not set on cmd line/config."
-        args.num_classes = model.num_classes
 
     if args.checkpoint:
         load_checkpoint(model, args.checkpoint, args.use_ema)
@@ -353,19 +378,43 @@ def validate(args):
 
     criterion = nn.CrossEntropyLoss().cuda()
 
-    dataset = create_dataset(
-        root=args.data,
-        name=args.dataset,
-        split=args.split,
-        download=args.dataset_download,
-        load_bytes=args.tf_preprocessing,
-        class_map=args.class_map,
-    )
+    #---------------------------------------------------------------
+
+    # Linear-probe evaluation (separate code path, returns early)
+    if args.eval_mode == "linearprobe":
+        return _linearprobe_eval(args, model, data_config)
+     # Optional zero-shot setup (CLIP text encoder + classifier weights)
+    if args.eval_mode == "zeroshot":
+        device = torch.device("cuda")
+        zeroshot_weights, class_count = _build_zeroshot_weights(args, device=device)
+        dataset = _build_custom_dataset(
+            dataset_name=args.dataset,
+            root=args.data,
+            is_train=False,
+            transform=None,
+            gtsrb_download=True,
+        )
+        print(f"[Zero-shot] Test dataset size: {len(dataset) if 'dataset' in locals() else 'N/A'}")
+
+ #---------------------------------------------------------------
+    # Dataset selection
+    if args.eval_mode == "logits":
+        # Standard ImageNet-style evaluation (ImageFolder / ImageTar via timm)
+        dataset = create_dataset(
+            root=args.data,
+            name="",
+            split=args.split,
+            download=args.dataset_download,
+            load_bytes=args.tf_preprocessing,
+            class_map=args.class_map,
+        )
+   
 
     if args.valid_labels:
         with open(args.valid_labels, "r") as f:
             valid_labels = {int(line.rstrip()) for line in f}
-            valid_labels = [i in valid_labels for i in range(args.num_classes)]
+            # store as sorted list of indices; no need for num_classes
+            valid_labels = sorted(valid_labels)
     else:
         valid_labels = None
 
@@ -406,6 +455,8 @@ def validate(args):
             input = input.contiguous(memory_format=torch.channels_last)
         model(input)
         end = time.time()
+        if args.eval_mode == "zeroshot":
+            eval_start = time.time()
         for batch_idx, (input, target) in enumerate(loader):
             if args.no_prefetcher:
                 target = target.cuda()
@@ -415,11 +466,31 @@ def validate(args):
 
             # compute output
             with amp_autocast():
-                output = model(input)
+                raw_output = model(input)
 
-            if valid_labels is not None:
-                output = output[:, valid_labels]
-            loss = criterion(output, target)
+            if args.eval_mode == "zeroshot":
+                # Use projected CLIP-space embeddings from the model and classify via similarity to CLIP text embeddings.
+                if isinstance(raw_output, tuple):
+                    image_features = raw_output[0]
+
+                # normalize features
+                image_features = image_features / image_features.norm(
+                    dim=-1, keepdim=True
+                )
+
+                image_features = image_features.float()
+                zeroshot_weights = zeroshot_weights.float()
+                logits = 100.0 * image_features @ zeroshot_weights
+                output = logits
+                loss = criterion(logits, target)
+
+            if args.eval_mode == "logits":    
+                output = raw_output            
+                if isinstance(output, tuple):
+                    output = output[1]   # The model returns projected embeddings, classification logits, backbone feature map
+                if valid_labels is not None:
+                    output = output[:, valid_labels]
+                loss = criterion(output, target)
 
             if real_labels is not None:
                 real_labels.add_result(output)
@@ -450,6 +521,9 @@ def validate(args):
                         top5=top5,
                     )
                 )
+        if args.eval_mode == "zeroshot":
+            eval_end = time.time()
+            print(f"[Zero-shot] Text-based evaluation time: {eval_end - eval_start:.2f} seconds")
 
     if real_labels is not None:
         # real labels mode replaces topk values at the end
@@ -477,7 +551,7 @@ def validate(args):
 
 def main():
     setup_default_logging()
-    args = parser.parse_args()
+    args, args_text = _parse_args()
     model_cfgs = []
     model_names = []
     if os.path.isdir(args.checkpoint):
@@ -544,7 +618,48 @@ def main():
         if len(results):
             write_results(results_file, results)
     else:
-        validate(args)
+        # When --dataset is set to "all", loop over the predefined set of
+        # downstream datasets and run evaluation in the *currently selected*
+        # eval mode (args.eval_mode) for each, using fixed roots. Otherwise,
+        # keep the original single-dataset behaviour.
+        if args.dataset == "all":
+            multi_datasets = [
+                ("fgvc_aircraft", "/mnt/SSD2/fgvc-aircraft-2013b/data"),
+                ("food101", "/mnt/SSD2/food-101"),
+                ("cars", "/mnt/SSD2/stanford_cars"),
+                ("ucf101", "/mnt/SSD2/UCF101_midframes"),
+                ("gtsrb", "/mnt/SSD2/gtsrb"),
+                ("sst2", "/mnt/SSD2/rendered-sst2"),
+                ("imagenet1k", "/mnt/SSD2/ImageNet1k")
+            ]
+
+            summary = []
+            for dataset_name, dataset_root in multi_datasets:
+                run_args = copy.deepcopy(args)
+                run_args.dataset = dataset_name
+                run_args.data = dataset_root
+
+                _logger.info(
+                    "Running %s evaluation on dataset '%s' (data=%s)",
+                    run_args.eval_mode,
+                    dataset_name,
+                    dataset_root,
+                )
+                result = validate(run_args)
+                entry = OrderedDict(dataset=dataset_name, eval_mode=run_args.eval_mode)
+                if isinstance(result, dict):
+                    entry.update(result)
+                summary.append(entry)
+
+            print("\n==== Multi-dataset evaluation summary (dataset=all) ====")
+            for r in summary:
+                print(
+                    f"{r['dataset']:>12} [{r['eval_mode']:^10}]  "
+                    f"Top-1: {r.get('top1', float('nan')):.3f}  "
+                    f"Top-5: {r.get('top5', float('nan')):.3f}"
+                )
+        else:
+            validate(args)
 
 
 def write_results(results_file, results):

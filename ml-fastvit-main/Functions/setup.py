@@ -24,6 +24,7 @@ from timm.data import (
 )
 import clip 
 from CLIP.dataloaders import aircraft as aircraft_dataloader
+from CLIP.dataloaders import Food101 as food101_dataloader
 
 
 from timm.data.loader import fast_collate, OrderedDistributedSampler, _worker_init
@@ -78,14 +79,14 @@ def build_imagenet_clip_text_features(clip_model, device):
 
     return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
 
-def build_aircraft_clip_text_features(clip_model, class_names, device, template_file):
-    """Build CLIP text features for Aircraft class names using multiple prompt templates."""
+def build_clip_text_features(clip_model, class_names, device, template_file):
+    """Build CLIP text features for validation set class names using multiple prompt templates."""
     # Load templates from file
     with open(template_file, "r") as f:
         templates = [line.strip() for line in f if line.strip()]
 
     # Print some example prompts for the first few classes
-    print("\n[DEBUG] Example text prompts for aircraft classes:")
+    print("\n[DEBUG] Example text prompts for validation dataset classes:")
     for class_name in class_names[:3]:  # Show for first 3 classes
         for template in templates:
             print("  ", template.format(class_name))
@@ -116,17 +117,18 @@ def setup_validation_zeroshot(validation_dataset, validation_root, device, templ
     preprocess.transforms[0].size = args.input_size[-1]
     preprocess.transforms[1].size = args.input_size[1:]
     if validation_dataset == 'fgvc_aircraft':
-        # NOTE: use the `aircraft` class from the module
-        dataset = aircraft_dataloader( root=validation_root, train=False, transform=preprocess, )
-
-    
+        dataset = aircraft_dataloader(root=validation_root, train=False, transform=preprocess)
+    elif validation_dataset == 'food101':
+        dataset = food101_dataloader(root=validation_root, train=False, transform=preprocess)
+    else:
+        raise ValueError(f"Unsupported validation_dataset: {validation_dataset}")
 
     # pick class names from dataset
     class_names = getattr(dataset, "categories", None) or getattr(dataset, "classes", None)
     if class_names is None:
-        raise RuntimeError("Aircraft dataset has no 'categories' or 'classes' attribute.")
+        raise RuntimeError("Dataset has no 'categories' or 'classes' attribute.")
 
-    text_features = build_aircraft_clip_text_features(
+    text_features = build_clip_text_features(
         clip_model, class_names, device=device, template_file=template_file
     )
 
@@ -296,8 +298,3 @@ def basic_setup(args):
         os.makedirs(output_dir, exist_ok=True)
 
     return use_amp 
-
-
-
-
-
