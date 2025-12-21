@@ -1,11 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=fastvit_unfrozen
-#SBATCH --output=fastvit%j.out
-#SBATCH --error=fastvit%j.err
-#SBATCH --cpus-per-task=2
-#SBATCH --constraint=gmem48
-#SBATCH --gres=gpu:ampere:2
-#SBATCH --mem=48G
+#SBATCH --job-name=noise
+#SBATCH --output=ucf_output/slurm-%j.out
+#SBATCH --gres-flags=enforce-binding
+#SBATCH -p gpu
+#SBATCH -C gmem48
+#SBATCH --gres=gpu:1
+#SBATCH --mem-per-cpu=6G 
+#SBATCH --cpus-per-gpu=8
+
+PORT=$((RANDOM % 55 + 12345))
+while ss -tuln | grep -q ":$PORT"; do
+  PORT=$((RANDOM % 55 + 12345))
+done
+echo "Free port found: $PORT"
 
 # Load necessary modules
 module load anaconda3
@@ -26,17 +33,20 @@ echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
 # Change directory
-cd /home/av354855/fastvit
+cd /home/av354855/VLMtoresnet/ml-fastvit-main
 
 # Run unbuffered
 
-python train_noise.py \
+python -u train_noise.py \
   /home/c3-0/datasets/ImageNet \
   --model fastvit_sa36 \
-  --batch-size 128 \
+  --batch-size 32 \
   --noise-experiment \
-  --resume fastvit_sa36.pth.tar \
+  --initial-checkpoint Weights/fastvit_sa36.pth.tar \
+  --resume Weights/fastvit_sa36.pth.tar \
+  --noise-val-batches 200 \
+  --noise-val-interval 2000 \
+  --workers 10 \
   --log-wandb
-  --noise-val-batches 50
-  --noise-val-interval 200
-  --workers 4
+
+conda deactivate

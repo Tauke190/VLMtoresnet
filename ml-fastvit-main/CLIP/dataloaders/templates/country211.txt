@@ -1,0 +1,5 @@
+a photo i took in {}.
+a photo i took while visiting {}.
+a photo from my home country of {}.
+a photo from my visit to {}.
+a photo showing the country of {}.
