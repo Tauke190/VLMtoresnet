@@ -16,7 +16,7 @@ from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from models.fastvit import fastvit_sa36
-
+from misc.utils import dump_images, save_image
 from timm.models import create_model
 
 # wget https://docs-assets.developer.apple.com/ml-research/models/fastvit/image_classification_models/fastvit_sa36.pth.tar
@@ -29,12 +29,13 @@ def get_features(dataset, mode='backbone1'):
     
     with torch.no_grad():
         for images, labels in tqdm(DataLoader(dataset, batch_size=200)):
+            dump_images(images, "temp.png")
             if mode == 'backbone1' :
                 features = model.forward_backbone(images.to(device))
                 B, C, H, W  = features.shape 
                 features = features.reshape(B, C, -1)
                 features = features.mean(-1)
-            elif mode == 'backbone2' :
+            elif mode == 'classification_neck' :
                 features = model.forward_classification_neck(images.to(device))
             elif mode == 'classifier':
                 features = model(images.to(device))
@@ -79,7 +80,7 @@ train = Food101(root="/mnt/SSD2/food-101", train=True, transform=transform)
 
 
 MODE='backbone1'
-MODE='backbone2'
+MODE='classification_neck'
 MODE='classifier'
 # Calculate the image features
 train_features, train_labels = get_features(train, mode=MODE)
@@ -97,13 +98,11 @@ print(f"Accuracy  :: {MODE} = {accuracy:.3f}")
 # python linear_probing_demo.py
 
 # MODE='backbone1'
-# Accuracy = 72.131
+# Accuracy  :: backbone1 = 72.131
 
-# MODE='backbone2'
-# Accuracy = 
-
-# MODE='classifier'
-# Accuracy = 
+# MODE='classification_neck'
+# Accuracy  :: classification_neck = 76.725
 
 # MODE='classifier'
-# Accuracy = 
+# Accuracy  :: classifier = 74.749
+
