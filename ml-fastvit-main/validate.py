@@ -208,7 +208,7 @@ def _extract_linearprobe_features(model, loader, device):
 
             output = model(input)
             if isinstance(output, (list, tuple)):
-                features = output[0] # Projected embeddings
+                features = output[2] # fastvit backbone
            
 
             features = features.float()
