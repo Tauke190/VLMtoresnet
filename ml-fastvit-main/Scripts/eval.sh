@@ -3,11 +3,11 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 
 conda activate fastvit
 
-python validate.py /mnt/SSD2/ImageNet1k \
+python validate.py /mnt/SSD2/food-101 \
   --model fastvit_sa36_projector \
   --checkpoint Weights/fastvit_sa36.pth.tar \
-  --eval-mode logits \
-  --dataset fgvc_aircraft
+  --eval-mode linearprobe \
+  --dataset food101
 
 
 # Eval mode [ logit , linearprobe , zeroshot]
