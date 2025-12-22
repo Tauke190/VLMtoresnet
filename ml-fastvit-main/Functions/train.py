@@ -57,6 +57,20 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
+            # stage_ins = model.get_stage_inputs(input)
+            # if batch_idx == 0 and args.rank == 0:
+            #     print("==== Stage input debug (batch 0) ====")
+            #     print("Number of stage inputs:", len(stage_ins))
+            #     for i, feat in enumerate(stage_ins):
+            #         print(f"[Stage {i}] "
+            #             f"shape={tuple(feat.shape)}, "
+            #             f"dtype={feat.dtype}, device={feat.device}, "
+            #             f"min={feat.min().item():.4f}, "
+            #             f"max={feat.max().item():.4f}, "
+            #             f"mean={feat.mean().item():.4f}, "
+            #             f"std={feat.std().item():.4f}, "
+            #             f"nonzero_frac={(feat != 0).float().mean().item()*100:.2f}%")
+            #     print("=====================================")
             projected_embed, output, x = model(input)
             # base_loss = loss_fn(input, output, target)
             base_loss = loss_fn(output, target)
