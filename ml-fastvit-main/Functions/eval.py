@@ -63,12 +63,12 @@ def evaluate_zeroshot(eval_ctx, model, device, channels_last=None, amp_autocast=
 
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
 
-            print("1... ", acc1, world_size)
+            # print("1... ", acc1, world_size)
             if distributed:
                 acc1 = reduce_tensor(acc1, world_size)
                 acc5 = reduce_tensor(acc5, world_size)
             
-            print("2... ", acc1, world_size)
+            # print("2... ", acc1, world_size)
             top1_m.update(acc1.item(), batch_size)
             top5_m.update(acc5.item(), batch_size)
 

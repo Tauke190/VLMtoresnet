@@ -287,7 +287,7 @@ def basic_setup(args):
         else:
             exp_name = "-".join(
                 [
-                    datetime.now().strftime("%Y%m%d-%H%M%S"),
+                    # datetime.now().strftime("%Y%m%d-%H%M%S"),
                     safe_model_name(args.model),
                     str(data_config["input_size"][-1]),
                 ]

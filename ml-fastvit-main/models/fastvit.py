@@ -771,7 +771,7 @@ class FastViT(nn.Module):
     ) -> None:
 
         super().__init__()
-
+        self.embed_dims = embed_dims # To access embed_dims outside
         if not fork_feat:
             self.num_classes = num_classes
         self.fork_feat = fork_feat
@@ -925,7 +925,10 @@ class FastViT(nn.Module):
 
     def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
         outs = []
+        stage_inputs = []
         for idx, block in enumerate(self.network):
+            if isinstance(block, nn.Sequential): # Only collect inputs of main 4 stages/blocks
+                stage_inputs.append(x)   # x is input to this stage
             x = block(x)
             if self.fork_feat and idx in self.out_indices:
                 norm_layer = getattr(self, f"norm{idx}")
@@ -935,7 +938,7 @@ class FastViT(nn.Module):
             # output the features of four stages for dense prediction
             return outs
         # output only the features of last layer for image classification
-        return x
+        return x , stage_inputs
     
     def forward_backbone(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_embeddings(x)

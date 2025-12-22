@@ -3,7 +3,7 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 # python Scripts/run.sh
 conda activate fastvit
 
-NUM_GPU=2
+NUM_GPU=1
 CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /mnt/SSD2/ImageNet1k/ \
     --model fastvit_sa36_projector \
@@ -16,9 +16,8 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     --log-wandb --native-amp --input-size 3 256 256 \
     --drop-path 0.35 --mixup 0 --cutmix 0 \
     --workers 10 --epochs 50 \
-    --freeze-backbone \
-    --log-wandb --experiment CLIPtoResNet \
-    --debug
+    --freeze-backbone 
+    # --log-wandb --experiment CLIPtoResNet \
     
 
 # Initialized Aircraft zero-shot evaluation with 100 classes.
