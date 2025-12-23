@@ -559,8 +559,9 @@ def main():
                         if hasattr(model, "module"):
                             backbone = model.module
 
-                        # Save backbone
-                        model_path = os.path.join(output_dir, "model_best_zeroshot.pth.tar")
+                        # Use custom checkpoint name if provided
+                        ckpt_name = args.checkpoint_name if args.checkpoint_name else "model_best_zeroshot.pth.tar"
+                        model_path = os.path.join(output_dir, ckpt_name)
                         torch.save(
                             {
                                 "epoch": epoch,

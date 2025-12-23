@@ -407,7 +407,7 @@ def _parse_args():
         default="rand-m9-mstd0.5-inc1",
         metavar="NAME",
         help='Use AutoAugment policy. "v0" or "original". (default: rand-m9-mstd0.5-inc1)',
-    ),
+    )
     parser.add_argument(
         "--aug-repeats",
         type=int,
@@ -651,6 +651,14 @@ def _parse_args():
         default=0,
         metavar="N",
         help="how many batches to wait before writing recovery checkpoint",
+    )
+
+    parser.add_argument(
+    "--checkpoint-name",
+    default="",
+    type=str,
+    metavar="FILENAME",
+    help="Custom name for the main checkpoint file (default: auto-named)",
     )
     parser.add_argument(
         "--checkpoint-hist",
