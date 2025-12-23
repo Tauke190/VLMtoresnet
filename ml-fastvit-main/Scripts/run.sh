@@ -18,7 +18,7 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     --workers 10 --epochs 50 \
     --freeze-backbone \
     --log-wandb --experiment CLIPtoResNet \
-    
+    --debug
 
 # Initialized Aircraft zero-shot evaluation with 100 classes.
 

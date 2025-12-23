@@ -926,7 +926,6 @@ class FastViT(nn.Module):
     def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
         outs = []
         for idx, block in enumerate(self.network):
-            if isinstance(block, nn.Sequential): # Only collect inputs of main 4 stages/blocks
             x = block(x)
             if self.fork_feat and idx in self.out_indices:
                 norm_layer = getattr(self, f"norm{idx}")
