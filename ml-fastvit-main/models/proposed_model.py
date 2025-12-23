@@ -129,9 +129,6 @@ fastvit_sa36_config = dict(
     layer_scale_init_value=1e-6,
 )
 
-fastvit_sa36_config.embed_dims = [64, 128, 256, 512]
-
-
 
 @register_model
 def fastvit_sa36_projector(pretrained=False, **kwargs):
