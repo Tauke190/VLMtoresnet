@@ -289,7 +289,7 @@ def basic_setup(args):
                 [
                     # datetime.now().strftime("%Y%m%d-%H%M%S"),
                     safe_model_name(args.model),
-                    str(data_config["input_size"][-1]),
+                    # str(data_config["input_size"][-1]),
                 ]
             )
         output_dir = get_outdir(

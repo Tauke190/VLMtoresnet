@@ -2,7 +2,6 @@ import os
 import copy
 from functools import partial
 from typing import List, Tuple, Optional, Union
-from Functions.AddLRtokens import AddLRtokens
 import torch
 import torch.nn as nn
 from timm.models.layers import DropPath, trunc_normal_
@@ -19,17 +18,17 @@ class FastViT_projector(FastViT):
     def __init__( self, freeze_backbone=True, clip_dim=768, **kwargs):
         super().__init__(**kwargs)
         
-
         if freeze_backbone:
             _logger.info(" Frezing Backbone")
             for p in self.parameters():
                 p.requires_grad = False
-
-
-        self.prompter = AddLRtokens(
-            self.embed_dims[0], self.embed_dims[1], self.embed_dims[2], self.embed_dims[3],
-            base_hw=(32,32), mode="bicubic"
-        )
+       
+        self.p1 = nn.Parameter(torch.zeros(1, self.embed_dims[0], 32, 32))
+        self.p2 = nn.Parameter(torch.zeros(1, self.embed_dims[1], 16, 16))
+        self.p3 = nn.Parameter(torch.zeros(1, self.embed_dims[2], 8, 8))
+        self.p4 = nn.Parameter(torch.zeros(1, self.embed_dims[3], 4, 4))
+        self.mode = "bicubic"
+        
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
         
@@ -43,30 +42,66 @@ class FastViT_projector(FastViT):
         if "projector.fc2.bias" not in state_dict:
             state_dict["projector.fc2.bias"] = self.projector.fc2.bias
 
-        for i in range(1, 5):
-            p = getattr(self.prompter, f"p{i}", None)
-            if p is not None:
-                if f"prompter.p{i}" not in state_dict:
-                    state_dict[f"prompter.p{i}"] = p
+        if "p1" not in state_dict:
+            state_dict["p1"] = self.p1
+        if "p2" not in state_dict:
+            state_dict["p2"] = self.p2
+        if "p3" not in state_dict:
+            state_dict["p3"] = self.p3
+        if "p4" not in state_dict:
+            state_dict["p4"] = self.p4
 
         super().load_state_dict(state_dict, strict)
+
+    def _add_prompt(self, x, p):
+        # x: [B,C,H,W], p: [1,C,h0,w0]
+        H, W = x.shape[-2:]
+        p_up = nn.functional.interpolate(p, size=(H, W), mode=self.mode,
+                             align_corners=False if self.mode in ("bilinear", "bicubic") else None)
+        return x + p_up  # broadcast over batch
         
-    
+    def _forward_tokens_with_prompts(self, x: torch.Tensor):
+        """
+        Run self.network, adding p1..p4 just before each of the 4 main stages.
+        """
+        stage_idx = 0
+        outs = []
+
+        for idx, block in enumerate(self.network):
+            # Each main stage is an nn.Sequential
+            if isinstance(block, nn.Sequential):
+                # add prompt before this stage
+                if stage_idx == 0:
+                    x = self._add_prompt(x, self.p1)
+                elif stage_idx == 1:
+                    x = self._add_prompt(x, self.p2)
+                elif stage_idx == 2:
+                    x = self._add_prompt(x, self.p3)
+                elif stage_idx == 3:
+                    x = self._add_prompt(x, self.p4)
+                stage_idx += 1
+
+            x = block(x)
+
+            if self.fork_feat and idx in self.out_indices:
+                norm_layer = getattr(self, f"norm{idx}")
+                outs.append(norm_layer(x))
+
+        if self.fork_feat:
+            return outs
+        return x
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # 1) Convolutional stem
         x = self.forward_embeddings(x)
 
-        # 2) backbone , get inputs before each stage
-        x, stage_inputs = self.forward_tokens(x)
-
-        f1, f2, f3, f4 = stage_inputs
-        # 3) apply prompts
-        f1, f2, f3, f4 = self.prompter(f1, f2, f3, f4)
-
+        # 2) Backbone with prompts injected before stages
+        x = self._forward_tokens_with_prompts(x)
 
         if self.fork_feat:
-            return x # features after the stage
+            return x  # or outs if you use fork_feat for dense tasks
 
+        # 3) Classification head
         x = self.conv_exp(x)
         x = self.gap(x)
         x = x.view(x.size(0), -1)
