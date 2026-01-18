@@ -935,7 +935,7 @@ class FastViT(nn.Module):
             # output the features of four stages for dense prediction
             return outs
         # output only the features of last layer for image classification
-        return x , stage_inputs
+        return x
     
     def forward_backbone(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_embeddings(x)
@@ -964,7 +964,6 @@ class FastViT(nn.Module):
         x = x.view(x.size(0), -1)
         cls_out = self.head(x)
         return cls_out
-
 
 @register_model
 def fastvit_t8(pretrained=False, **kwargs):

@@ -15,7 +15,7 @@ _logger = logging.getLogger("train")
 IMPORT_NONE = None 
 
 class FastViT_projector(FastViT):
-    def __init__( self, freeze_backbone=True, clip_dim=768, **kwargs):
+    def __init__(self, freeze_backbone=True, clip_dim=768, **kwargs):
         super().__init__(**kwargs)
         
         if freeze_backbone:
@@ -32,6 +32,9 @@ class FastViT_projector(FastViT):
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
         
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        print("Number of nn.Sequential blocks in self.network:", num_sequential)
+
     def load_state_dict(self, state_dict, strict):
         if "projector.fc1.weight" not in state_dict:
             state_dict["projector.fc1.weight"] = self.projector.fc1.weight
@@ -54,7 +57,7 @@ class FastViT_projector(FastViT):
         super().load_state_dict(state_dict, strict)
 
     def _add_prompt(self, x, p):
-        # x: [B,C,H,W], p: [1,C,h0,w0]
+        # x: [B,C,H,W] -> feature map , p: [1,C,h0,w0] -> learnable tokens
         H, W = x.shape[-2:]
         p_up = nn.functional.interpolate(p, size=(H, W), mode=self.mode,
                              align_corners=False if self.mode in ("bilinear", "bicubic") else None)
@@ -127,11 +130,9 @@ fastvit_sa36_config = dict(
 )
 
 
-
 @register_model
 def fastvit_sa36_projector(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant."""
     model = FastViT_projector(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
-
