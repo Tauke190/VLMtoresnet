@@ -136,4 +136,3 @@ def fastvit_sa36_projector(pretrained=False, **kwargs):
     model = FastViT_projector(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
-
