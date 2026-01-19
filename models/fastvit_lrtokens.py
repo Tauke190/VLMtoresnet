@@ -113,6 +113,7 @@ class FastViT_lrtokens(FastViT):
         cls_out = self.head(x)
         return projected_embed, cls_out, x
 
+
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
     embed_dims = [64, 128, 256, 512],
@@ -122,7 +123,6 @@ fastvit_sa36_config = dict(
     token_mixers = ("repmixer", "repmixer", "repmixer", "attention"),
     layer_scale_init_value=1e-6,
 )
-
 
 @register_model
 def fastvit_sa36_lrtokens(pretrained=False, **kwargs):
