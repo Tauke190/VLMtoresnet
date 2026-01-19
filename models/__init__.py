@@ -12,5 +12,6 @@ from .fastvit import (
     fastvit_ma36,
 )
 
-
-from .proposed_model import IMPORT_NONE 
+from .fastvit_lrtokens import IMPORT_NONE
+from .fastvit_adapters import FastViT_adapter
+from .fastvit_lora import FastViT_lora

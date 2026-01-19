@@ -3,8 +3,10 @@ cd ~/VLMtoresnet/ml-fastvit-main/
 
 conda activate fastvit
 
+ #[ Models - fastvit_sa36_adapter , fastvit_sa36_projector ]
+
 python validate.py /mnt/SSD2/food-101 \
-  --model fastvit_sa36_projector \
+  --model fastvit_sa36_lora\
   --checkpoint Weights/fastvit_sa36.pth.tar \
   --eval-mode linearprobe \
   --dataset food101

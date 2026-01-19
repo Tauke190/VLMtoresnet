@@ -6,7 +6,7 @@ conda activate fastvit
 NUM_GPU=1
 CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     /mnt/SSD2/ImageNet1k/ \
-    --model fastvit_sa36_projector \
+    --model fastvit_sa36_adapter \
     --val-set "food101" \
     --validation-data-dir /mnt/SSD2/food-101 \
     --validation-eval-interval 2000 \
