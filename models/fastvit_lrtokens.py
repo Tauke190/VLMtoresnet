@@ -14,7 +14,7 @@ import logging
 _logger = logging.getLogger("train")
 IMPORT_NONE = None 
 
-class FastViT_projector(FastViT):
+class FastViT_lrtokens(FastViT):
     def __init__(self, freeze_backbone=True, clip_dim=768, **kwargs):
         super().__init__(**kwargs)
         
@@ -131,7 +131,7 @@ fastvit_sa36_config = dict(
 
 
 @register_model
-def fastvit_sa36_projector(pretrained=False, **kwargs):
+def fastvit_sa36_lrtokens(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant."""
     model = FastViT_projector(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
