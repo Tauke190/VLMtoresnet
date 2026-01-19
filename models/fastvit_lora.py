@@ -145,11 +145,6 @@ class FastViT_lora(FastViT):
         cls_out = self.head(x)
         return projected_embed, cls_out, x
 
-    def get_stage_inputs(self, x: torch.Tensor):
-        """From raw image -> feature maps before each stage (for debugging)."""
-        x = self.forward_embeddings(x)
-        _, stage_inputs = self._forward_backbone_with_stage_inputs(x)
-        return stage_inputs
 
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],

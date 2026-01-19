@@ -113,11 +113,6 @@ class FastViT_lrtokens(FastViT):
         cls_out = self.head(x)
         return projected_embed, cls_out, x
 
-    def get_stage_inputs(self, x: torch.Tensor):
-        """From raw image -> feature maps before each stage (for debugging)."""
-        x = self.forward_embeddings(x)
-        _, stage_inputs = self._forward_backbone_with_stage_inputs(x)
-        return stage_inputs
 
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
@@ -129,10 +124,9 @@ fastvit_sa36_config = dict(
     layer_scale_init_value=1e-6,
 )
 
-
 @register_model
 def fastvit_sa36_lrtokens(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant."""
-    model = FastViT_projector(**fastvit_sa36_config, **kwargs)
+    model = FastViT_lrtokens(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
