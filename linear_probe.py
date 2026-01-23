@@ -183,6 +183,8 @@ def main():
     args = parse_args()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    num_gpus = torch.cuda.device_count()
+    print(f"GPUs available: {num_gpus}")
 
     train_loader, test_loader, class_names = setup_linearprobe_loaders(
         args.dataset,
@@ -194,6 +196,9 @@ def main():
           f"{len(train_loader.dataset)} train images, {len(test_loader.dataset)} test images")
 
     backbone = load_backbone(args, device)
+    param_count = sum(p.numel() for p in backbone.parameters())
+    print(f"params: {param_count/1e6:.2f} M")
+    print(f"batch size = {args.batch_size}")
 
     projector = None
     if args.projector_checkpoint is not None:
@@ -241,6 +246,9 @@ def main():
     print(f"\nLinear probe accuracy on {args.dataset}:")
     print(f"  Top-1: {acc1:.3f}%")
     print(f"  Top-5: {acc5:.3f}% ({len(class_names)} classes)")
+    if device.startswith("cuda"):
+        peak = torch.cuda.max_memory_allocated() / (1024**2)
+        print(f"allocated: {peak:.2f} MB")
 
 
 if __name__ == "__main__":

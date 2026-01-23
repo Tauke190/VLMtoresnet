@@ -368,6 +368,10 @@ def validate(args):
         model = torch.jit.script(model)
 
     model = model.cuda()
+
+    param_count = sum(p.numel() for p in model.parameters())
+    _logger.info(f"Parameters: {param_count:,}")
+
     if args.apex_amp:
         model = amp.initialize(model, opt_level="O1")
 
@@ -445,7 +449,7 @@ def validate(args):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-
+    total_start = time.time()
     model.eval()
     with torch.no_grad():
         # warmup, reduce variability of first batch time, especially for comparing torchscript vs non
@@ -546,6 +550,12 @@ def validate(args):
             results["top1"], results["top1_err"], results["top5"], results["top5_err"]
         )
     )
+    mem_res = torch.cuda.max_memory_reserved()
+    _logger.info(f"Peak Reserved: {mem_res/1024**2:.2f} MB")
+
+    total_end = time.time()
+    total_time = total_end - total_start
+    _logger.info(f"Total Evaluation Time: {total_time:.2f} seconds")
 
     return results
 
