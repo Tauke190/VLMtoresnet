@@ -13,4 +13,4 @@ from .fastvit import (
 )
 
 from .fastvit_proposed import IMPORT_NONE
-from .fastvit_lora import FastViT_lora
+

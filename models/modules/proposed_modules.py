@@ -145,3 +145,33 @@ class RepMixerBlock_Adapter(RepMixerBlock):
             x = x + self.drop_path( z )
         return x
 
+
+class ConvLoRA(nn.Module):
+    """
+    LoRA (Low-Rank Adaptation) for convolutional layers.
+    Applies low-rank decomposition: output = Conv(x) + scale * (B * A)(x)
+    where A projects down to rank r, and B projects back up.
+    """
+    def __init__(self, in_channels, out_channels, kernel_size=1, rank=8, alpha=16, stride=1, padding=0):
+        super().__init__()
+        self.rank = rank
+        self.alpha = alpha
+        self.scaling = alpha / rank  # Scaling factor for LoRA
+
+        # Low-rank matrices: A (down-projection) and B (up-projection)
+        # A: [in_channels, rank, kernel_size, kernel_size]
+        # B: [out_channels, rank, 1, 1]
+        self.lora_A = nn.Conv2d(in_channels, rank, kernel_size=kernel_size,
+                                stride=stride, padding=padding, bias=False)
+        self.lora_B = nn.Conv2d(rank, out_channels, kernel_size=1, bias=False)
+
+        # Initialize A with small random values (Kaiming), B with zeros
+        # This ensures LoRA starts as identity (no effect initially)
+        nn.init.kaiming_uniform_(self.lora_A.weight, a=5**0.5)
+        nn.init.zeros_(self.lora_B.weight)
+
+    def forward(self, x):
+        # LoRA path: x -> A (down) -> B (up)
+        lora_out = self.lora_B(self.lora_A(x))
+        return x + self.scaling * lora_out  # Residual connection with scaling
+

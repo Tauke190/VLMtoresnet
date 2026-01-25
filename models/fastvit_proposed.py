@@ -11,7 +11,7 @@ from timm.models.layers import DropPath, trunc_normal_
 from timm.models.registry import register_model
 
 from .fastvit import FastViT, RepCPE, default_cfgs, RepMixerBlock, AttentionBlock
-from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter
+from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
 
 import logging
 
@@ -60,8 +60,7 @@ class FastViT_Projector(FastViT):
 
         return projected_embed, cls_out, x
 
-        
-        
+            
 ###### Lr-tokens 
 class FastViT_lrtokens(FastViT_Projector):
     def __init__(self, freeze_backbone=True, clip_dim=768, **kwargs):
@@ -122,7 +121,6 @@ class FastViT_lrtokens(FastViT_Projector):
         return x
 
     
-
 ###### Adapters
 class FastViT_adapter(FastViT_Projector):
     def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, adapter_reduction=4, **kwargs):
@@ -240,6 +238,72 @@ class FastViT_adapter(FastViT_Projector):
         return x
 
     
+###### LoRA 
+class FastViT_lora(FastViT_Projector):
+    def __init__(self, freeze_backbone=True, clip_dim=768, lora_rank=8, lora_alpha=16, **kwargs):
+        super().__init__(**kwargs)
+
+        # Create LoRA layers for each stage
+        # Each stage outputs features with embed_dims[i] channels
+        self.lora1 = ConvLoRA(self.embed_dims[0], self.embed_dims[0], kernel_size=1, rank=lora_rank, alpha=lora_alpha)
+        self.lora2 = ConvLoRA(self.embed_dims[1], self.embed_dims[1], kernel_size=1, rank=lora_rank, alpha=lora_alpha)
+        self.lora3 = ConvLoRA(self.embed_dims[2], self.embed_dims[2], kernel_size=1, rank=lora_rank, alpha=lora_alpha)
+        self.lora4 = ConvLoRA(self.embed_dims[3], self.embed_dims[3], kernel_size=1, rank=lora_rank, alpha=lora_alpha)
+        self.apply(self.cls_init_weights)
+
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"LoRA rank: {lora_rank}, LoRA alpha: {lora_alpha}")
+
+    def load_state_dict(self, state_dict, strict):
+        # Initialize LoRA weights if not in checkpoint (allows backward compatibility)
+        for stage_num in range(1, 5):
+            lora_name = f"lora{stage_num}"
+            lora_module = getattr(self, lora_name)
+            # LoRA has two matrices: A (down-projection) and B (up-projection)
+            if f"{lora_name}.lora_A.weight" not in state_dict:
+                state_dict[f"{lora_name}.lora_A.weight"] = lora_module.lora_A.weight
+            if f"{lora_name}.lora_B.weight" not in state_dict:
+                state_dict[f"{lora_name}.lora_B.weight"] = lora_module.lora_B.weight
+
+        super().load_state_dict(state_dict, strict)
+
+    def forward_tokens(self, x: torch.Tensor):
+        """
+        Run self.network, applying LoRA after each of the 4 main stages.
+        """
+        stage_idx = 0
+        outs = []
+
+        for idx, block in enumerate(self.network):
+            # Process the block (embedding/downsample or main stage)
+            x = block(x)
+
+            # Each main stage is an nn.Sequential - apply LoRA after it
+            if isinstance(block, nn.Sequential):
+                if stage_idx == 0:
+                    x = self.lora1(x)
+                elif stage_idx == 1:
+                    x = self.lora2(x)
+                elif stage_idx == 2:
+                    x = self.lora3(x)
+                elif stage_idx == 3:
+                    x = self.lora4(x)
+                stage_idx += 1
+
+            # Collect intermediate outputs if needed for dense tasks
+            if self.fork_feat and idx in self.out_indices:
+                norm_layer = getattr(self, f"norm{idx}")
+                outs.append(norm_layer(x))
+
+        if self.fork_feat:
+            return outs
+        return x
+
+   
+   
+
+
     
 
 fastvit_sa36_config = dict(
@@ -273,6 +337,14 @@ def fastvit_sa36_lrtokens(pretrained=False, **kwargs):
 def fastvit_sa36_adapter(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with adapters"""
     model = FastViT_adapter(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
+
+#### LoRA 
+@register_model
+def fastvit_sa36_lora(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with LoRA"""
+    model = FastViT_lora(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
 
