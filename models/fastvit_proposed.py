@@ -153,12 +153,6 @@ class FastViT_adapter(FastViT_Projector):
                     else:
                         assert False, "module not recognized"
                       
-        # # Create adapter modules for each stage
-        # self.adapter1 = ConvAdapter(self.embed_dims[0], reduction_factor=adapter_reduction)
-        # self.adapter2 = ConvAdapter(self.embed_dims[1], reduction_factor=adapter_reduction)
-        # self.adapter3 = ConvAdapter(self.embed_dims[2], reduction_factor=adapter_reduction)
-        # self.adapter4 = ConvAdapter(self.embed_dims[3], reduction_factor=adapter_reduction)
-
         num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
         _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
         _logger.info(f"Adapter reduction factor: {adapter_reduction}")
@@ -187,55 +181,8 @@ class FastViT_adapter(FastViT_Projector):
                         state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
                         state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
-        # import pdb
-        # pdb.set_trace()                
-        # for stage_num in range(1, 5):
-        #     adapter_name = f"adapter{stage_num}"
-        #     adapter_module = getattr(self, adapter_name)
-        #     if f"{adapter_name}.adapter.0.weight" not in state_dict:
-        #         state_dict[f"{adapter_name}.adapter.0.weight"] = adapter_module.adapter[0].weight
-        #     if f"{adapter_name}.adapter.0.bias" not in state_dict:
-        #         state_dict[f"{adapter_name}.adapter.0.bias"] = adapter_module.adapter[0].bias
-        #     if f"{adapter_name}.adapter.2.weight" not in state_dict:
-        #         state_dict[f"{adapter_name}.adapter.2.weight"] = adapter_module.adapter[2].weight
-        #     if f"{adapter_name}.adapter.2.bias" not in state_dict:
-        #         state_dict[f"{adapter_name}.adapter.2.bias"] = adapter_module.adapter[2].bias
-
+        
         super().load_state_dict(state_dict, strict)
-
-    def forward_tokens(self, x: torch.Tensor):
-        """
-        Run self.network, applying adapters after each of the 4 main stages.
-        """
-        import pdb
-        pdb.set_trace()
-        stage_idx = 0
-        outs = []
-
-        for idx, block in enumerate(self.network):
-            # Process the block (embedding/downsample or main stage)
-            x = block(x)
-
-            # Each main stage is an nn.Sequential - apply adapter after it
-            if isinstance(block, nn.Sequential):
-                if stage_idx == 0:
-                    x = self.adapter1(x)
-                elif stage_idx == 1:
-                    x = self.adapter2(x)
-                elif stage_idx == 2:
-                    x = self.adapter3(x)
-                elif stage_idx == 3:
-                    x = self.adapter4(x)
-                stage_idx += 1
-
-            # Collect intermediate outputs if needed for dense tasks
-            if self.fork_feat and idx in self.out_indices:
-                norm_layer = getattr(self, f"norm{idx}")
-                outs.append(norm_layer(x))
-
-        if self.fork_feat:
-            return outs
-        return x
 
     
 ###### LoRA 

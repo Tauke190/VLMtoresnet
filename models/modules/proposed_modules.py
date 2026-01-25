@@ -96,8 +96,6 @@ class AttentionBlock_Adapter(AttentionBlock):
         self.adapter2[2].bias.data.normal_(mean=0.0, std=1e-7)
 
     def forward(self, x):
-        import pdb
-        pdb.set_trace()
         if self.use_layer_scale:
             z = self.layer_scale_1 * self.token_mixer(self.norm(x))
             z = self.adapter1(z)
@@ -105,11 +103,15 @@ class AttentionBlock_Adapter(AttentionBlock):
 
             z = self.layer_scale_2 * self.convffn(x)
             z = self.adapter2(z)
-            
-            x = x + self.drop_path( )
+            x = x + self.drop_path( z )
         else:
-            x = x + self.drop_path(self.token_mixer(self.norm(x)))
-            x = x + self.drop_path(self.convffn(x))
+            z = self.token_mixer(self.norm(x))
+            z = self.adapter1(z)
+            x = x + self.drop_path( z )
+            
+            z =  self.convffn(x)
+            z = self.adapter2(z)
+            x = x + self.drop_path(z)
         return x
 
 
