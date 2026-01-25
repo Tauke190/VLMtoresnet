@@ -167,27 +167,30 @@ class FastViT_adapter(FastViT_Projector):
 
     def load_state_dict(self, state_dict, strict):
         # Initialize adapter weights if not in checkpoint (allows backward compatibility)
-        import pdb
-        pdb.set_trace()
         layer_index = -1 
         for i,block in enumerate(self.network):
             if isinstance(block, nn.Sequential):
-                layer_index += 1
                 for j,sub_block in enumerate(block):
-                    block_index = layer_index
-                    block_idx = j 
-                    drop_path_rate=kwargs.get('drop_path_rate', True)
-                    block_dpr = ( drop_path_rate * (block_idx + sum(layers[:block_index])) / (sum(layers) - 1) )
+                    if type(sub_block) == RepMixerBlock_Adapter:
+                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
+                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
+
+                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
+                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
                     
-                    if type(self.network[i][j]) == RepMixerBlock:
-                
+                    elif type(sub_block) == AttentionBlock_Adapter:
+                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
+                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
+                        state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
+                        state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
 
-        # for i, blocks in enumerate(self.layers):
-            # key = f"network.{}.0.adapter1.2.bias"
+                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
+                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
+                        state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
+                        state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
-
-        # 
-
+        # import pdb
+        # pdb.set_trace()                
         # for stage_num in range(1, 5):
         #     adapter_name = f"adapter{stage_num}"
         #     adapter_module = getattr(self, adapter_name)
