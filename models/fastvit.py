@@ -675,7 +675,7 @@ def basic_blocks(
     use_layer_scale: bool = True,
     layer_scale_init_value: float = 1e-5,
     inference_mode=False,
-) -> nn.Sequential:
+    ) -> nn.Sequential:
     """Build FastViT blocks within a stage.
 
     Args:

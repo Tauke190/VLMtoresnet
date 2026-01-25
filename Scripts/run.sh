@@ -1,35 +1,34 @@
 
-cd ~/VLMtoresnet/ml-fastvit-main/
+
+cd ~/VLMtoresnet/
 # python Scripts/run.sh
 conda activate fastvit
 
-NUM_GPU=1
+
+############## Training 
+WT=logs/fastvit_sa36.pth.tar
+IMAGENET_PATH=/mnt/SSD2/ImageNet1k/
+EXP=CLIPtoResNet
+VAL_SET="food101"
+VAL_PATH=/mnt/SSD2/food-101
+OUTPUT=./checkpoints
+
+
+
+
+MODEL=fastvit_sa36_adapter
 CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
-    /mnt/SSD2/ImageNet1k/ \
-    --model fastvit_sa36_adapter \
-    --val-set "food101" \
-    --validation-data-dir /mnt/SSD2/food-101 \
-    --validation-eval-interval 2000 \
-    --initial-checkpoint Weights/fastvit_sa36.pth.tar \
-    --output ./checkpoints \
-    --checkpoint-name fastvitsa36_projector_lrtokens.pth.tar \
-    -b 64 --lr 1e-3 \
-    --log-wandb --native-amp --input-size 3 224 224 \
-    --drop-path 0.35 --mixup 0 --cutmix 0 \
-    --workers 10 --epochs 50 \
-    --freeze-backbone 
-    # --log-wandb --experiment CLIPtoResNet \
-    # --debug
-
-# Initialized Aircraft zero-shot evaluation with 100 classes.
-
-# Evaluating.... 14 Iteratiopns on a B=256, with 3584 datapoints
-
-# Aircraft zero-shot before training: Acc@1 = 0.78%
-# Aircraft zero-shot before training: Acc@5 = 4.44%
+    $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \
+    --validation-eval-interval 2000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
+    --freeze-backbone --native-amp --workers 12 --clip-loss-weight 1 \
+    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 
+    
 
 
-# Training.... 5004 Iteratiopns on a B=256, with 1 281 024 datapoints
+# --checkpoint-name fastvitsa36_projector_lrtokens.pth.tar \       # 
+# --log-wandb --experiment CLIPtoResNet \
+# --debug
 
-# Training.... 2502 Iteratiopns on a B=256, with 640 512 datapoints                                                                                                                     
-# Training.... 2502 Iteratiopns on a B=256, with 640 512 datapoints 
+
+
+--

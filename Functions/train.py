@@ -16,6 +16,25 @@ from timm.models import model_parameters
 
 _logger = logging.getLogger("train")
 
+
+def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, batch_time_m, 
+    lr, wd0, wd1, data_time_m, losses_m=0, base_loss_val=0, clip_loss_val=0):
+    percent = 100.0 * batch_idx / last_idx
+    rate= input_size * world_size / batch_time_m.val
+    rate_avg=input_size * world_size / batch_time_m.avg
+
+    str = f"Train: {epoch} [{batch_idx:>4d}/{total_len} ({percent:>3.0f}%)]\t"
+    str += f"Loss: {losses_m.val:#.4g} ({losses_m.avg:#.3g})\t" 
+    str += f"Base Loss: {base_loss_val:.6f}\t"
+    str += f"CLIP Loss: {clip_loss_val:.6f}\t" 
+    str += f"Time: {batch_time_m.val:.3f}s, {rate:>7.2f}/s ({batch_time_m.avg:.3f}s, {rate_avg:>7.2f}/s)\t"  
+    str += f"LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}  Data: {data_time_m.val:.3f} ({data_time_m.avg:.3f})"
+    _logger.info(str)
+        
+
+
+
+
 def train_one_epoch(
     epoch, model, loader, optimizer, loss_fn, args, lr_scheduler=None,
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
@@ -71,45 +90,35 @@ def train_one_epoch(
             #             f"std={feat.std().item():.4f}, "
             #             f"nonzero_frac={(feat != 0).float().mean().item()*100:.2f}%")
             #     print("=====================================")
-            projected_embed, output, x = model(input)
+            if args.model == 'fastvit_sa36':
+                output = model(input)
+            else:
+                projected_embed, output, x = model(input)
             # base_loss = loss_fn(input, output, target)
             base_loss = loss_fn(output, target)
 
-            total_loss = base_loss
+            loss = base_loss
+
 
         #-------------Added by avinash gyawali-------------------------#
         # --- CLIP feature alignment loss ----------------------------#
-        if (
-            args.clip_loss_weight > 0.0
-            and clip_loss_fn is not None
-            and clip_text_features is not None
-            and clip_logit_scale is not None
-            and isinstance(target, torch.Tensor)
-            and target.dtype == torch.long
-        ):
-            # get backbone features if available, else fall back to output
+        clip_loss = torch.tensor(0.0, device=base_loss.device)  # Ensure tensor for .item()
+        if args.clip_loss_weight > 0.0:
+            '''
+            if anything fails after this, trying to compute clip loss unnecessarily   
+            '''
+            # and clip_loss_fn is not None and clip_text_features is not None \
+            # and clip_logit_scale is not None and isinstance(target, torch.Tensor) and target.dtype == torch.long):    
             feats = projected_embed
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
-            # --- FastViT feature map ---
             if feats.ndim == 4 and feats.shape[2] > 1 and feats.shape[3] > 1:
                 feats = feats.mean(dim=[2, 3])  # Global average pooling
-            # ----------------------------------------------
-            feats = feats.float()
-            feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
-
-            batch_text_feats = clip_text_features[target]
-            batch_text_feats = batch_text_feats / ( batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6 )
-            batch_text_feats = batch_text_feats.float()
-
-            clip_loss = clip_loss_fn( feats, batch_text_feats, clip_logit_scale )
-
-            total_loss = base_loss + args.clip_loss_weight * clip_loss
-        else:
-            clip_loss = torch.tensor(0.0, device=base_loss.device)  # Ensure tensor for .item()
-
-        loss = total_loss
-
+            
+            clip_loss = clip_loss_fn(feats, clip_text_features[target], clip_logit_scale)
+            loss += args.clip_loss_weight * clip_loss
+        
+        
         #-------------------------------------------------------------------------#
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
@@ -140,20 +149,10 @@ def train_one_epoch(
 
         # -----------------------------------------------------------------
         # Optional generic zero-shot eval every N batches inside epoch
-        if (
-            zeroshot_eval_ctx is not None
-            and args.rank == 0
-            and getattr(args, "zeroshot_eval_interval", 0) > 0
-            and (batch_idx + 1) % args.zeroshot_eval_interval == 0
-        ):
-            run_zeroshot_eval(
-                zeroshot_eval_ctx,
-                args,
-                model,
-                when="batch",
-                epoch=epoch,
-                batch_idx=batch_idx + 1,
-            )
+        if ( zeroshot_eval_ctx is not None and args.rank == 0 and getattr(args, "zeroshot_eval_interval", 0) > 0 and (batch_idx + 1) % args.zeroshot_eval_interval == 0):
+            run_zeroshot_eval( zeroshot_eval_ctx, args, model,
+                when="batch", epoch=epoch, batch_idx=batch_idx + 1)
+
         # -----------------------------------------------------------------
 
         torch.cuda.synchronize()
@@ -171,31 +170,8 @@ def train_one_epoch(
             base_loss_val = base_loss.item() if isinstance(base_loss, torch.Tensor) else float(base_loss)
 
             if args.local_rank == 0:
-                _logger.info(
-                    "Train: {} [{:>4d}/{} ({:>3.0f}%)]  "
-                    "Loss: {loss.val:#.4g} ({loss.avg:#.3g})  "
-                    "Base Loss: {base_loss:.6f}  "
-                    "CLIP Loss: {clip_loss:.6f}  "
-                    "Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  "
-                    "({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  "
-                    "LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}    "
-                    "Data: {data_time.val:.3f} ({data_time.avg:.3f})".format(
-                        epoch,
-                        batch_idx,
-                        len(loader),
-                        100.0 * batch_idx / last_idx,
-                        loss=losses_m,
-                        base_loss=base_loss_val,
-                        clip_loss=clip_loss_val,
-                        batch_time=batch_time_m,
-                        rate=input.size(0) * args.world_size / batch_time_m.val,
-                        rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
-                        lr=lr,
-                        wd0=wd0,
-                        wd1=wd1,
-                        data_time=data_time_m,
-                    )
-                )
+                log_output(epoch, batch_idx, total_len=len(loader), last_idx=last_idx, input_size=input.size(0), world_size=args.world_size, batch_time_m=batch_time_m, 
+                        lr=lr, wd0=wd0, wd1=wd1, data_time_m=data_time_m, losses_m=losses_m, base_loss_val=base_loss_val, clip_loss_val=clip_loss_val)
 
                 if args.save_images and output_dir:
                     torchvision.utils.save_image(
@@ -205,11 +181,7 @@ def train_one_epoch(
                         normalize=True,
                     )
 
-        if (
-            saver is not None
-            and args.recovery_interval
-            and (last_batch or (batch_idx + 1) % args.recovery_interval == 0)
-        ):
+        if (saver is not None and args.recovery_interval and (last_batch or (batch_idx + 1) % args.recovery_interval == 0)):
             saver.save_recovery(epoch, batch_idx=batch_idx)
 
         if lr_scheduler is not None:

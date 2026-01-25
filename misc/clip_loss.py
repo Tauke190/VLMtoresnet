@@ -129,6 +129,15 @@ class ClipLoss(nn.Module):
 
         return logits_per_image, logits_per_text
 
+    def preprocess_feats(self, feats, batch_text_feats):
+        feats = feats.float()
+        feats = feats / (feats.norm(dim=-1, keepdim=True) + 1e-6)
+
+        batch_text_feats = batch_text_feats / ( batch_text_feats.norm(dim=-1, keepdim=True) + 1e-6 )
+        batch_text_feats = batch_text_feats.float()
+
+        return feats, batch_text_feats
+
     def forward(
             self,
             image_features,
@@ -136,7 +145,9 @@ class ClipLoss(nn.Module):
             logit_scale,
             logit_bias=None,
             output_dict=False,
-    ):
+        ):
+        image_features, text_features = self.preprocess_feats(image_features, text_features)
+
         device = image_features.device
         logits_per_image, logits_per_text = self.get_logits(
             image_features,

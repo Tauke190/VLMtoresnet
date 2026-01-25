@@ -787,9 +787,9 @@ def _parse_args():
     )
 
     parser.add_argument(
-        "--clip-loss-weight",
+        "--clip-loss-weight", '--clip_loss_weight',
         type=float,
-        default=1.0,
+        default=0.0,
         help="Weight for CLIP feature alignment loss (default: 0.0 = disabled).",
     )
 
