@@ -57,7 +57,6 @@ def load_backbone(args, device):
 # ---------------- Data ----------------
 def setup_linearprobe_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
     """
-    ONLY CHANGE HERE:
     - Standard ImageNet resize + normalize
     """
 
