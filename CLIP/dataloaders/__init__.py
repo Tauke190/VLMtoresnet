@@ -15,6 +15,7 @@ from .cars import Cars
 from .flowers import OxfordFlowers
 from .eurosat import EuroSAT
 from .ucf101 import UCF101
+from .diffision_images import DiffisionImages
 
 import random
 from torchvision.transforms import InterpolationMode
@@ -329,5 +330,41 @@ def get_dataloader(dataset_name, transform=None, loader_type = "test", transform
             return train, test
         else:
             raise ValueError(f" Wrong {loader_type} type.")
+    
+    elif dataset_name == "diffision_images":
+        root = kwargs.get("root", "./datasets/Diffision_images")
+        caption_file = kwargs.get("caption_file", "caption_2k.txt")
+        sample_folders = kwargs.get("sample_folders", [])
+        num_samples_per_caption = kwargs.get("num_samples_per_caption", 3)
+
+        test = DiffisionImages(
+            root=root,
+            caption_file=caption_file,
+            sample_folders=sample_folders,
+            train=False,
+            transform=transform,
+            num_samples_per_caption=num_samples_per_caption,
+        )
+
+        if loader_type == "test":
+            print(f" Test images: {len(test)}")
+            return test
+
+        elif loader_type == "train":
+            train = DiffisionImages(
+                root=root,
+                caption_file=caption_file,
+                sample_folders=sample_folders,
+                train=True,
+                transform=transform_train,
+                num_samples_per_caption=num_samples_per_caption,
+            )
+            print(f" Train images {len(train)}, Test images {len(test)}")
+            return train, test
+
+        else:
+            raise ValueError(f" Wrong {loader_type} type.")
+
     else:
         raise AttributeError(f"{dataset_name} is not currently supported.")
+
