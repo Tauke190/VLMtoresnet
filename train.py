@@ -861,7 +861,12 @@ def main():
 
     if args.log_wandb:
         if has_wandb:
-            wandb.init(project=args.experiment, config=args)
+            # Only initialize wandb from rank 0 to avoid duplicate logging
+            if args.local_rank == 0:
+                # Auto-generate project and run names based on model if not provided
+                wandb_project = args.experiment if args.experiment else safe_model_name(args.model)
+                wandb_run_name = f"{safe_model_name(args.model)}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                wandb.init(project=wandb_project, name=wandb_run_name, config=args)
         else:
             _logger.warning(
                 "You've requested to log metrics to wandb but package not found. "
@@ -1322,13 +1327,14 @@ def main():
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
             if output_dir is not None:
+                # Only log to wandb from rank 0 to avoid duplicate logging from multiple processes
                 update_summary(
                     epoch,
                     train_metrics,
                     eval_metrics,
                     os.path.join(output_dir, "summary.csv"),
                     write_header=best_metric is None,
-                    log_wandb=args.log_wandb and has_wandb,
+                    log_wandb=args.log_wandb and has_wandb and args.rank == 0,
                 )
 
             if saver is not None:
