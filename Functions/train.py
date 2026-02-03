@@ -162,4 +162,3 @@ def train_one_epoch(
         optimizer.sync_lookahead()
 
     return OrderedDict([("loss", losses_m.avg)])
-

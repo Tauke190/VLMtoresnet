@@ -787,17 +787,11 @@ def _parse_args():
     )
 
     parser.add_argument(
-        "--clip-loss-weight", '--clip_loss_weight',
-        type=float,
-        default=0.0,
-        help="Weight for CLIP feature alignment loss (default: 0.0 = disabled).",
-    )
-
-    parser.add_argument(
-        "--mse-loss-weight", '--mse_loss_weight',
-        type=float,
-        default=0.0,
-        help="Weight for MSE loss between projected embeddings and CLIP image embeddings (default: 0.0 = disabled).",
+        "--method",
+        type=str,
+        default="baseline",
+        choices=["default", "baseline", "distillation"],
+        help="Training method: 'default' (base loss only), 'baseline' (base + clip), 'distillation' (base + clip + mse).",
     )
 
     parser.add_argument(
