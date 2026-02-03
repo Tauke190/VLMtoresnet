@@ -794,6 +794,13 @@ def _parse_args():
     )
 
     parser.add_argument(
+        "--mse-loss-weight", '--mse_loss_weight',
+        type=float,
+        default=0.0,
+        help="Weight for MSE loss between projected embeddings and CLIP image embeddings (default: 0.0 = disabled).",
+    )
+
+    parser.add_argument(
         "--freeze-backbone",
         action="store_true",
         default=False,

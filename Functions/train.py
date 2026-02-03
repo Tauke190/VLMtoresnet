@@ -1,6 +1,5 @@
 import time
 from contextlib import suppress
-from typing import Union
 from collections import OrderedDict
 import logging
 
@@ -9,38 +8,41 @@ from timm.loss import *
 
 
 import torch
-import torch.nn as nn
 import torchvision.utils
 
 from timm.models import model_parameters
+from Functions.losses import LossManager
 
 _logger = logging.getLogger("train")
 
 
-def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, batch_time_m, 
-    lr, wd0, wd1, data_time_m, losses_m=0, base_loss_val=0, clip_loss_val=0):
+def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, batch_time_m,
+    lr, wd0, wd1, data_time_m, losses_m, loss_dict=None):
     percent = 100.0 * batch_idx / last_idx
-    rate= input_size * world_size / batch_time_m.val
-    rate_avg=input_size * world_size / batch_time_m.avg
+    rate = input_size * world_size / batch_time_m.val
+    rate_avg = input_size * world_size / batch_time_m.avg
 
-    str = f"Train: {epoch} [{batch_idx:>4d}/{total_len} ({percent:>3.0f}%)]\t"
-    str += f"Loss: {losses_m.val:#.4g} ({losses_m.avg:#.3g})\t" 
-    str += f"Base Loss: {base_loss_val:.6f}\t"
-    str += f"CLIP Loss: {clip_loss_val:.6f}\t" 
-    str += f"Time: {batch_time_m.val:.3f}s, {rate:>7.2f}/s ({batch_time_m.avg:.3f}s, {rate_avg:>7.2f}/s)\t"  
-    str += f"LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}  Data: {data_time_m.val:.3f} ({data_time_m.avg:.3f})"
-    _logger.info(str)
+    log_str = f"Train: {epoch} [{batch_idx:>4d}/{total_len} ({percent:>3.0f}%)]\t"
+    log_str += f"Loss: {losses_m.val:#.4g} ({losses_m.avg:#.3g})\t"
+
+    # Log individual losses - .item() called only here at log intervals
+    if loss_dict:
+        for name, val in loss_dict.items():
+            log_str += f"{name}: {val.item():.4f}\t"
+
+    log_str += f"Time: {batch_time_m.val:.3f}s, {rate:>7.2f}/s ({batch_time_m.avg:.3f}s, {rate_avg:>7.2f}/s)\t"
+    log_str += f"LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}  Data: {data_time_m.val:.3f} ({data_time_m.avg:.3f})"
+    _logger.info(log_str)
         
 
 
 
 
 def train_one_epoch(
-    epoch, model, loader, optimizer, loss_fn, args, lr_scheduler=None,
+    epoch, model, loader, optimizer, loss_manager: LossManager, args, lr_scheduler=None,
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
     model_ema=None, mixup_fn=None, wd_scheduler=None,
-    clip_text_features=None, clip_logit_scale=None, clip_loss_fn=None,
-    zeroshot_eval_ctx=None,
+    zeroshot_eval_ctx=None, clip_model=None,
     ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -76,50 +78,18 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
-            # stage_ins = model.get_stage_inputs(input)
-            # if batch_idx == 0 and args.rank == 0:
-            #     print("==== Stage input debug (batch 0) ====")
-            #     print("Number of stage inputs:", len(stage_ins))
-            #     for i, feat in enumerate(stage_ins):
-            #         print(f"[Stage {i}] "
-            #             f"shape={tuple(feat.shape)}, "
-            #             f"dtype={feat.dtype}, device={feat.device}, "
-            #             f"min={feat.min().item():.4f}, "
-            #             f"max={feat.max().item():.4f}, "
-            #             f"mean={feat.mean().item():.4f}, "
-            #             f"std={feat.std().item():.4f}, "
-            #             f"nonzero_frac={(feat != 0).float().mean().item()*100:.2f}%")
-            #     print("=====================================")
             if args.model == 'fastvit_sa36':
-                output = model(input)
+                output = model(input) # For models without projection head
+                projected_embed = None
             else:
-                projected_embed, output, x = model(input)
-            # base_loss = loss_fn(input, output, target)
-            base_loss = loss_fn(output, target)
+                projected_embed, output, x = model(input) # For models with projection head 
 
-            loss = base_loss
-
-
-        #-------------Added by avinash gyawali-------------------------#
-        # --- CLIP feature alignment loss ----------------------------#
-        clip_loss = torch.tensor(0.0, device=base_loss.device)  # Ensure tensor for .item()
-        if args.clip_loss_weight > 0.0:
-            '''
-            if anything fails after this, trying to compute clip loss unnecessarily   
-            '''
-            # and clip_loss_fn is not None and clip_text_features is not None \
-            # and clip_logit_scale is not None and isinstance(target, torch.Tensor) and target.dtype == torch.long):    
-            feats = projected_embed
-            if isinstance(feats, (tuple, list)):
-                feats = feats[0]
-            if feats.ndim == 4 and feats.shape[2] > 1 and feats.shape[3] > 1:
-                feats = feats.mean(dim=[2, 3])  # Global average pooling
-            
-            clip_loss = clip_loss_fn(feats, clip_text_features[target], clip_logit_scale)
-            loss += args.clip_loss_weight * clip_loss
-        
-        
-        #-------------------------------------------------------------------------#
+            # Compute CLIP image features if needed for MSE loss
+            clip_image_features = None
+            if clip_model is not None and projected_embed is not None:
+                with torch.no_grad():
+                    clip_image_features = clip_model.encode_image(input)
+            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
@@ -165,13 +135,9 @@ def train_one_epoch(
             wd0 = param_groups[0]["weight_decay"]
             wd1 = param_groups[1]["weight_decay"] if len(param_groups) > 1 else wd0
 
-            # --- Add CLIP loss and base loss to log ---
-            clip_loss_val = clip_loss.item() if isinstance(clip_loss, torch.Tensor) else float(clip_loss)
-            base_loss_val = base_loss.item() if isinstance(base_loss, torch.Tensor) else float(base_loss)
-
             if args.local_rank == 0:
-                log_output(epoch, batch_idx, total_len=len(loader), last_idx=last_idx, input_size=input.size(0), world_size=args.world_size, batch_time_m=batch_time_m, 
-                        lr=lr, wd0=wd0, wd1=wd1, data_time_m=data_time_m, losses_m=losses_m, base_loss_val=base_loss_val, clip_loss_val=clip_loss_val)
+                log_output(epoch, batch_idx, total_len=len(loader), last_idx=last_idx, input_size=input.size(0), world_size=args.world_size, batch_time_m=batch_time_m,
+                        lr=lr, wd0=wd0, wd1=wd1, data_time_m=data_time_m, losses_m=losses_m, loss_dict=loss_dict)
 
                 if args.save_images and output_dir:
                     torchvision.utils.save_image(

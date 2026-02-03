@@ -63,6 +63,7 @@ from misc.cosine_annealing import CosineWDSchedule
 from Functions.train import train_one_epoch
 from Functions.eval import run_zeroshot_eval, validate
 from Functions.argument import _parse_args
+from Functions.losses import LossManager
 from Functions.setup import (
     build_imagenet_clip_text_features, build_clip_text_features, 
     setup_validation_zeroshot, setup_model, setup_distributed, basic_setup
@@ -112,16 +113,23 @@ def main():
     clip_text_features = None
     clip_loss_fn = None
     clip_logit_scale = None
-    
+    clip_model_for_mse = None  # Only keep CLIP model if MSE loss is enabled
+
+    mse_loss_weight = getattr(args, 'mse_loss_weight', 0.0)
+
+    # Setup CLIP text loss components (uses text encoder only, no image encoder)
     if args.clip_loss_weight > 0.0:
-        clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
-        for p in clip_model.parameters():
+        # Load CLIP model temporarily to build text features
+        _clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
+        for p in _clip_model.parameters():
             p.requires_grad = False
-        clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
-        
+
+        clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
+        clip_logit_scale = _clip_model.logit_scale.exp().detach().to(args.device)
+
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
-        clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
+            print(f"[DEBUG] CLIP loss uses TEXT features only (no image encoder)")
 
         clip_loss_fn = ClipLoss(
             local_loss=False,
@@ -132,6 +140,21 @@ def main():
         )
 
         clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
+
+        # Keep the model only if MSE loss also needs it, otherwise discard
+        if mse_loss_weight > 0.0:
+            clip_model_for_mse = _clip_model
+        else:
+            del _clip_model  # Free memory if not needed for MSE
+
+    # Load CLIP model for MSE loss (uses image encoder)
+    elif mse_loss_weight > 0.0:
+        clip_model_for_mse, _ = clip.load("ViT-L/14", device=args.device, jit=False)
+        for p in clip_model_for_mse.parameters():
+            p.requires_grad = False
+
+        if args.local_rank == 0:
+            print(f"[DEBUG] CLIP model loaded for MSE loss (image encoder)")
 
     #-----------------------------------------------------------
     optimizer = create_optimizer_v2(
@@ -444,6 +467,14 @@ def main():
             args.distillation_tau,
         )
 
+    loss_manager = LossManager(
+        args=args,
+        base_loss_fn=train_loss_fn,
+        clip_loss_fn=clip_loss_fn,
+        clip_text_features=clip_text_features,
+        clip_logit_scale=clip_logit_scale,
+    )
+
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
     best_metric = None
@@ -494,7 +525,7 @@ def main():
             model,
             loader_train,
             optimizer,
-            train_loss_fn,
+            loss_manager,
             args,
             lr_scheduler=lr_scheduler,
             saver=saver,
@@ -504,10 +535,8 @@ def main():
             model_ema=model_ema,
             mixup_fn=mixup_fn,
             wd_scheduler=wd_scheduler,
-            clip_text_features=clip_text_features,
-            clip_logit_scale=clip_logit_scale,
-            clip_loss_fn=clip_loss_fn, # Clip loss funciton
             zeroshot_eval_ctx=zeroshot_eval_ctx,
+            clip_model=clip_model_for_mse,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):

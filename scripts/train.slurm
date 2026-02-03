@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=f_b
+#SBATCH --job-name=sa36_lrtokens
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -31,15 +31,15 @@ echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
 # Change directory
-cd /home/av354855/VLMtoresnet/ml-fastvit-main
+cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
 
 WT=Weights/fastvit_sa36.pth.tar
-IMAGENET_PATH=/mnt/SSD2/ImageNet1k/
-EXP=fastvit_sa36_lrtokens
+IMAGENET_PATH=/home/c3-0/datasets/ImageNet
+EXP=fastvit
 VAL_SET="food101"
-VAL_PATH=/mnt/SSD2/food-101
+VAL_PATH=/home/c3-0/datasets/food-101
 OUTPUT=./checkpoints
 NUM_GPU=2
 MODEL=fastvit_sa36_lrtokens
