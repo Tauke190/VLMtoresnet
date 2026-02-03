@@ -13,10 +13,7 @@ VAL_SET="food101"
 VAL_PATH=/mnt/SSD2/food-101
 OUTPUT=./checkpoints
 NUM_GPU=2
-MODEL=fastvit_sa36_adapter
-
-# For final layer distillation add this
-
+MODEL=fastvit_sa36_lrtokens
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
 # Training methods = [default, baseline, distillation]

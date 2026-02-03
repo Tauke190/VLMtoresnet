@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sa36_lrtokens
+#SBATCH --job-name=lr_distill_sa36
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -52,6 +52,6 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \
     --method distillation --validation-eval-interval 2000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --freeze-backbone --native-amp --workers 12 \
-    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224
+    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 --log-wandb
 
 conda deactivate
