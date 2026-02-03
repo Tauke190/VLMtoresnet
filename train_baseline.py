@@ -97,7 +97,9 @@ def main():
 
     if args.log_wandb:
         if has_wandb:
-            wandb.init(project=args.experiment, config=args)
+            # Only initialize wandb from rank 0 to avoid duplicate logging
+            if args.local_rank == 0:
+                wandb.init(project=args.experiment, config=args)
         else:
             _logger.warning(
                 "You've requested to log metrics to wandb but package not found. "
@@ -610,13 +612,14 @@ def main():
             lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
         if output_dir is not None:
+            # Only log to wandb from rank 0 to avoid duplicate logging from multiple processes
             update_summary(
                 epoch,
                 train_metrics,
                 eval_metrics,
                 os.path.join(output_dir, "summary.csv"),
                 write_header=best_metric is None,
-                log_wandb=args.log_wandb and has_wandb,
+                log_wandb=args.log_wandb and has_wandb and args.rank == 0,
             )
         
     if best_metric is not None:
