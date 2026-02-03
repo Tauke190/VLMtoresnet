@@ -63,6 +63,7 @@ from misc.cosine_annealing import CosineWDSchedule
 from Functions.train import train_one_epoch
 from Functions.eval import run_zeroshot_eval, validate
 from Functions.argument import _parse_args
+from Functions.losses import get_loss_manager_for_method
 from Functions.setup import (
     build_imagenet_clip_text_features, build_clip_text_features, 
     setup_validation_zeroshot, setup_model, setup_distributed, basic_setup
@@ -96,7 +97,9 @@ def main():
 
     if args.log_wandb:
         if has_wandb:
-            wandb.init(project=args.experiment, config=args)
+            # Only initialize wandb from rank 0 to avoid duplicate logging
+            if args.local_rank == 0:
+                wandb.init(project=args.experiment, config=args)
         else:
             _logger.warning(
                 "You've requested to log metrics to wandb but package not found. "
@@ -109,19 +112,28 @@ def main():
     
     model , num_aug_splits, data_config = setup_model(args)
         
+    # Training method: 'default', 'baseline', or 'distillation'
+    method = args.method
+    if args.local_rank == 0:
+        print(f"[DEBUG] Training method: {method}")
+
     clip_text_features = None
     clip_loss_fn = None
     clip_logit_scale = None
-    
-    if args.clip_loss_weight > 0.0:
-        clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
-        for p in clip_model.parameters():
+    clip_model_for_mse = None
+
+    # Setup CLIP components based on method
+    if method in ('baseline', 'distillation'):
+        # Load CLIP model to build text features
+        _clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
+        for p in _clip_model.parameters():
             p.requires_grad = False
-        clip_text_features = build_imagenet_clip_text_features(clip_model, args.device)
-        
+
+        clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
+        clip_logit_scale = _clip_model.logit_scale.exp().detach().to(args.device)
+
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
-        clip_logit_scale = clip_model.logit_scale.exp().detach().to(args.device)
 
         clip_loss_fn = ClipLoss(
             local_loss=False,
@@ -131,7 +143,13 @@ def main():
             world_size=args.world_size,
         )
 
-        clip_dim = clip_text_features.shape[-1]  # 768 for ViT-L/14
+        # Keep CLIP model for MSE loss in distillation mode
+        if method == 'distillation':
+            clip_model_for_mse = _clip_model
+            if args.local_rank == 0:
+                print(f"[DEBUG] CLIP model kept for MSE loss (image encoder)")
+        else:
+            del _clip_model  # Free memory if not needed for MSE
 
     #-----------------------------------------------------------
     optimizer = create_optimizer_v2(
@@ -444,6 +462,14 @@ def main():
             args.distillation_tau,
         )
 
+    loss_manager = get_loss_manager_for_method(
+        method=method,
+        base_loss_fn=train_loss_fn,
+        clip_loss_fn=clip_loss_fn,
+        clip_text_features=clip_text_features,
+        clip_logit_scale=clip_logit_scale,
+    )
+
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
     best_metric = None
@@ -494,7 +520,7 @@ def main():
             model,
             loader_train,
             optimizer,
-            train_loss_fn,
+            loss_manager,
             args,
             lr_scheduler=lr_scheduler,
             saver=saver,
@@ -504,10 +530,8 @@ def main():
             model_ema=model_ema,
             mixup_fn=mixup_fn,
             wd_scheduler=wd_scheduler,
-            clip_text_features=clip_text_features,
-            clip_logit_scale=clip_logit_scale,
-            clip_loss_fn=clip_loss_fn, # Clip loss funciton
             zeroshot_eval_ctx=zeroshot_eval_ctx,
+            clip_model=clip_model_for_mse,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):
@@ -581,13 +605,14 @@ def main():
             lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
         if output_dir is not None:
+            # Only log to wandb from rank 0 to avoid duplicate logging from multiple processes
             update_summary(
                 epoch,
                 train_metrics,
                 eval_metrics,
                 os.path.join(output_dir, "summary.csv"),
                 write_header=best_metric is None,
-                log_wandb=args.log_wandb and has_wandb,
+                log_wandb=args.log_wandb and has_wandb and args.rank == 0,
             )
         
     if best_metric is not None:

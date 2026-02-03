@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=f_b
+#SBATCH --job-name=sa36_lrtokens
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -31,22 +31,27 @@ echo "Checking PyTorch CUDA version and availability:"
 python -c "import torch; print('torch.version.cuda:', torch.version.cuda); print('torch.cuda.is_available:', torch.cuda.is_available())"
 
 # Change directory
-cd /home/av354855/VLMtoresnet/ml-fastvit-main
+cd /home/av354855/VLMtoresnet
 
 # Run unbuffered
-python -m torch.distributed.launch --nproc_per_node=2 train_baseline.py \
-    /home/c3-0/datasets/ImageNet \
-    --model fastvit_sa36_projector \
-    --val-set "food101" \
-    --validation-data-dir /home/c3-0/datasets/food-101 \
-    --validation-eval-interval 2000 \
-    --initial-checkpoint Weights/fastvit_sa36.pth.tar \
-    --output ./checkpointsfrozen \
-    -b 32 --lr 1e-3 \
-    --log-wandb --native-amp --input-size 3 224 224 \
-    --drop-path 0.35 --mixup 0 --cutmix 0 \
-    --experiment CLIPtoResNet \
-    --workers 12 --epochs 50 \
-    --freeze-backbone \
+
+WT=Weights/fastvit_sa36.pth.tar
+IMAGENET_PATH=/home/c3-0/datasets/ImageNet
+EXP=fastvit
+VAL_SET="food101"
+VAL_PATH=/home/c3-0/datasets/food-101
+OUTPUT=./checkpoints
+NUM_GPU=2
+MODEL=fastvit_sa36_adapter
+
+
+# Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
+# Training methods = [default, baseline, distillation]
+
+python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
+    $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \
+    --method distillation --validation-eval-interval 2000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
+    --freeze-backbone --native-amp --workers 12 \
+    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224
 
 conda deactivate
