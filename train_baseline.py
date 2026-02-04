@@ -100,6 +100,9 @@ def main():
             # Only initialize wandb from rank 0 to avoid duplicate logging
             if args.local_rank == 0:
                 wandb.init(project=args.experiment, config=args)
+                # Safety check: log once to verify wandb is properly initialized
+                wandb.log({"status": "initialized"}, step=0)
+                _logger.info("wandb initialized and verified successfully")
         else:
             _logger.warning(
                 "You've requested to log metrics to wandb but package not found. "

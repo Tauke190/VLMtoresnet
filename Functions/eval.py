@@ -108,8 +108,8 @@ def run_zeroshot_eval(
         _logger.info(f"{msg}: Acc@1 = {acc1:.2f}%")
         _logger.info(f"{msg}: Acc@5 = {acc5:.2f}%")
 
-    # ----- wandb logging -----
-    if args.log_wandb and has_wandb:
+    # ----- wandb logging (only on rank 0) -----
+    if args.log_wandb and has_wandb and args.rank == 0:
         log_dict = {}
         if when == "before_train":
             log_dict["zeroshot/top1_before_train"] = acc1
