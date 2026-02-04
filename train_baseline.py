@@ -446,14 +446,14 @@ def main():
         )
 
         # --- Run zero-shot validation before training ---
-        # run_zeroshot_eval(
-        #     zeroshot_eval_ctx,
-        #     args,
-        #     model,
-        #     when="before_train",
-        #     epoch=-1,
-        #     has_wandb=has_wandb,
-        # )
+        run_zeroshot_eval(
+            zeroshot_eval_ctx,
+            args,
+            model,
+            when="before_train",
+            epoch=-1,
+            has_wandb=has_wandb,
+        )
     # -----------------------------------------------------------------
     if args.distillation_type != "none":
         # use distill loss wrapper, which returns base loss when distillation is disabled
