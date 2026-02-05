@@ -19,6 +19,7 @@ from CLIP.dataloaders.oxford_pets import OxfordPets
 from CLIP.dataloaders.food101 import Food101
 from CLIP.dataloaders.imagenet import Imagenet
 from CLIP.dataloaders.ucf101 import UCF101
+from CLIP.dataloaders import DiffisionImages
 
 
 # ---------------- Utils ----------------
@@ -59,7 +60,8 @@ def load_backbone(args, device):
 # ---------------- Data ----------------
 def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
-    preprocess = transforms.Compose([
+    # ORIGINAL transform for all standard datasets
+    imagenet_preprocess = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(
@@ -68,31 +70,51 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
         ),
     ])
 
+    # Research-grade transform ONLY for diffusion
+    diffusion_preprocess = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
     if dataset_name == "aircraft":
-        train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=preprocess)
-        test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=preprocess)
+        train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=imagenet_preprocess)
+        test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=imagenet_preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "oxfordpet":
-        train_ds = OxfordPets(root=dataset_root, train=True, transform=preprocess)
-        test_ds = OxfordPets(root=dataset_root, train=False, transform=preprocess)
+        train_ds = OxfordPets(root=dataset_root, train=True, transform=imagenet_preprocess)
+        test_ds = OxfordPets(root=dataset_root, train=False, transform=imagenet_preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "food101":
-        train_ds = Food101(root=dataset_root, train=True, transform=preprocess)
-        test_ds = Food101(root=dataset_root, train=False, transform=preprocess)
+        train_ds = Food101(root=dataset_root, train=True, transform=imagenet_preprocess)
+        test_ds = Food101(root=dataset_root, train=False, transform=imagenet_preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "imagenet":
         class_info = os.path.join(dataset_root, "class_info.txt")
-        train_ds = Imagenet(root=dataset_root, train=True, class_info=class_info, transform=preprocess)
-        test_ds = Imagenet(root=dataset_root, train=False, class_info=class_info, transform=preprocess)
+        train_ds = Imagenet(root=dataset_root, train=True, class_info=class_info, transform=imagenet_preprocess)
+        test_ds = Imagenet(root=dataset_root, train=False, class_info=class_info, transform=imagenet_preprocess)
         class_names = list(range(1000))
 
     elif dataset_name == "ucf101":
-        train_ds = UCF101(root=dataset_root, train=True, transform=preprocess)
-        test_ds = UCF101(root=dataset_root, train=False, transform=preprocess)
+        train_ds = UCF101(root=dataset_root, train=True, transform=imagenet_preprocess)
+        test_ds = UCF101(root=dataset_root, train=False, transform=imagenet_preprocess)
         class_names = list(range(101))
+
+    elif dataset_name == "diffusion":
+        train_ds = DiffisionImages(root=dataset_root, train=True, transform=diffusion_preprocess)
+        test_ds = DiffisionImages(root=dataset_root, train=False, transform=diffusion_preprocess)
+
+        if hasattr(train_ds, "labels"):
+            class_names = list(set(train_ds.labels))
+        else:
+            class_names = []
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -106,7 +128,7 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
 
 # ---------------- Feature extraction ----------------
-def extract_features(loader, backbone, device):
+def extract_features(loader, backbone, device, mode="forward_features"):
     all_features, all_labels = [], []
 
     model = backbone.module if hasattr(backbone, "module") else backbone
@@ -116,12 +138,24 @@ def extract_features(loader, backbone, device):
         for images, labels in tqdm(loader, desc="Extracting features"):
             images = images.to(device, non_blocking=True)
 
-            feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
+            if mode == "backbone1" and hasattr(model, "forward_backbone"):
+                feats = model.forward_backbone(images)
+                B, C, H, W = feats.shape
+                feats = feats.reshape(B, C, -1).mean(-1)
 
-            if isinstance(feats, (tuple, list)):
-                feats = feats[0]
-            if feats.ndim == 4:
-                feats = feats.mean(dim=[2, 3])
+            elif mode == "classification_neck" and hasattr(model, "forward_classification_neck"):
+                feats = model.forward_classification_neck(images)
+
+            elif mode == "classifier":
+                feats = model(images)
+
+            else:
+                feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
+
+                if isinstance(feats, (tuple, list)):
+                    feats = feats[0]
+                if feats.ndim == 4:
+                    feats = feats.mean(dim=[2, 3])
 
             feats = F.normalize(feats.float(), dim=-1)
 
@@ -136,6 +170,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--eval-mode", choices=["linear", "logits"], default="linear")
+    parser.add_argument("--feature-mode",
+                        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
+                        default="forward_features")
 
     parser.add_argument("--model", default="fastvit_sa36")
     parser.add_argument("--num-classes", type=int, default=0)
@@ -171,6 +208,7 @@ def main():
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     logging.info(f"Eval mode: {args.eval_mode}")
+    logging.info(f"Feature mode: {args.feature_mode}")
     logging.info(f"Using device: {device}")
 
     train_loader, test_loader, class_names = setup_loaders(
@@ -182,10 +220,10 @@ def main():
     logging.info(f"Total params: {total:,} | Trainable: {trainable:,}")
 
     logging.info("Extracting train features...")
-    train_features, train_labels = extract_features(train_loader, backbone, device)
+    train_features, train_labels = extract_features(train_loader, backbone, device, args.feature_mode)
 
     logging.info("Extracting test features...")
-    test_features, test_labels = extract_features(test_loader, backbone, device)
+    test_features, test_labels = extract_features(test_loader, backbone, device, args.feature_mode)
 
     logging.info("Training logistic regression...")
     clf = LogisticRegression(
@@ -199,7 +237,6 @@ def main():
     )
     clf.fit(train_features, train_labels)
 
-    # ---------------- Evaluation ----------------
     if args.eval_mode == "linear":
         preds = clf.predict(test_features)
         acc1 = (preds == test_labels).mean() * 100.0
@@ -211,7 +248,7 @@ def main():
         logging.info(f"Top-1 Accuracy: {acc1:.3f}%")
         logging.info(f"Top-5 Accuracy: {acc5:.3f}%")
 
-    else:  # logits
+    else:
         logits = clf.decision_function(test_features)
 
         acc1 = (np.argmax(logits, axis=1) == test_labels).mean() * 100.0
