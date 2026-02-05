@@ -61,55 +61,47 @@ def load_backbone(args, device):
 def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
     # ORIGINAL transform for all standard datasets
-    imagenet_preprocess = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+    CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
-    # Research-grade transform ONLY for diffusion
-    diffusion_preprocess = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    preprocess = transforms.Compose(
+        [
+            transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
+        ]
+    )
 
     if dataset_name == "aircraft":
-        train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=imagenet_preprocess)
-        test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=imagenet_preprocess)
+        train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=preprocess)
+        test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "oxfordpet":
-        train_ds = OxfordPets(root=dataset_root, train=True, transform=imagenet_preprocess)
-        test_ds = OxfordPets(root=dataset_root, train=False, transform=imagenet_preprocess)
+        train_ds = OxfordPets(root=dataset_root, train=True, transform=preprocess)
+        test_ds = OxfordPets(root=dataset_root, train=False, transform=preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "food101":
-        train_ds = Food101(root=dataset_root, train=True, transform=imagenet_preprocess)
-        test_ds = Food101(root=dataset_root, train=False, transform=imagenet_preprocess)
+        train_ds = Food101(root=dataset_root, train=True, transform=)
+        test_ds = Food101(root=dataset_root, train=False, transform=preprocess)
         class_names = train_ds.categories
 
     elif dataset_name == "imagenet":
         class_info = os.path.join(dataset_root, "class_info.txt")
-        train_ds = Imagenet(root=dataset_root, train=True, class_info=class_info, transform=imagenet_preprocess)
-        test_ds = Imagenet(root=dataset_root, train=False, class_info=class_info, transform=imagenet_preprocess)
+        train_ds = Imagenet(root=dataset_root, train=True, class_info=class_info, transform=preprocess)
+        test_ds = Imagenet(root=dataset_root, train=False, class_info=class_info, transform=preprocess)
         class_names = list(range(1000))
 
     elif dataset_name == "ucf101":
-        train_ds = UCF101(root=dataset_root, train=True, transform=imagenet_preprocess)
-        test_ds = UCF101(root=dataset_root, train=False, transform=imagenet_preprocess)
+        train_ds = UCF101(root=dataset_root, train=True, transform=preprocess)
+        test_ds = UCF101(root=dataset_root, train=False, transform=preprocess)
         class_names = list(range(101))
 
     elif dataset_name == "diffusion":
-        train_ds = DiffisionImages(root=dataset_root, train=True, transform=diffusion_preprocess)
-        test_ds = DiffisionImages(root=dataset_root, train=False, transform=diffusion_preprocess)
+        train_ds = DiffisionImages(root=dataset_root, train=True, transform=preprocess)
+        test_ds = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
 
         if hasattr(train_ds, "labels"):
             class_names = list(set(train_ds.labels))
