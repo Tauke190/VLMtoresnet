@@ -84,7 +84,7 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
         class_names = train_ds.categories
 
     elif dataset_name == "food101":
-        train_ds = Food101(root=dataset_root, train=True, transform=)
+        train_ds = Food101(root=dataset_root, train=True, transform=preprocess)
         test_ds = Food101(root=dataset_root, train=False, transform=preprocess)
         class_names = train_ds.categories
 
