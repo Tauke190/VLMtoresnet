@@ -812,6 +812,12 @@ def _parse_args():
         default=False,
         help="Train on sample",
     )
+    parser.add_argument(
+        "--sanity-check",
+        action="store_true",
+        default=False,
+        help="Train on sample",
+    )
 
 
     # Do we have a config file to parse?
