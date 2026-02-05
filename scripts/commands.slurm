@@ -102,7 +102,7 @@ python zeroshot_eval.py \
 
 
 ################################################################################################################
-############## ADDED RUNS (CLIP + FastViT BENCHMARK GRID)
+############## ADDED RUNS — FULL BENCHMARK GRID
 ################################################################################################################
 
 FOOD_PATH=/mnt/SSD2/food-101
@@ -114,40 +114,77 @@ FASTVIT_CKPT=checkpoints/CLIPtoResNet/model_best.pth.tar
 PROJECTOR_CKPT=checkpoints/CLIPtoResNet/projector_best.pth.tar
 
 
-############## CLIP ZERO SHOT
-python clip_zeroshot_eval.py --dataset food101 --data-dir $FOOD_PATH
-python clip_zeroshot_eval.py --dataset aircraft --data-dir $AIRCRAFT_PATH
-python clip_zeroshot_eval.py --dataset imagenet --data-dir $IMAGENET_PATH
-python clip_zeroshot_eval.py --dataset diffusion --data-dir $DIFF_PATH
+########################
+# CLIP ZERO SHOT
+########################
+
+python zeroshot_eval.py --model clip --zeroshot-dataset food101 --zeroshot-data-dir $FOOD_PATH
+python zeroshot_eval.py --model clip --zeroshot-dataset aircraft --zeroshot-data-dir $AIRCRAFT_PATH
+python zeroshot_eval.py --model clip --zeroshot-dataset imagenet --zeroshot-data-dir $IMAGENET_PATH
+python zeroshot_eval.py --model clip --zeroshot-dataset diffusion --zeroshot-data-dir $DIFF_PATH
 
 
-############## CLIP LINEAR PROBE
-python clip_linear_probe.py --dataset food101 --data-dir $FOOD_PATH
-python clip_linear_probe.py --dataset aircraft --data-dir $AIRCRAFT_PATH
-python clip_linear_probe.py --dataset imagenet --data-dir $IMAGENET_PATH
-python clip_linear_probe.py --dataset diffusion --data-dir $DIFF_PATH
+########################
+# FastViT BACKBONE PROBE
+########################
+
+python eval_final.py --model fastvit_sa36 --dataset food101 --data-dir $FOOD_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
+python eval_final.py --model fastvit_sa36 --dataset aircraft --data-dir $AIRCRAFT_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
+python eval_final.py --model fastvit_sa36 --dataset imagenet --data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
+python eval_final.py --model fastvit_sa36 --dataset diffusion --data-dir $DIFF_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
 
 
-############## FastViT LINEAR PROBE — BACKBONE
-python linear_probe.py --model fastvit_sa36 --dataset food101 --data-dir $FOOD_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
-python linear_probe.py --model fastvit_sa36 --dataset aircraft --data-dir $AIRCRAFT_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
-python linear_probe.py --model fastvit_sa36 --dataset imagenet --data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
-python linear_probe.py --model fastvit_sa36 --dataset diffusion --data-dir $DIFF_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
+########################
+# FastViT NECK PROBE
+########################
+
+python eval_final.py --model fastvit_sa36 --dataset food101 --data-dir $FOOD_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
+python eval_final.py --model fastvit_sa36 --dataset aircraft --data-dir $AIRCRAFT_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
+python eval_final.py --model fastvit_sa36 --dataset imagenet --data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
+python eval_final.py --model fastvit_sa36 --dataset diffusion --data-dir $DIFF_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
 
 
-############## FastViT LINEAR PROBE — NECK
-python linear_probe.py --model fastvit_sa36 --dataset food101 --data-dir $FOOD_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
-python linear_probe.py --model fastvit_sa36 --dataset aircraft --data-dir $AIRCRAFT_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
-python linear_probe.py --model fastvit_sa36 --dataset imagenet --data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
-python linear_probe.py --model fastvit_sa36 --dataset diffusion --data-dir $DIFF_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
+########################
+# FastViT CLASSIFIER LOGITS
+########################
+
+python eval_final.py \
+--model fastvit_sa36 \
+--dataset imagenet \
+--data-dir $IMAGENET_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--feature-mode classifier \
+--eval-mode logits
 
 
-############## FastViT CLASSIFIER LOGITS (ImageNet)
-python linear_probe.py --model fastvit_sa36 --dataset imagenet --data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classifier --eval-mode logits
+########################
+# FastViT ZERO SHOT (PROJECTOR)
+########################
 
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset food101 \
+--zeroshot-data-dir $FOOD_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
 
-############## FastViT ZERO-SHOT (PROJECTOR REQUIRED)
-python zeroshot_eval.py --model fastvit_sa36 --zeroshot-dataset food101 --zeroshot-data-dir $FOOD_PATH --model-checkpoint $FASTVIT_CKPT --projector-checkpoint $PROJECTOR_CKPT
-python zeroshot_eval.py --model fastvit_sa36 --zeroshot-dataset aircraft --zeroshot-data-dir $AIRCRAFT_PATH --model-checkpoint $FASTVIT_CKPT --projector-checkpoint $PROJECTOR_CKPT
-python zeroshot_eval.py --model fastvit_sa36 --zeroshot-dataset imagenet --zeroshot-data-dir $IMAGENET_PATH --model-checkpoint $FASTVIT_CKPT --projector-checkpoint $PROJECTOR_CKPT
-python zeroshot_eval.py --model fastvit_sa36 --zeroshot-dataset diffusion --zeroshot-data-dir $DIFF_PATH --model-checkpoint $FASTVIT_CKPT --projector-checkpoint $PROJECTOR_CKPT
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset aircraft \
+--zeroshot-data-dir $AIRCRAFT_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
+
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset imagenet \
+--zeroshot-data-dir $IMAGENET_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
+
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset diffusion \
+--zeroshot-data-dir $DIFF_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
