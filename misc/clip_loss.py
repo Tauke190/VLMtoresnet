@@ -165,6 +165,54 @@ class ClipLoss(nn.Module):
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
+class LogitScalingClipLoss(ClipLoss):
+    def __init__(
+        self,
+        init_logit_scale=torch.log(torch.tensor(1 / 0.07)),
+        logit_bias=None,
+        nonscalar_logit_scale=None,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        lshape = [1] if nonscalar_logit_scale else []
+
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
+        if logit_bias is not None:
+            self.logit_bias = nn.Parameter(torch.tensor(logit_bias, dtype=torch.float32))
+        else:
+            self.logit_bias = None
+    # main difference is that we dont pass in logit_scale tensor and instead use the parameter
+    def forward(
+        self,
+        image_features,
+        text_features,
+        output_dict=False,
+    ):
+        image_features, text_features = self.preprocess_feats(
+            image_features, text_features
+        )
+
+        logit_scale = self.logit_scale.exp().clamp(max=100)
+
+        logits_per_image, logits_per_text = self.get_logits(
+            image_features,
+            text_features,
+            logit_scale,
+            logit_bias=self.logit_bias,
+        )
+
+        labels = self.get_ground_truth(
+            image_features.device,
+            logits_per_image.shape[0],
+        )
+
+        loss = (
+            F.cross_entropy(logits_per_image, labels) +
+            F.cross_entropy(logits_per_text, labels)
+        ) / 2
+
+        return {"contrastive_loss": loss} if output_dict else loss
+
 
 class CoCaLoss(ClipLoss):
     def __init__(
