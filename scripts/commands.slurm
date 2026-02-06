@@ -64,6 +64,8 @@ AIRCRAFT_PATH=/mnt/SSD2/fgvc-aircraft-2013b/data
 IMAGENET_PATH=/mnt/SSD2/ImageNet1k
 DIFF_PATH=/mnt/SSD2/Diffision_images
 
+FASTVIT_CKPT=logs/fastvit_sa36.pth.tar
+
 FASTVIT_CKPT=checkpoints/CLIPtoResNet/model_best.pth.tar
 PROJECTOR_CKPT=checkpoints/CLIPtoResNet/projector_best.pth.tar
 
@@ -113,6 +115,20 @@ python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATAS
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ##### This needs to be fixed, will come to this later..... (model name is wrong )
 ########################
 # FastViT ZERO SHOT (PROJECTOR) 
@@ -145,3 +161,7 @@ python zeroshot_eval.py \
 --zeroshot-data-dir $DIFF_PATH \
 --model-checkpoint $FASTVIT_CKPT \
 --projector-checkpoint $PROJECTOR_CKPT
+
+
+
+

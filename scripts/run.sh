@@ -33,3 +33,6 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
 
 
 # check clip loss implement 
+# LoRA implement 
+# weight mismatch??   (arnav)
+# CLIP eval faiil ... (arnav)
