@@ -54,71 +54,94 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     
 
 
-
-
-
-
-
-
-
-
-
 ################################################################################################################
 ############## Evalaution
+################################################################################################################
+
+FASTVIT_MODEL=fastvit_sa36
+FOOD_PATH=/mnt/SSD2/food-101
+AIRCRAFT_PATH=/mnt/SSD2/fgvc-aircraft-2013b/data
+IMAGENET_PATH=/mnt/SSD2/ImageNet1k
+DIFF_PATH=/mnt/SSD2/Diffision_images
+
+FASTVIT_CKPT=checkpoints/CLIPtoResNet/model_best.pth.tar
+PROJECTOR_CKPT=checkpoints/CLIPtoResNet/projector_best.pth.tar
 
 
-python -m torch.distributed.launch --nproc_per_node=2 train_noise.py \
-  /home/c3-0/datasets/ImageNet \
-  --model fastvit_sa36 \
-  --batch-size 128 \
-  --native-amp \
-  --noise-experiment
+
+### Food 101
+DATASET=food101 
+DATASET_PATH=$FOOD_PATH
+
+### aircraft
+DATASET=aircraft 
+DATASET_PATH=$AIRCRAFT_PATH
+
+### imagenet
+DATASET=imagenet 
+DATASET_PATH=$IMAGENET_PATH
+
+### diffusion
+DATASET=diffusion 
+DATASET_PATH=$DIFF_PATH
+
+########################
+# CLIP ZERO SHOT (Text Based)
+########################
+python zeroshot_eval.py --model clip --zeroshot-dataset $DATASET --zeroshot-data-dir $DATASET_PATH
+
+########################
+# FastViT BACKBONE PROBE
+########################
+python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode backbone1
+
+########################
+# FastViT NECK PROBE
+########################
+python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classification_neck
+
+########################
+# FastViT CLASSIFIER LOGITS
+########################
+python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classifier --eval-mode logits
 
 
-python train_noise.py \
-  /home/c3-0/datasets/ImageNet \
-  --model fastvit_sa36 \
-  --batch-size 128 \
-  --native-amp \
-  --noise-experiment \
-  --resume fastvit_sa36.pth.tar
 
 
-python validate.py /home/c3-0/datasets/ImageNet --model fastvit_sa36 \
---checkpoint /home/av354855/VLMtoresnet/ml-fastvit-main/checkpoints/CLIPtoResNet/model_best.pth.tar  \
+
+
+
+
+
+##### This needs to be fixed, will come to this later..... (model name is wrong )
+########################
+# FastViT ZERO SHOT (PROJECTOR) 
+########################
 
 python zeroshot_eval.py \
-  --model fastvit_sa36 \
-  --zeroshot-dataset aircraft \
-  --zeroshot-data-dir /home/c3-0/datasets/fgvc-aircraft-2013b/data \
-  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
-  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
-  --batch-size 128
-
+--model fastvit_sa36 \
+--zeroshot-dataset food101 \
+--zeroshot-data-dir $FOOD_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
 
 python zeroshot_eval.py \
-  --model fastvit_sa36 \
-  --zeroshot-dataset imagenet \
-  --zeroshot-data-dir /home/c3-0/datasets/ImageNet \
-  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
-  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
-  --batch-size 128
+--model fastvit_sa36 \
+--zeroshot-dataset aircraft \
+--zeroshot-data-dir $AIRCRAFT_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
 
-  python zeroshot_eval.py \
-  --model fastvit_sa36 \
-  --zeroshot-dataset oxfordpet \
-  --zeroshot-data-dir /home/c3-0/datasets/oxford_pets \
-  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
-  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
-  --batch-size 128
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset imagenet \
+--zeroshot-data-dir $IMAGENET_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
 
-   python zeroshot_eval.py \
-  --model fastvit_sa36 \
-  --zeroshot-dataset food101 \
-  --zeroshot-data-dir /home/c3-0/datasets/food-101 \
-  --model-checkpoint checkpoints/CLIPtoResNet/model_best_aircraft.pth.tar \
-  --projector-checkpoint checkpoints/CLIPtoResNet/projector_best_aircraft.pth.tar \
-  --batch-size 128
-
-
-
+python zeroshot_eval.py \
+--model fastvit_sa36 \
+--zeroshot-dataset diffusion \
+--zeroshot-data-dir $DIFF_PATH \
+--model-checkpoint $FASTVIT_CKPT \
+--projector-checkpoint $PROJECTOR_CKPT
