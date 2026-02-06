@@ -123,7 +123,8 @@ def main():
     clip_model_for_mse = None
 
     # Setup CLIP components based on method
-    if method in ('baseline', 'distillation'):
+    # if method in ('baseline', 'distillation'):
+    if method not in ('default'):
         # Load CLIP model to build text features
         _clip_model, _ = clip.load("ViT-L/14", device=args.device, jit=False)
         for p in _clip_model.parameters():
@@ -308,6 +309,15 @@ def main():
         batch_size=args.batch_size,
         repeats=args.epoch_repeats,
     )
+    
+    if args.debug:
+        SAMPLES = args.batch_size * args.world_size * 3
+        orig_size = len(dataset_train.reader)
+        dataset_train.reader.samples = dataset_train.reader.samples[:SAMPLES]
+        new_size = len(dataset_train.reader)
+        print( f"Dbugging:: Training:  {orig_size} --> {new_size} ")
+        
+
     dataset_eval = None 
     if args.vanilla_eval:
         dataset_eval = create_dataset(
@@ -442,15 +452,6 @@ def main():
             f"{len(zeroshot_eval_ctx['class_names'])} classes."
         )
 
-        # --- Run zero-shot validation before training ---
-        # run_zeroshot_eval(
-        #     zeroshot_eval_ctx,
-        #     args,
-        #     model,
-        #     when="before_train",
-        #     epoch=-1,
-        #     has_wandb=has_wandb,
-        # )
     # -----------------------------------------------------------------
     if args.distillation_type != "none":
         # use distill loss wrapper, which returns base loss when distillation is disabled
@@ -510,7 +511,29 @@ def main():
     if args.distributed:
         torch.distributed.barrier()
 
+    
+    if args.sanity_check:
+        # batch_size=args.validation_batch_size or args.batch_size
+        # len(loader_eval)
+        # VALIDATION 1562 * 32 == 49984 images
+        # Training len(dataset_train) 1281167 images
+        
+        ##### Default ImageNet / Training Set Validation (logit based eval)
+        if args.vanilla_eval:
+            eval_metrics_vanilla = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+
+        # Baseline vanilla models cant do zero shot text based eval 
+        if args.model not in models.VANILLA_MODELS:
+            ##### Zero shot Text Based evaluation 
+            acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval( zeroshot_eval_ctx, args, model, when="epoch", epoch=-1, has_wandb=has_wandb,)
+            eval_metrics_vanilla.update({'acc1_zeroshot': acc1_zeroshot, 'acc5_zeroshot': acc5_zeroshot})
+        print(eval_metrics_vanilla)
+            
+        
+
+
     # pdb.set_trace()
+    acc1_zeroshot = None 
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
             loader_train.sampler.set_epoch(epoch)
@@ -539,37 +562,43 @@ def main():
                 _logger.info("Distributing BatchNorm running means and vars")
             distribute_bn(model, args.world_size, args.dist_bn == "reduce")
 
-        if args.vanilla_eval:
-            eval_metrics = validate(
-                model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast
-            )
-
-        if args.vanilla_eval:
+        if epoch % args.validation_eval_interval == 0 :
             if model_ema is not None and not args.model_ema_force_cpu:
                 if args.distributed and args.dist_bn in ("broadcast", "reduce"):
                     distribute_bn(model_ema, args.world_size, args.dist_bn == "reduce")
-                ema_eval_metrics = validate(
-                    model_ema.module,
-                    loader_eval,
-                    validate_loss_fn,
-                    args,
-                    amp_autocast=amp_autocast,
-                    log_suffix=" (EMA)",
-                )
-                eval_metrics = ema_eval_metrics
+            
+                if args.vanilla_eval:
+                    ema_eval_metrics = validate(
+                        model_ema.module,
+                        loader_eval,
+                        validate_loss_fn,
+                        args,
+                        amp_autocast=amp_autocast,
+                        log_suffix=" (EMA)",
+                    )
+                    eval_metrics = ema_eval_metrics
+                    acc1_zeroshot = eval_metrics['top1']
+                    acc5_zeroshot = eval_metrics['top5']
+                
+                if args.val_set and (args.model not in models.VANILLA_MODELS):
+                    acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval(
+                        zeroshot_eval_ctx, args, model_ema.module, when="epoch", epoch=epoch, has_wandb=has_wandb,
+                    )
+                    eval_metrics = dict(top1=acc1_zeroshot, top5=acc5_zeroshot)
+            else:
+                if args.vanilla_eval:
+                    eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+                    
+                    acc1_zeroshot = eval_metrics['top1']
+                    acc5_zeroshot = eval_metrics['top5']
 
-
-        # ---------------- Generic zero-shot evaluation after epochs ----------------
-        if args.val_set:
-            acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval(
-                zeroshot_eval_ctx,
-                args,
-                model,
-                when="epoch",
-                epoch=epoch,
-                has_wandb=has_wandb,
-            )
-            eval_metrics = dict(top1=acc1_zeroshot, top5=acc5_zeroshot)
+                # ---------------- Generic zero-shot evaluation after epochs ----------------
+                if args.val_set and (args.model not in models.VANILLA_MODELS):
+                    acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval(
+                        zeroshot_eval_ctx, args, model, when="epoch", epoch=epoch, has_wandb=has_wandb,
+                    )
+                    eval_metrics = dict(top1=acc1_zeroshot, top5=acc5_zeroshot)
+                                
 
             # Save best backbone + projector based on zero-shot Acc@1
             if acc1_zeroshot is not None:
@@ -599,6 +628,7 @@ def main():
                             f"Saved zero-shot-best model at epoch {epoch} "
                             f"(Acc@1={acc1_zeroshot:.2f}%)"
                         )
+
         # ----------------------------------------------------------------
         if lr_scheduler is not None:
             # step LR for next epoch

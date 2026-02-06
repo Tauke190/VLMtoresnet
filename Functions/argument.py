@@ -748,9 +748,10 @@ def _parse_args():
     parser.add_argument(
         "--validation-eval-interval",
         type=int,
-        default=0,
+        default=1,
         metavar="N",
         help="Run evaluation every N training batches (0 = only at epoch end).",
+        required=True, 
     )
     parser.add_argument(
         "--tta",
