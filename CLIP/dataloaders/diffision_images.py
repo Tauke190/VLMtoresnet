@@ -35,11 +35,16 @@ class DiffisionImages(Dataset):
     def __init__(
         self,
         root="./datasets/Diffision_images",
-        caption_file="caption_2k.txt",
-        sample_folders=('Mul_samples_10_2K', 'Mul_samples_30_2K', 'Mul_samples_50_2K'),
+        caption_file=("caption_2k.txt", "caption_5k.txt"),
+        sample_folders=[
+            ('Mul_samples_10_2K', 'Mul_samples_30_2K', 'Mul_samples_50_2K'),
+            ('Mul_samples_40_5K', 'Mul_samples_50_5K')
+        ],
         train=True,
         transform="224",
         num_samples_per_caption=3,
+        train_size=6000,
+        test_size=1000,
         k_shot=None,                     
     ):
         self.root = root
@@ -49,9 +54,12 @@ class DiffisionImages(Dataset):
         self.transform = transform
         self.num_samples_per_caption = num_samples_per_caption
         self.k_shot = k_shot           
+        self._caption_offset = 0
+        self.train_size = train_size
+        self.test_size = test_size
 
         self.__load_captions__()
-        self.__build_image_paths__()
+        self.__build_images__()
 
         if self.k_shot is not None:
             if self.k_shot == -1:
@@ -79,27 +87,33 @@ class DiffisionImages(Dataset):
         self.labels = selected_labels
 
     def __load_captions__(self):
-        caption_path = os.path.join(self.root, self.caption_file)
-        if not os.path.exists(caption_path):
-            raise FileNotFoundError(f"Caption file not found: {caption_path}")
-
-        with open(caption_path, 'r', encoding='utf-8') as f:
-            self.captions = [line.strip() for line in f if line.strip()]
+        """Load and combine captions from all caption files in order."""
+        self.captions = []
+        
+        for idx, caption_filename in enumerate(self.caption_file):
+            caption_path = os.path.join(self.root, caption_filename)
+            
+            with open(caption_path, 'r', encoding='utf-8') as f:
+                captions = [line.strip() for line in f if line.strip()]
+                self.captions.append(captions)
+        
+        if not self.captions:
+            raise FileNotFoundError(f"No valid caption files found in {self.root}")
 
     def __numeric_sort(self, paths):
         return sorted(paths, key=lambda x: int(os.path.splitext(os.path.basename(x))[0].replace("rohit_caption_", "")))
+    
+    def __collect_group_captions__(self, sample_folders):
+        per_caption = []
 
-    def __build_image_paths__(self):
-        self.images = []
-        self.labels = []
-        parts = self.sample_folders[0].split("_")
-        num_samples = int(parts[2])
+        for folder in sample_folders:
+            parts = folder.split("_")
+            num_samples = int(parts[2])
+            max_samples = min(num_samples, self.num_samples_per_caption)
 
-        for sample_idx in range(1, num_samples + 1):
             per_folder_lists = []
-
-            for folder_name in self.sample_folders:
-                sample_dir = os.path.join(self.root, folder_name, str(sample_idx))
+            for sample_idx in range(1, max_samples + 1):
+                sample_dir = os.path.join(self.root, folder, str(sample_idx))
                 if not os.path.exists(sample_dir):
                     raise RuntimeError(f"Missing directory: {sample_dir}")
 
@@ -108,16 +122,35 @@ class DiffisionImages(Dataset):
                     for f in os.listdir(sample_dir)
                     if f.lower().endswith(".png")
                 ]
-
                 image_files = self.__numeric_sort(image_files)
                 per_folder_lists.append(image_files)
 
             aligned = list(zip(*per_folder_lists))
+            per_caption.extend(aligned)
 
-            for caption_idx, aligned_imgs in enumerate(aligned):
-                for img_path in aligned_imgs:
-                    self.images.append(img_path)
-                    self.labels.append(caption_idx)
+        return per_caption
+    
+    def __build_images__(self):
+        self.images = []
+        self.labels = []
+        self._caption_offset = 0
+
+        all_per_caption_images = []
+
+        for sample_folder_tuple in self.sample_folders:
+            group_per_caption = self.__collect_group_captions__(sample_folder_tuple)
+            all_per_caption_images.extend(group_per_caption)
+
+        if self.train:
+            selected = all_per_caption_images[:self.train_size]
+        else:
+            selected = all_per_caption_images[self.train_size:self.train_size + self.test_size]
+
+        for caption_idx, imgs in enumerate(selected):
+            imgs = imgs[:self.num_samples_per_caption]
+            for img_path in imgs:
+                self.images.append(img_path)
+                self.labels.append(caption_idx)
 
         assert len(self.images) == len(self.labels)
 
