@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import time
 import logging
 
-from timm.models import create_model, safe_model_name, load_checkpoint
+from timm.models import create_model, safe_model_name
 from torchvision import transforms
 
 from CLIP.dataloaders.aircraft import aircraft as aircraft_dataloader
@@ -39,28 +39,43 @@ def load_backbone(args, device):
         global_pool=args.gp,
     )
 
-    ckpt_path = args.model_checkpoint
-    try:
-        load_checkpoint(model, ckpt_path, use_ema=False)
-        print("Loaded checkpoint using timm.load_checkpoint()")
-    except Exception as e:
-        print(f"timm.load_checkpoint failed ({e}), falling back to torch.load")
-        state = torch.load(ckpt_path, map_location="cpu")
-        if "state_dict" in state:
+    print("Loading checkpoint via torch.load()...")
+
+    state = torch.load(args.model_checkpoint, map_location="cpu")
+
+    # unwrap common checkpoint formats
+    if isinstance(state, dict):
+
+        if "state_dict_ema" in state:
+            print("Using EMA weights")
+            state = state["state_dict_ema"]
+
+        elif "state_dict" in state:
             state = state["state_dict"]
-        model.load_state_dict(state, strict=False)
-        print("Loaded checkpoint using torch.load()")
+
+        elif "model" in state:
+            state = state["model"]
+
+    # remove DDP prefix
+    clean_state = {}
+    for k, v in state.items():
+        if k.startswith("module."):
+            k = k[7:]
+        clean_state[k] = v
+
+    model.load_state_dict(clean_state, strict=False)
 
     model.to(device)
     model.eval()
+
     print(f"Backbone ready: {safe_model_name(args.model)}")
+
     return model
 
 
 # ---------------- Data ----------------
 def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
-    # ORIGINAL transform for all standard datasets
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
     CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -111,10 +126,15 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, pin_memory=True)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True
+    )
+
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True
+    )
 
     return train_loader, test_loader, class_names
 
@@ -152,7 +172,7 @@ def extract_features(loader, backbone, device, mode="forward_features"):
             feats = F.normalize(feats.float(), dim=-1)
 
             all_features.append(feats.cpu())
-            all_labels.append(labels)
+            all_labels.append(labels.cpu())
 
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
 
@@ -162,9 +182,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--eval-mode", choices=["linear", "logits"], default="linear")
-    parser.add_argument("--feature-mode",
-                        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
-                        default="forward_features")
+    parser.add_argument(
+        "--feature-mode",
+        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
+        default="forward_features",
+    )
 
     parser.add_argument("--model", default="fastvit_sa36")
     parser.add_argument("--num-classes", type=int, default=0)
