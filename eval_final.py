@@ -13,11 +13,11 @@ import logging
 
 from timm.models import create_model, safe_model_name
 from torchvision import transforms
+from torchvision.datasets import ImageFolder
 
 from CLIP.dataloaders.aircraft import aircraft as aircraft_dataloader
 from CLIP.dataloaders.oxford_pets import OxfordPets
 from CLIP.dataloaders.food101 import Food101
-from CLIP.dataloaders.imagenet import Imagenet
 from CLIP.dataloaders.ucf101 import UCF101
 from CLIP.dataloaders import DiffisionImages
 
@@ -104,10 +104,11 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
         class_names = train_ds.categories
 
     elif dataset_name == "imagenet":
-        class_info = os.path.join(dataset_root, "class_info.txt")
-        train_ds = Imagenet(root=dataset_root, train=True, class_info=class_info, transform=preprocess)
-        test_ds = Imagenet(root=dataset_root, train=False, class_info=class_info, transform=preprocess)
-        class_names = list(range(1000))
+        train_dir = os.path.join(dataset_root, "train")
+        val_dir = os.path.join(dataset_root, "validation")  
+        train_ds = ImageFolder(train_dir, transform=preprocess)
+        test_ds = ImageFolder(val_dir, transform=preprocess)
+        class_names = train_ds.classes
 
     elif dataset_name == "ucf101":
         train_ds = UCF101(root=dataset_root, train=True, transform=preprocess)
