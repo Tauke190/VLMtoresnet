@@ -12,6 +12,7 @@ import torchvision.utils
 
 from timm.models import model_parameters
 from Functions.losses import LossManager
+from Functions.eval import run_zeroshot_eval
 
 _logger = logging.getLogger("train")
 
@@ -118,8 +119,9 @@ def train_one_epoch(
             model_ema.update(model)
 
         # -----------------------------------------------------------------
-        # Optional generic zero-shot eval every N batches inside epoch
-        if ( zeroshot_eval_ctx is not None and args.rank == 0 and getattr(args, "zeroshot_eval_interval", 0) > 0 and (batch_idx + 1) % args.zeroshot_eval_interval == 0):
+        # Optional zero-shot evaluation every N batches inside epoch
+        eval_interval = getattr(args, "validation_eval_interval", 0)
+        if ( zeroshot_eval_ctx is not None and eval_interval > 0 and (batch_idx + 1) % eval_interval == 0):
             run_zeroshot_eval( zeroshot_eval_ctx, args, model,
                 when="batch", epoch=epoch, batch_idx=batch_idx + 1)
 

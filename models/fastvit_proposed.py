@@ -11,7 +11,8 @@ from timm.models.layers import DropPath, trunc_normal_
 from timm.models.registry import register_model
 
 from .fastvit import FastViT, RepCPE, default_cfgs, RepMixerBlock, AttentionBlock
-from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
+from .modules.proposed_modules import Mlp, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
+
 
 import logging
 
@@ -124,35 +125,46 @@ class FastViT_lrtokens(FastViT_Projector):
 ###### Adapters
 class FastViT_adapter(FastViT_Projector):
     def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, adapter_reduction=4, **kwargs):
-        super().__init__(layers=layers, embed_dims=embed_dims, **kwargs)
+        super().__init__(layers=layers, embed_dims=embed_dims, freeze_backbone=freeze_backbone, **kwargs)
 
         self.layers = layers
-        layer_index = -1 
+        layer_index = -1
         for i,block in enumerate(self.network):
             # isinstance(block, nn.Sequential)
             if isinstance(block, nn.Sequential):
                 layer_index += 1
                 for j,sub_block in enumerate(block):
                     block_index = layer_index
-                    block_idx = j 
+                    block_idx = j
                     drop_path_rate=kwargs.get('drop_path_rate', True)
                     block_dpr = ( drop_path_rate * (block_idx + sum(layers[:block_index])) / (sum(layers) - 1) )
-                    
+
                     if type(self.network[i][j]) == RepMixerBlock:
-                        self.network[i][j] = RepMixerBlock_Adapter( reduction_factor=adapter_reduction, 
+                        self.network[i][j] = RepMixerBlock_Adapter( reduction_factor=adapter_reduction,
                             dim=embed_dims[layer_index], kernel_size=kwargs.get('repmixer_kernel_size', 3),
                             mlp_ratio=kwargs['mlp_ratios'][layer_index], act_layer=kwargs.get('act_layer', nn.GELU),
                             drop=kwargs.get('drop_rate', True), use_layer_scale=kwargs.get('use_layer_scale', True), layer_scale_init_value=kwargs.get('layer_scale_init_value', 1e-5),
                             inference_mode=kwargs.get('inference_mode', False), drop_path=block_dpr)
                     elif type(self.network[i][j]) == AttentionBlock:
-                        self.network[i][j] = AttentionBlock_Adapter( reduction_factor=adapter_reduction, 
-                            dim=embed_dims[layer_index],  mlp_ratio=kwargs['mlp_ratios'][layer_index], 
-                            act_layer=kwargs.get('act_layer', nn.GELU), drop=kwargs.get('drop_rate', True), 
-                            drop_path=block_dpr, use_layer_scale=kwargs.get('use_layer_scale', True), 
+                        self.network[i][j] = AttentionBlock_Adapter( reduction_factor=adapter_reduction,
+                            dim=embed_dims[layer_index],  mlp_ratio=kwargs['mlp_ratios'][layer_index],
+                            act_layer=kwargs.get('act_layer', nn.GELU), drop=kwargs.get('drop_rate', True),
+                            drop_path=block_dpr, use_layer_scale=kwargs.get('use_layer_scale', True),
                             layer_scale_init_value=kwargs.get('layer_scale_init_value', 1e-5))
                     else:
                         assert False, "module not recognized"
-                      
+
+        # After replacing blocks, re-freeze everything then unfreeze only adapters + projector
+        if freeze_backbone:
+            for p in self.parameters():
+                p.requires_grad = False
+            for name, p in self.named_parameters():
+                if 'adapter' in name or 'projector' in name:
+                    p.requires_grad = True
+            trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in self.parameters())
+            _logger.info(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
+
         num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
         _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
         _logger.info(f"Adapter reduction factor: {adapter_reduction}")

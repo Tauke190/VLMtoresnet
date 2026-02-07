@@ -1,15 +1,13 @@
-cd ~/VLMtoresnet/ml-fastvit-main/
 # python Scripts/run.sh
-
 conda activate fastvit
 
- #[ Models - fastvit_sa36_adapter , fastvit_sa36_projector ]
+ #[ Models - [fastvit_sa36 fastvit_sa36_adapter , fastvit_sa36_lrtokens]
 
-python validate.py /mnt/SSD2/food-101 \
-  --model fastvit_sa36_lora\
-  --checkpoint Weights/fastvit_sa36.pth.tar \
+python validate.py /mnt/SSD2/ImageNet1k \
+  --model fastvit_sa36_lrtokens\
+  --checkpoint checkpoints/fastvit_lrtokens/model_best_zeroshot.pth.tar \
   --eval-mode linearprobe \
-  --dataset food101
+  --dataset imagenet1k
 
 
 # Eval mode [ logit , linearprobe , zeroshot]
