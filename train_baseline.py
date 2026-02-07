@@ -517,7 +517,7 @@ def main():
         # len(loader_eval)
         # VALIDATION 1562 * 32 == 49984 images
         # Training len(dataset_train) 1281167 images
-        
+        eval_metrics_vanilla = {}
         ##### Default ImageNet / Training Set Validation (logit based eval)
         if args.vanilla_eval:
             eval_metrics_vanilla = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
@@ -528,7 +528,9 @@ def main():
             acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval( zeroshot_eval_ctx, args, model, when="epoch", epoch=-1, has_wandb=has_wandb,)
             eval_metrics_vanilla.update({'acc1_zeroshot': acc1_zeroshot, 'acc5_zeroshot': acc5_zeroshot})
         print(eval_metrics_vanilla)
-            
+        
+        
+        
         
 
 

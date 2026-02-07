@@ -163,23 +163,18 @@ class FastViT_adapter(FastViT_Projector):
         for i,block in enumerate(self.network):
             if isinstance(block, nn.Sequential):
                 for j,sub_block in enumerate(block):
-                    if type(sub_block) == RepMixerBlock_Adapter:
+                    # if one dapater is not present, all other wont be present either 
+                    if f"network.{i}.{j}.adapter1.0.bias" not in state_dict:
                         state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
                         state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
-
                         state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
                         state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                    
-                    elif type(sub_block) == AttentionBlock_Adapter:
-                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
 
-                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
+                        if type(sub_block) == AttentionBlock_Adapter:
+                            state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
+                            state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
+                            state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
+                            state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
         
         super().load_state_dict(state_dict, strict)
@@ -248,7 +243,56 @@ class FastViT_lora(FastViT_Projector):
         return x
 
    
-   
+###### LoRA (priyank)
+class FastViT_lora_PP(FastViT_Projector):
+    def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, lora_rank=1, repmixer_kernel_size=3, **kwargs):
+        super().__init__(layers=layers, embed_dims=embed_dims, repmixer_kernel_size=repmixer_kernel_size, **kwargs)
+
+        from .modules.proposed_modules import StreightConv_LoRA, MergedLinear_LoRA
+
+        self.layers = layers
+        layer_index = -1 
+        for i,block in enumerate(self.network):
+            if isinstance(block, nn.Sequential):
+                layer_index += 1
+                for j,sub_block in enumerate(block):
+                    dim = embed_dims[layer_index]
+                    mlp_ratio = kwargs['mlp_ratios'][layer_index]
+                    mlp_hidden_dim = int(dim * mlp_ratio)
+                    # print(sub_block.convffn.fc2, mlp_hidden_dim, dim)
+                    sub_block.convffn.fc2 = StreightConv_LoRA(in_features=mlp_hidden_dim, out_features=dim, r=lora_rank, bias=True, kernel_size=1)
+                    
+                    if type(self.network[i][j]) == RepMixerBlock:
+                        assert len(sub_block.token_mixer.mixer.rbr_conv) == 1
+                        # print(sub_block.token_mixer.mixer.rbr_conv[0][0], dim, dim)
+                        sub_block.token_mixer.mixer.rbr_conv[0][0] = StreightConv_LoRA(in_features=dim, out_features=dim, r=lora_rank, kernel_size= repmixer_kernel_size, padding=repmixer_kernel_size // 2, groups=dim, bias=False)
+                    elif type(self.network[i][j]) == AttentionBlock:
+                        sub_block.token_mixer.qkv = MergedLinear_LoRA(dim, dim * 3, r=lora_rank, enable_lora=[True, True, True], bias=False)
+        
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"LoRA rank: {lora_rank}")
+
+    def load_state_dict(self, state_dict, strict):
+        # Initialize LoRA weights if not in checkpoint (allows backward compatibility)
+        layer_index = -1
+        for i,block in enumerate(self.network):
+            if isinstance(block, nn.Sequential):
+                for j,sub_block in enumerate(block):
+                    if f"network.{i}.{j}.convffn.fc2.lora_A" not in state_dict:
+                        # self.network[i][j].convffn.fc2.lora_A
+                        state_dict[f"network.{i}.{j}.convffn.fc2.lora_A.weight"] = sub_block.convffn.fc2.lora_A.weight
+                        state_dict[f"network.{i}.{j}.convffn.fc2.lora_B.weight"] = sub_block.convffn.fc2.lora_B.weight
+                        if type(self.network[i][j]) == RepMixerBlock:
+                            state_dict[f"network.{i}.{j}.token_mixer.mixer.rbr_conv.0.conv.lora_A.weight"] = sub_block.token_mixer.mixer.rbr_conv[0][0].lora_A.weight
+                            state_dict[f"network.{i}.{j}.token_mixer.mixer.rbr_conv.0.conv.lora_B.weight"] = sub_block.token_mixer.mixer.rbr_conv[0][0].lora_B.weight
+                                
+                        elif type(self.network[i][j]) == AttentionBlock:
+                            state_dict[f"network.{i}.{j}.token_mixer.qkv.lora_A"] = sub_block.token_mixer.qkv.lora_A
+                            state_dict[f"network.{i}.{j}.token_mixer.qkv.lora_B"] = sub_block.token_mixer.qkv.lora_B
+
+        super().load_state_dict(state_dict, strict)
+
 
 
     
@@ -287,13 +331,24 @@ def fastvit_sa36_adapter(pretrained=False, **kwargs):
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
 
-#### LoRA 
+#### LoRA (avinash)
 @register_model
 def fastvit_sa36_lora(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with LoRA"""
     model = FastViT_lora(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
+
+#### LoRA (priyank)
+@register_model
+def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with LoRA"""
+    model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
+
+
+
 
 
 
