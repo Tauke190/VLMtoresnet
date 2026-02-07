@@ -4,7 +4,7 @@ from itertools import chain
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from torchvision.transforms import InterpolationMode
-
+from itertools import islice
 BICUBIC = InterpolationMode.BICUBIC
 
 
@@ -29,7 +29,6 @@ def few_shot_resolution_transform(n_px, n_px_org=224):
                   (0.26862954, 0.26130258, 0.27577711)),
     ])
 
-
 class DiffisionImages(Dataset):
 
     def __init__(
@@ -41,6 +40,7 @@ class DiffisionImages(Dataset):
             ('Mul_samples_40_5K', 'Mul_samples_50_5K')
         ],
         train=True,
+        full_set=False,
         transform="224",
         num_samples_per_caption=3,
         train_size=6000,
@@ -57,6 +57,7 @@ class DiffisionImages(Dataset):
         self._caption_offset = 0
         self.train_size = train_size
         self.test_size = test_size
+        self.full_set = full_set
 
         self.__load_captions__()
         self.__build_images__()
@@ -87,7 +88,6 @@ class DiffisionImages(Dataset):
         self.labels = selected_labels
 
     def __load_captions__(self):
-        """Load and combine captions from all caption files in order."""
         self.captions = []
         
         for idx, caption_filename in enumerate(self.caption_file):
@@ -105,14 +105,18 @@ class DiffisionImages(Dataset):
     
     def __collect_group_captions__(self, sample_folders):
         per_caption = []
+        remaining = self.num_samples_per_caption
 
         for folder in sample_folders:
-            parts = folder.split("_")
-            num_samples = int(parts[2])
-            max_samples = min(num_samples, self.num_samples_per_caption)
+            if remaining <= 0:
+                break
 
-            per_folder_lists = []
-            for sample_idx in range(1, max_samples + 1):
+            parts = folder.split("_")
+            folder_max = int(parts[2])  
+
+            take = min(folder_max, remaining)
+
+            for sample_idx in range(1, take + 1):
                 sample_dir = os.path.join(self.root, folder, str(sample_idx))
                 if not os.path.exists(sample_dir):
                     raise RuntimeError(f"Missing directory: {sample_dir}")
@@ -123,17 +127,19 @@ class DiffisionImages(Dataset):
                     if f.lower().endswith(".png")
                 ]
                 image_files = self.__numeric_sort(image_files)
-                per_folder_lists.append(image_files)
 
-            aligned = list(zip(*per_folder_lists))
-            per_caption.extend(aligned)
+                for caption_i, img_path in enumerate(image_files):
+                    if len(per_caption) <= caption_i:
+                        per_caption.append([])
+                    per_caption[caption_i].append(img_path)
+
+            remaining -= take
 
         return per_caption
-    
+
     def __build_images__(self):
         self.images = []
         self.labels = []
-        self._caption_offset = 0
 
         all_per_caption_images = []
 
@@ -141,18 +147,28 @@ class DiffisionImages(Dataset):
             group_per_caption = self.__collect_group_captions__(sample_folder_tuple)
             all_per_caption_images.extend(group_per_caption)
 
-        if self.train:
-            selected = all_per_caption_images[:self.train_size]
+        total = len(all_per_caption_images)
+        train_end = min(self.train_size, total)
+        test_end  = min(self.train_size + self.test_size, total)
+
+        if self.full_set:
+            selected = all_per_caption_images
+            caption_offset = 0
+        elif self.train:
+            selected = all_per_caption_images[:train_end]
+            caption_offset = 0
         else:
-            selected = all_per_caption_images[self.train_size:self.train_size + self.test_size]
+            selected = all_per_caption_images[train_end:test_end]
+            caption_offset = train_end
 
         for caption_idx, imgs in enumerate(selected):
             imgs = imgs[:self.num_samples_per_caption]
             for img_path in imgs:
                 self.images.append(img_path)
-                self.labels.append(caption_idx)
+                self.labels.append(caption_idx + caption_offset)
 
         assert len(self.images) == len(self.labels)
+
 
     def __setup_transform__(self):
         if isinstance(self.transform, str):
