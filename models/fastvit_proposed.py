@@ -12,6 +12,7 @@ from timm.models.registry import register_model
 
 from .fastvit import FastViT, RepCPE, default_cfgs, RepMixerBlock, AttentionBlock
 from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
+from .modules.nonlocal_block import NonLocalBlock2d
 
 import logging
 
@@ -344,6 +345,115 @@ def fastvit_sa36_lora(pretrained=False, **kwargs):
 def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with LoRA"""
     model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
+
+
+###### Non-Local Networks
+class FastViT_nonlocal(FastViT_Projector):
+    """FastViT with Non-Local Blocks inserted after every stage.
+    
+    Implements the non-local operation from:
+        "Non-local Neural Networks" - Wang et al., CVPR 2018
+        https://arxiv.org/abs/1711.07971
+    
+    A NonLocalBlock2d is applied after each of the 4 main stages
+    (nn.Sequential blocks in self.network). This captures long-range
+    dependencies at every spatial resolution of the hierarchy.
+    
+    The non-local blocks use:
+    - Embedded Gaussian (softmax) attention with dim^{-0.5} scaling
+    - Bottleneck: inter_channels = in_channels // 2
+    - MaxPool spatial subsampling on phi and g (stride 2)
+    - BatchNorm with gamma=0 init (identity at initialization)
+    - Residual connection: z = x + NL(x)
+    """
+    def __init__(
+        self,
+        freeze_backbone=True,
+        clip_dim=768,
+        nl_inter_channels=None,
+        nl_use_maxpool=True,
+        nl_use_softmax=True,
+        nl_use_scale=True,
+        nl_use_bn=True,
+        nl_bn_init_gamma=0.0,
+        nl_conv_init_std=0.01,
+        nl_max_pool_stride=2,
+        **kwargs,
+    ):
+        super().__init__(freeze_backbone=freeze_backbone, clip_dim=clip_dim, **kwargs)
+
+        # Create one NonLocalBlock2d per stage, matching each stage's channel dim
+        self.nonlocal_blocks = nn.ModuleList()
+        for dim in self.embed_dims:
+            self.nonlocal_blocks.append(
+                NonLocalBlock2d(
+                    in_channels=dim,
+                    inter_channels=nl_inter_channels if nl_inter_channels is not None else dim // 2,
+                    use_maxpool=nl_use_maxpool,
+                    use_softmax=nl_use_softmax,
+                    use_scale=nl_use_scale,
+                    use_bn=nl_use_bn,
+                    bn_init_gamma=nl_bn_init_gamma,
+                    conv_init_std=nl_conv_init_std,
+                    max_pool_stride=nl_max_pool_stride,
+                )
+            )
+
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"Non-Local blocks inserted after each of {len(self.embed_dims)} stages")
+        _logger.info(f"Non-Local inter_channels: {[blk.inter_channels for blk in self.nonlocal_blocks]}")
+
+    def load_state_dict(self, state_dict, strict):
+        """Handle loading checkpoints that don't contain non-local block weights.
+        
+        If non-local block parameters are missing from the checkpoint
+        (e.g., loading a vanilla FastViT pretrained model), fill them from
+        the current model's initialized values for backward compatibility.
+        """
+        for i, nl_block in enumerate(self.nonlocal_blocks):
+            for name, param in nl_block.state_dict().items():
+                key = f"nonlocal_blocks.{i}.{name}"
+                if key not in state_dict:
+                    state_dict[key] = param
+
+        super().load_state_dict(state_dict, strict)
+
+    def forward_tokens(self, x: torch.Tensor):
+        """Run self.network, applying a Non-Local block after each stage.
+        
+        Each nn.Sequential in self.network is a stage. After each stage,
+        the corresponding NonLocalBlock2d is applied to capture long-range
+        spatial dependencies at that resolution.
+        """
+        stage_idx = 0
+        outs = []
+
+        for idx, block in enumerate(self.network):
+            x = block(x)
+
+            # Each main stage is an nn.Sequential - apply non-local after it
+            if isinstance(block, nn.Sequential):
+                x = self.nonlocal_blocks[stage_idx](x)
+                stage_idx += 1
+
+            # Collect intermediate outputs if needed for dense tasks
+            if self.fork_feat and idx in self.out_indices:
+                norm_layer = getattr(self, f"norm{idx}")
+                outs.append(norm_layer(x))
+
+        if self.fork_feat:
+            return outs
+        return x
+
+
+#### Non-Local
+@register_model
+def fastvit_sa36_nonlocal(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with Non-Local blocks."""
+    model = FastViT_nonlocal(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
 
