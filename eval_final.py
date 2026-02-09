@@ -10,6 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
 import time
 import logging
+import models
 
 from timm.models import create_model, safe_model_name
 from torchvision import transforms
