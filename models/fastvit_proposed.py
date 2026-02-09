@@ -171,29 +171,41 @@ class FastViT_adapter(FastViT_Projector):
 
     def load_state_dict(self, state_dict, strict):
         # Initialize adapter weights if not in checkpoint (allows backward compatibility)
-        layer_index = -1 
+        layer_index = -1
         for i,block in enumerate(self.network):
             if isinstance(block, nn.Sequential):
                 for j,sub_block in enumerate(block):
                     if type(sub_block) == RepMixerBlock_Adapter:
-                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
+                        if f"network.{i}.{j}.adapter1.0.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
+                        if f"network.{i}.{j}.adapter1.0.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
 
-                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                    
+                        if f"network.{i}.{j}.adapter1.2.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
+                        if f"network.{i}.{j}.adapter1.2.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
+
                     elif type(sub_block) == AttentionBlock_Adapter:
-                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
+                        if f"network.{i}.{j}.adapter1.0.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
+                        if f"network.{i}.{j}.adapter1.0.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
+                        if f"network.{i}.{j}.adapter2.0.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
+                        if f"network.{i}.{j}.adapter2.0.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
 
-                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
+                        if f"network.{i}.{j}.adapter1.2.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
+                        if f"network.{i}.{j}.adapter1.2.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
+                        if f"network.{i}.{j}.adapter2.2.bias" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
+                        if f"network.{i}.{j}.adapter2.2.weight" not in state_dict:
+                            state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
-        
+
         super().load_state_dict(state_dict, strict)
 
     
