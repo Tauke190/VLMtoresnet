@@ -80,8 +80,12 @@ def create_clip_loss(
 
 
 def create_mse_loss() -> Callable:
-    """Create an MSE loss function for distillation."""
-    mse_fn = nn.MSELoss()
+    """Create an MSE loss function for distillation.
+
+    Uses sum over feature dim, mean over batch — so the loss reflects
+    the actual squared L2 distance between unit vectors (~2.0 for random,
+    0.0 for perfectly aligned) instead of being diluted by 1/D.
+    """
 
     def compute_mse_loss(
         output: torch.Tensor,  # noqa: ARG001
@@ -99,7 +103,8 @@ def create_mse_loss() -> Callable:
         feats = F.normalize(feats, dim=-1)
         clip_image_features = F.normalize(clip_image_features.float(), dim=-1)
 
-        return mse_fn(feats, clip_image_features)
+        # Sum over feature dim, mean over batch
+        return ((feats - clip_image_features) ** 2).sum(dim=-1).mean()
 
     return compute_mse_loss
 

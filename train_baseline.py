@@ -57,7 +57,7 @@ from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
 
 import models
-from misc.distillation_loss import DistillationLoss
+# from misc.distillation_loss import DistillationLoss
 from misc.cosine_annealing import CosineWDSchedule
 
 from Functions.train import train_one_epoch
@@ -445,15 +445,15 @@ def main():
             f"{len(zeroshot_eval_ctx['class_names'])} classes."
         )
 
-        # # --- Run zero-shot validation before training ---
-        # run_zeroshot_eval(
-        #     zeroshot_eval_ctx,
-        #     args,
-        #     model,
-        #     when="before_train",
-        #     epoch=-1,
-        #     has_wandb=has_wandb,
-        # )
+        # --- Run zero-shot validation before training ---
+        run_zeroshot_eval(
+            zeroshot_eval_ctx,
+            args,
+            model,
+            when="before_train",
+            epoch=-1,
+            has_wandb=has_wandb,
+        )
     # -----------------------------------------------------------------
     if args.distillation_type != "none":
         # use distill loss wrapper, which returns base loss when distillation is disabled
