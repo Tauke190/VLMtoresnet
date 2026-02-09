@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=adapter_fastvit_baseline
+#SBATCH --job-name=lrtoken_fastvit_distill
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -43,14 +43,14 @@ VAL_SET="food101"
 VAL_PATH=/home/c3-0/datasets/food-101
 OUTPUT=./fastvit_adapter_checkpoints
 NUM_GPU=2
-MODEL=fastvit_sa36_adapter
+MODEL=fastvit_sa36_lrtokens
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
 # Training methods = [default, baseline, distillation]
 
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \
-    --method baseline --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
+    --method distillation --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --freeze-backbone --native-amp --workers 12 --checkpoint-name $MODEL \
     -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 --log-wandb
 conda deactivate
