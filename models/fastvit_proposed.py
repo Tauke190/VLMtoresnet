@@ -12,6 +12,7 @@ from timm.models.registry import register_model
 
 from .fastvit import FastViT, RepCPE, default_cfgs, RepMixerBlock, AttentionBlock
 from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
+from .modules.nonlocal_block import NonLocalBlock2d
 
 import logging
 
@@ -25,8 +26,10 @@ class FastViT_Projector(FastViT):
 
         if freeze_backbone:
             _logger.info(" Frezing Backbone")
-            for p in self.parameters():
-                p.requires_grad = False
+            for name, param in self.named_parameters():
+                if not name.startswith("projector"):
+                    param.requires_grad = False
+
        
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
@@ -163,23 +166,18 @@ class FastViT_adapter(FastViT_Projector):
         for i,block in enumerate(self.network):
             if isinstance(block, nn.Sequential):
                 for j,sub_block in enumerate(block):
-                    if type(sub_block) == RepMixerBlock_Adapter:
+                    # if one dapater is not present, all other wont be present either 
+                    if f"network.{i}.{j}.adapter1.0.bias" not in state_dict:
                         state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
                         state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
-
                         state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
                         state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                    
-                    elif type(sub_block) == AttentionBlock_Adapter:
-                        state_dict[ f"network.{i}.{j}.adapter1.0.bias" ] = sub_block.adapter1[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.0.weight" ] = sub_block.adapter1[0].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
 
-                        state_dict[ f"network.{i}.{j}.adapter1.2.bias" ] = sub_block.adapter1[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter1.2.weight" ] = sub_block.adapter1[2].weight
-                        state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
-                        state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
+                        if type(sub_block) == AttentionBlock_Adapter:
+                            state_dict[ f"network.{i}.{j}.adapter2.0.bias" ] = sub_block.adapter2[0].bias
+                            state_dict[ f"network.{i}.{j}.adapter2.0.weight" ] = sub_block.adapter2[0].weight
+                            state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
+                            state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
         
         super().load_state_dict(state_dict, strict)
@@ -248,10 +246,55 @@ class FastViT_lora(FastViT_Projector):
         return x
 
    
-   
+###### LoRA (priyank)
+class FastViT_lora_PP(FastViT_Projector):
+    def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, lora_rank=1, repmixer_kernel_size=3, **kwargs):
+        super().__init__(layers=layers, embed_dims=embed_dims, repmixer_kernel_size=repmixer_kernel_size, **kwargs)
 
+        from .modules.proposed_modules import StreightConv_LoRA, MergedLinear_LoRA
 
-    
+        self.layers = layers
+        layer_index = -1 
+        for i,block in enumerate(self.network):
+            if isinstance(block, nn.Sequential):
+                layer_index += 1
+                for j,sub_block in enumerate(block):
+                    dim = embed_dims[layer_index]
+                    mlp_ratio = kwargs['mlp_ratios'][layer_index]
+                    mlp_hidden_dim = int(dim * mlp_ratio)
+                    # print(sub_block.convffn.fc2, mlp_hidden_dim, dim)
+                    sub_block.convffn.fc2 = StreightConv_LoRA(in_features=mlp_hidden_dim, out_features=dim, r=lora_rank, bias=True, kernel_size=1)
+                    
+                    if type(self.network[i][j]) == RepMixerBlock:
+                        assert len(sub_block.token_mixer.mixer.rbr_conv) == 1
+                        # print(sub_block.token_mixer.mixer.rbr_conv[0][0], dim, dim)
+                        sub_block.token_mixer.mixer.rbr_conv[0][0] = StreightConv_LoRA(in_features=dim, out_features=dim, r=lora_rank, kernel_size= repmixer_kernel_size, padding=repmixer_kernel_size // 2, groups=dim, bias=False)
+                    elif type(self.network[i][j]) == AttentionBlock:
+                        sub_block.token_mixer.qkv = MergedLinear_LoRA(dim, dim * 3, r=lora_rank, enable_lora=[True, True, True], bias=False)
+        
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"LoRA rank: {lora_rank}")
+
+    def load_state_dict(self, state_dict, strict):
+        # Initialize LoRA weights if not in checkpoint (allows backward compatibility)
+        layer_index = -1
+        for i,block in enumerate(self.network):
+            if isinstance(block, nn.Sequential):
+                for j,sub_block in enumerate(block):
+                    if f"network.{i}.{j}.convffn.fc2.lora_A" not in state_dict:
+                        # self.network[i][j].convffn.fc2.lora_A
+                        state_dict[f"network.{i}.{j}.convffn.fc2.lora_A.weight"] = sub_block.convffn.fc2.lora_A.weight
+                        state_dict[f"network.{i}.{j}.convffn.fc2.lora_B.weight"] = sub_block.convffn.fc2.lora_B.weight
+                        if type(self.network[i][j]) == RepMixerBlock:
+                            state_dict[f"network.{i}.{j}.token_mixer.mixer.rbr_conv.0.conv.lora_A.weight"] = sub_block.token_mixer.mixer.rbr_conv[0][0].lora_A.weight
+                            state_dict[f"network.{i}.{j}.token_mixer.mixer.rbr_conv.0.conv.lora_B.weight"] = sub_block.token_mixer.mixer.rbr_conv[0][0].lora_B.weight
+                                
+                        elif type(self.network[i][j]) == AttentionBlock:
+                            state_dict[f"network.{i}.{j}.token_mixer.qkv.lora_A"] = sub_block.token_mixer.qkv.lora_A
+                            state_dict[f"network.{i}.{j}.token_mixer.qkv.lora_B"] = sub_block.token_mixer.qkv.lora_B
+
+        super().load_state_dict(state_dict, strict)
 
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
@@ -263,6 +306,74 @@ fastvit_sa36_config = dict(
     layer_scale_init_value=1e-6,
 )
 
+###### Non-Local Networks
+class FastViT_nonlocal(FastViT_Projector):
+    def __init__(
+        self,
+        freeze_backbone=True,
+        clip_dim=768,
+        nl_inter_channels=None,
+        nl_use_maxpool=True,
+        nl_use_softmax=True,
+        nl_use_scale=True,
+        nl_use_bn=True,
+        nl_bn_init_gamma=0.0,
+        nl_conv_init_std=0.01,
+        nl_max_pool_stride=2,
+        **kwargs,
+    ):
+        super().__init__(freeze_backbone=freeze_backbone, clip_dim=clip_dim, **kwargs)
+
+        # Create NonLocal blocks
+        self.nonlocal_blocks = nn.ModuleList()
+        for dim in self.embed_dims:
+            block = NonLocalBlock2d(
+                in_channels=dim,
+                inter_channels=min(nl_inter_channels if nl_inter_channels is not None else dim // 2, dim),
+                use_maxpool=nl_use_maxpool,
+                use_softmax=nl_use_softmax,
+                use_scale=nl_use_scale,
+                use_bn=nl_use_bn,
+                bn_init_gamma=nl_bn_init_gamma,
+                conv_init_std=nl_conv_init_std,
+                max_pool_stride=nl_max_pool_stride,
+            )
+
+            self.nonlocal_blocks.append(block)
+
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"Non-Local blocks inserted after each of {len(self.embed_dims)} stages")
+        _logger.info(f"Non-Local inter_channels: {[blk.inter_channels for blk in self.nonlocal_blocks]}")
+
+    def load_state_dict(self, state_dict, strict):
+        for i, nl_block in enumerate(self.nonlocal_blocks):
+            for name, param in nl_block.state_dict().items():
+                key = f"nonlocal_blocks.{i}.{name}"
+                if key not in state_dict:
+                    state_dict[key] = param.clone()
+
+        super().load_state_dict(state_dict, strict)
+
+    def forward_tokens(self, x: torch.Tensor):
+        stage_idx = 0
+        outs = []
+
+        for idx, block in enumerate(self.network):
+            x = block(x)
+
+            if isinstance(block, nn.Sequential):
+                x = self.nonlocal_blocks[stage_idx](x)
+                stage_idx += 1
+
+            if self.fork_feat and idx in self.out_indices:
+                norm_layer = getattr(self, f"norm{idx}")
+                outs.append(norm_layer(x))
+
+        if self.fork_feat:
+            return outs
+        return x
+        
 #### Projector
 @register_model
 def fastvit_sa36_projector(pretrained=False, **kwargs):
@@ -287,7 +398,7 @@ def fastvit_sa36_adapter(pretrained=False, **kwargs):
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
 
-#### LoRA 
+#### LoRA (avinash)
 @register_model
 def fastvit_sa36_lora(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with LoRA"""
@@ -295,6 +406,18 @@ def fastvit_sa36_lora(pretrained=False, **kwargs):
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
 
-
-
-
+#### LoRA (priyank)
+@register_model
+def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with LoRA"""
+    model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
+    
+#### Non-Local
+@register_model
+def fastvit_sa36_nonlocal(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with Non-Local blocks."""
+    model = FastViT_nonlocal(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model

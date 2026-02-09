@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import torchvision.utils
 import wandb
-
+import time 
+from collections import OrderedDict
 
 from misc.utils import dump_images, save_image
 
@@ -134,7 +135,7 @@ def run_zeroshot_eval(
 
 
 
-
+############ LOGIT BASED EVAL 
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=""):
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
@@ -157,7 +158,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix="")
             with amp_autocast():
                 output = model(input)
             if isinstance(output, (tuple, list)):
-                output = output[0]
+                output = output[1]
 
             # augmentation reduction
             reduce_factor = args.tta

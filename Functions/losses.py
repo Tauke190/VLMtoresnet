@@ -167,7 +167,7 @@ def get_loss_manager_for_method(
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
     clip_logit_scale: Optional[torch.Tensor] = None,
-) -> LossManager:
+    ) -> LossManager:
     """
     Factory function to create appropriate LossManager based on training method.
 

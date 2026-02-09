@@ -13,6 +13,8 @@ import torchvision.utils
 from timm.models import model_parameters
 from Functions.losses import LossManager
 
+from models import VANILLA_MODELS
+
 _logger = logging.getLogger("train")
 
 
@@ -78,7 +80,7 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
-            if args.model == 'fastvit_sa36':
+            if args.model in VANILLA_MODELS:
                 output = model(input) # For models without projection head
                 projected_embed = None
             else:
@@ -90,8 +92,7 @@ def train_one_epoch(
                 with torch.no_grad():
                     clip_image_features = clip_model.encode_image(input)
             loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
-        if not args.distributed:
-            losses_m.update(loss.item(), input.size(0))
+        losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:
             loss_scaler(
