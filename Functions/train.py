@@ -92,8 +92,7 @@ def train_one_epoch(
                 with torch.no_grad():
                     clip_image_features = clip_model.encode_image(input)
             loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
-        if not args.distributed:
-            losses_m.update(loss.item(), input.size(0))
+        losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:
             loss_scaler(

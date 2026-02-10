@@ -12,6 +12,7 @@ from timm.models.registry import register_model
 
 from .fastvit import FastViT, RepCPE, default_cfgs, RepMixerBlock, AttentionBlock
 from .modules.proposed_modules import Mlp, ConvAdapter, RepMixerBlock_Adapter, AttentionBlock_Adapter, ConvLoRA
+from .modules.nonlocal_block import NonLocalBlock2d
 
 import logging
 
@@ -25,8 +26,10 @@ class FastViT_Projector(FastViT):
 
         if freeze_backbone:
             _logger.info(" Frezing Backbone")
-            for p in self.parameters():
-                p.requires_grad = False
+            for name, param in self.named_parameters():
+                if not name.startswith("projector"):
+                    param.requires_grad = False
+
        
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
@@ -293,10 +296,6 @@ class FastViT_lora_PP(FastViT_Projector):
 
         super().load_state_dict(state_dict, strict)
 
-
-
-    
-
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
     embed_dims = [64, 128, 256, 512],
@@ -307,6 +306,74 @@ fastvit_sa36_config = dict(
     layer_scale_init_value=1e-6,
 )
 
+###### Non-Local Networks
+class FastViT_nonlocal(FastViT_Projector):
+    def __init__(
+        self,
+        freeze_backbone=True,
+        clip_dim=768,
+        nl_inter_channels=None,
+        nl_use_maxpool=True,
+        nl_use_softmax=True,
+        nl_use_scale=True,
+        nl_use_bn=True,
+        nl_bn_init_gamma=0.0,
+        nl_conv_init_std=0.01,
+        nl_max_pool_stride=2,
+        **kwargs,
+    ):
+        super().__init__(freeze_backbone=freeze_backbone, clip_dim=clip_dim, **kwargs)
+
+        # Create NonLocal blocks
+        self.nonlocal_blocks = nn.ModuleList()
+        for dim in self.embed_dims:
+            block = NonLocalBlock2d(
+                in_channels=dim,
+                inter_channels=min(nl_inter_channels if nl_inter_channels is not None else dim // 2, dim),
+                use_maxpool=nl_use_maxpool,
+                use_softmax=nl_use_softmax,
+                use_scale=nl_use_scale,
+                use_bn=nl_use_bn,
+                bn_init_gamma=nl_bn_init_gamma,
+                conv_init_std=nl_conv_init_std,
+                max_pool_stride=nl_max_pool_stride,
+            )
+
+            self.nonlocal_blocks.append(block)
+
+        num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
+        _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
+        _logger.info(f"Non-Local blocks inserted after each of {len(self.embed_dims)} stages")
+        _logger.info(f"Non-Local inter_channels: {[blk.inter_channels for blk in self.nonlocal_blocks]}")
+
+    def load_state_dict(self, state_dict, strict):
+        for i, nl_block in enumerate(self.nonlocal_blocks):
+            for name, param in nl_block.state_dict().items():
+                key = f"nonlocal_blocks.{i}.{name}"
+                if key not in state_dict:
+                    state_dict[key] = param.clone()
+
+        super().load_state_dict(state_dict, strict)
+
+    def forward_tokens(self, x: torch.Tensor):
+        stage_idx = 0
+        outs = []
+
+        for idx, block in enumerate(self.network):
+            x = block(x)
+
+            if isinstance(block, nn.Sequential):
+                x = self.nonlocal_blocks[stage_idx](x)
+                stage_idx += 1
+
+            if self.fork_feat and idx in self.out_indices:
+                norm_layer = getattr(self, f"norm{idx}")
+                outs.append(norm_layer(x))
+
+        if self.fork_feat:
+            return outs
+        return x
+        
 #### Projector
 @register_model
 def fastvit_sa36_projector(pretrained=False, **kwargs):
@@ -346,10 +413,11 @@ def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
     model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
-
-
-
-
-
-
-
+    
+#### Non-Local
+@register_model
+def fastvit_sa36_nonlocal(pretrained=False, **kwargs):
+    """Instantiate FastViT-SA36 model variant with Non-Local blocks."""
+    model = FastViT_nonlocal(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
