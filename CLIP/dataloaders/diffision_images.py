@@ -95,7 +95,7 @@ class DiffisionImages(Dataset):
             
             with open(caption_path, 'r', encoding='utf-8') as f:
                 captions = [line.strip() for line in f if line.strip()]
-                self.captions.append(captions)
+                self.captions.extend(captions)
         
         if not self.captions:
             raise FileNotFoundError(f"No valid caption files found in {self.root}")
@@ -153,19 +153,16 @@ class DiffisionImages(Dataset):
 
         if self.full_set:
             selected = all_per_caption_images
-            caption_offset = 0
         elif self.train:
             selected = all_per_caption_images[:train_end]
-            caption_offset = 0
         else:
             selected = all_per_caption_images[train_end:test_end]
-            caption_offset = train_end
 
         for caption_idx, imgs in enumerate(selected):
             imgs = imgs[:self.num_samples_per_caption]
             for img_path in imgs:
                 self.images.append(img_path)
-                self.labels.append(caption_idx + caption_offset)
+                self.labels.append(caption_idx)
 
         assert len(self.images) == len(self.labels)
 
