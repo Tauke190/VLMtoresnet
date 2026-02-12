@@ -121,11 +121,24 @@ class DiffisionImages(Dataset):
                 if not os.path.exists(sample_dir):
                     raise RuntimeError(f"Missing directory: {sample_dir}")
 
-                image_files = [
-                    os.path.join(sample_dir, f)
-                    for f in os.listdir(sample_dir)
-                    if f.lower().endswith(".png")
-                ]
+                image_files = []
+                if "2K" in folder:
+                    max_caption_index = 1999
+                elif "5K" in folder:
+                    max_caption_index = 4999
+                else:
+                    raise ValueError(f"Unknown folder type: {folder}")
+
+                for f in os.listdir(sample_dir):
+                    if not f.lower().endswith(".png"):
+                        continue
+
+                    base = os.path.splitext(f)[0]
+                    idx = int(base.replace("rohit_caption_", ""))
+
+                    if 0 <= idx <= max_caption_index:
+                        image_files.append(os.path.join(sample_dir, f))
+
                 image_files = self.__numeric_sort(image_files)
 
                 for caption_i, img_path in enumerate(image_files):
@@ -153,10 +166,27 @@ class DiffisionImages(Dataset):
 
         if self.full_set:
             selected = all_per_caption_images
+            caption_offset = 0
         elif self.train:
             selected = all_per_caption_images[:train_end]
+            caption_offset = 0
         else:
             selected = all_per_caption_images[train_end:test_end]
+            caption_offset = train_end
+
+        # 🔍 DEBUG / VALIDATION SECTION
+        missing_total = 0
+        for idx, imgs in enumerate(selected):
+            if len(imgs) != self.num_samples_per_caption:
+                diff = self.num_samples_per_caption - len(imgs)
+                missing_total += max(diff, 0)
+                print(
+                    f"[WARNING] Caption {idx + caption_offset} "
+                    f"has {len(imgs)} images (missing {diff})"
+                )
+
+        if missing_total > 0:
+            print(f"\nTOTAL MISSING IMAGES: {missing_total}\n")
 
         for caption_idx, imgs in enumerate(selected):
             imgs = imgs[:self.num_samples_per_caption]
@@ -165,6 +195,7 @@ class DiffisionImages(Dataset):
                 self.labels.append(caption_idx)
 
         assert len(self.images) == len(self.labels)
+
 
 
     def __setup_transform__(self):
