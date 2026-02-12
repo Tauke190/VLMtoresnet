@@ -1,7 +1,6 @@
 import argparse
 import os
 
-import clip
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -12,7 +11,6 @@ import time
 import logging
 import models
 
-from timm.models import create_model, safe_model_name
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
@@ -32,16 +30,12 @@ def count_parameters(model):
 
 # ---------------- Backbone ----------------
 def load_backbone(args, device):
-    model = create_model(
-        args.model,
-        pretrained=True,
-        num_classes=args.num_classes,
-        in_chans=3,
-        global_pool=args.gp,
-    )
+
+    print("Creating model from local models package...")
+    model_fn = getattr(models, args.model)
+    model = model_fn(num_classes=args.num_classes)
 
     print("Loading checkpoint via torch.load()...")
-
     state = torch.load(args.model_checkpoint, map_location="cpu")
 
     if isinstance(state, dict):
@@ -58,12 +52,17 @@ def load_backbone(args, device):
             k = k[7:]
         clean_state[k] = v
 
-    model.load_state_dict(clean_state, strict=False)
+    missing, unexpected = model.load_state_dict(clean_state, strict=False)
+
+    print("\n===== CHECKPOINT LOAD REPORT =====")
+    print("Missing keys:", len(missing))
+    print("Unexpected keys:", len(unexpected))
+    print("==================================\n")
 
     model.to(device)
     model.eval()
 
-    print(f"Backbone ready: {safe_model_name(args.model)}")
+    print(f"Backbone ready: {args.model}")
     return model
 
 
@@ -85,34 +84,26 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
     if dataset_name == "aircraft":
         train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=preprocess)
         test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=preprocess)
-        class_names = train_ds.categories
 
     elif dataset_name == "oxfordpet":
         train_ds = OxfordPets(root=dataset_root, train=True, transform=preprocess)
         test_ds = OxfordPets(root=dataset_root, train=False, transform=preprocess)
-        class_names = train_ds.categories
 
     elif dataset_name == "food101":
         train_ds = Food101(root=dataset_root, train=True, transform=preprocess)
         test_ds = Food101(root=dataset_root, train=False, transform=preprocess)
-        class_names = train_ds.categories
 
     elif dataset_name == "imagenet":
-        train_dir = os.path.join(dataset_root, "train")
-        val_dir = os.path.join(dataset_root, "validation")
-        train_ds = ImageFolder(train_dir, transform=preprocess)
-        test_ds = ImageFolder(val_dir, transform=preprocess)
-        class_names = train_ds.classes
+        train_ds = ImageFolder(os.path.join(dataset_root, "train"), transform=preprocess)
+        test_ds = ImageFolder(os.path.join(dataset_root, "validation"), transform=preprocess)
 
     elif dataset_name == "ucf101":
         train_ds = UCF101(root=dataset_root, train=True, transform=preprocess)
         test_ds = UCF101(root=dataset_root, train=False, transform=preprocess)
-        class_names = list(range(101))
 
     elif dataset_name == "diffusion":
         train_ds = DiffisionImages(root=dataset_root, train=True, transform=preprocess)
         test_ds = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
-        class_names = []
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -123,7 +114,7 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
                              num_workers=num_workers, pin_memory=True)
 
-    return train_loader, test_loader, class_names
+    return train_loader, test_loader
 
 
 # ---------------- Feature extraction ----------------
@@ -146,6 +137,7 @@ def extract_features(loader, backbone, device, mode="forward_features"):
 
             else:
                 feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
+
                 if isinstance(feats, (tuple, list)):
                     feats = feats[0]
                 if feats.ndim == 4:
@@ -162,9 +154,7 @@ def extract_features(loader, backbone, device, mode="forward_features"):
 # ---------------- Classifier Evaluation ----------------
 def evaluate_classifier(model, loader, device):
     model.eval()
-    correct1 = 0
-    correct5 = 0
-    total = 0
+    correct1, correct5, total = 0, 0, 0
 
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Classifier Eval"):
@@ -173,7 +163,6 @@ def evaluate_classifier(model, loader, device):
 
             outputs = model(images)
 
-            # handle projector models returning tuple
             if isinstance(outputs, tuple):
                 outputs = outputs[1]
 
@@ -188,26 +177,21 @@ def evaluate_classifier(model, loader, device):
 
             total += labels.size(0)
 
-    acc1 = 100 * correct1 / total
-    acc5 = 100 * correct5 / total
-
     print("\nClassifier Results")
-    print(f"Top-1 Accuracy: {acc1:.3f}%")
-    print(f"Top-5 Accuracy: {acc5:.3f}%")
+    print(f"Top-1 Accuracy: {100*correct1/total:.3f}%")
+    print(f"Top-5 Accuracy: {100*correct5/total:.3f}%")
 
 
 # ---------------- Args ----------------
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--eval-mode", choices=["linear", "logits"], default="linear")
     parser.add_argument("--feature-mode",
                         choices=["forward_features", "backbone1", "classification_neck", "classifier"],
                         default="forward_features")
 
-    parser.add_argument("--model", default="fastvit_sa36")
-    parser.add_argument("--num-classes", type=int, default=1000)
-    parser.add_argument("--gp", default=None)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--num-classes", type=int, required=True)
     parser.add_argument("--model-checkpoint", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--data-dir", required=True)
@@ -221,48 +205,36 @@ def parse_args():
     return parser.parse_args()
 
 
-# ---------------- Logging ----------------
-def setup_logger(log_file="out.log"):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-    )
-
-
 # ---------------- Main ----------------
 def main():
-    setup_logger("out.log")
     start_time = time.time()
 
     args = parse_args()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    logging.info(f"Eval mode: {args.eval_mode}")
-    logging.info(f"Feature mode: {args.feature_mode}")
-    logging.info(f"Using device: {device}")
+    print(f"Feature mode: {args.feature_mode}")
+    print(f"Using device: {device}")
 
-    train_loader, test_loader, class_names = setup_loaders(
+    train_loader, test_loader = setup_loaders(
         args.dataset, args.data_dir, args.batch_size, args.workers
     )
 
     backbone = load_backbone(args, device)
-    total, trainable = count_parameters(backbone)
-    logging.info(f"Total params: {total:,} | Trainable: {trainable:,}")
 
-    # ---------------- CLASSIFIER MODE ----------------
+    total, trainable = count_parameters(backbone)
+    print(f"Total params: {total:,} | Trainable: {trainable:,}")
+
     if args.feature_mode == "classifier":
         evaluate_classifier(backbone, test_loader, device)
         return
 
-    # ---------------- LINEAR PROBE ----------------
-    logging.info("Extracting train features...")
+    print("Extracting train features...")
     train_features, train_labels = extract_features(train_loader, backbone, device, args.feature_mode)
 
-    logging.info("Extracting test features...")
+    print("Extracting test features...")
     test_features, test_labels = extract_features(test_loader, backbone, device, args.feature_mode)
 
-    logging.info("Training logistic regression...")
+    print("Training logistic regression...")
     clf = LogisticRegression(
         random_state=0,
         C=args.C,
@@ -281,10 +253,9 @@ def main():
     top5 = np.argsort(probs, axis=1)[:, -5:]
     acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
 
-    logging.info(f"Top-1 Accuracy: {acc1:.3f}%")
-    logging.info(f"Top-5 Accuracy: {acc5:.3f}%")
-
-    logging.info(f"Total runtime: {(time.time() - start_time)/60:.2f} min")
+    print(f"\nTop-1 Accuracy: {acc1:.3f}%")
+    print(f"Top-5 Accuracy: {acc5:.3f}%")
+    print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
 
 
 if __name__ == "__main__":
