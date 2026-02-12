@@ -119,7 +119,7 @@ python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATAS
 ########################
 # FastViT CLASSIFIER LOGITS
 ########################
-python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classifier --eval-mode logits
+python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $FASTVIT_CKPT --feature-mode classifier 
 
 
 
