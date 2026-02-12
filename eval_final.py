@@ -44,20 +44,14 @@ def load_backbone(args, device):
 
     state = torch.load(args.model_checkpoint, map_location="cpu")
 
-    # unwrap common checkpoint formats
     if isinstance(state, dict):
-
         if "state_dict_ema" in state:
-            print("Using EMA weights")
             state = state["state_dict_ema"]
-
         elif "state_dict" in state:
             state = state["state_dict"]
-
         elif "model" in state:
             state = state["model"]
 
-    # remove DDP prefix
     clean_state = {}
     for k, v in state.items():
         if k.startswith("module."):
@@ -70,7 +64,6 @@ def load_backbone(args, device):
     model.eval()
 
     print(f"Backbone ready: {safe_model_name(args.model)}")
-
     return model
 
 
@@ -106,7 +99,7 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
     elif dataset_name == "imagenet":
         train_dir = os.path.join(dataset_root, "train")
-        val_dir = os.path.join(dataset_root, "validation")  
+        val_dir = os.path.join(dataset_root, "validation")
         train_ds = ImageFolder(train_dir, transform=preprocess)
         test_ds = ImageFolder(val_dir, transform=preprocess)
         class_names = train_ds.classes
@@ -119,24 +112,16 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
     elif dataset_name == "diffusion":
         train_ds = DiffisionImages(root=dataset_root, train=True, transform=preprocess)
         test_ds = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
-
-        if hasattr(train_ds, "labels"):
-            class_names = list(set(train_ds.labels))
-        else:
-            class_names = []
+        class_names = []
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True
-    )
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True)
 
-    test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True
-    )
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                             num_workers=num_workers, pin_memory=True)
 
     return train_loader, test_loader, class_names
 
@@ -144,13 +129,12 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 # ---------------- Feature extraction ----------------
 def extract_features(loader, backbone, device, mode="forward_features"):
     all_features, all_labels = [], []
-
     model = backbone.module if hasattr(backbone, "module") else backbone
     model.eval()
 
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Extracting features"):
-            images = images.to(device, non_blocking=True)
+            images = images.to(device)
 
             if mode == "backbone1" and hasattr(model, "forward_backbone"):
                 feats = model.forward_backbone(images)
@@ -160,12 +144,8 @@ def extract_features(loader, backbone, device, mode="forward_features"):
             elif mode == "classification_neck" and hasattr(model, "forward_classification_neck"):
                 feats = model.forward_classification_neck(images)
 
-            elif mode == "classifier":
-                feats = model(images)
-
             else:
                 feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
-
                 if isinstance(feats, (tuple, list)):
                     feats = feats[0]
                 if feats.ndim == 4:
@@ -179,19 +159,54 @@ def extract_features(loader, backbone, device, mode="forward_features"):
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
 
 
+# ---------------- Classifier Evaluation ----------------
+def evaluate_classifier(model, loader, device):
+    model.eval()
+    correct1 = 0
+    correct5 = 0
+    total = 0
+
+    with torch.no_grad():
+        for images, labels in tqdm(loader, desc="Classifier Eval"):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+
+            # handle projector models returning tuple
+            if isinstance(outputs, tuple):
+                outputs = outputs[1]
+
+            _, pred1 = outputs.topk(1, dim=1)
+            _, pred5 = outputs.topk(5, dim=1)
+
+            correct1 += (pred1.squeeze() == labels).sum().item()
+
+            for i in range(labels.size(0)):
+                if labels[i] in pred5[i]:
+                    correct5 += 1
+
+            total += labels.size(0)
+
+    acc1 = 100 * correct1 / total
+    acc5 = 100 * correct5 / total
+
+    print("\nClassifier Results")
+    print(f"Top-1 Accuracy: {acc1:.3f}%")
+    print(f"Top-5 Accuracy: {acc5:.3f}%")
+
+
 # ---------------- Args ----------------
 def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--eval-mode", choices=["linear", "logits"], default="linear")
-    parser.add_argument(
-        "--feature-mode",
-        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
-        default="forward_features",
-    )
+    parser.add_argument("--feature-mode",
+                        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
+                        default="forward_features")
 
     parser.add_argument("--model", default="fastvit_sa36")
-    parser.add_argument("--num-classes", type=int, default=0)
+    parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--gp", default=None)
     parser.add_argument("--model-checkpoint", required=True)
     parser.add_argument("--dataset", required=True)
@@ -235,6 +250,12 @@ def main():
     total, trainable = count_parameters(backbone)
     logging.info(f"Total params: {total:,} | Trainable: {trainable:,}")
 
+    # ---------------- CLASSIFIER MODE ----------------
+    if args.feature_mode == "classifier":
+        evaluate_classifier(backbone, test_loader, device)
+        return
+
+    # ---------------- LINEAR PROBE ----------------
     logging.info("Extracting train features...")
     train_features, train_labels = extract_features(train_loader, backbone, device, args.feature_mode)
 
@@ -253,29 +274,15 @@ def main():
     )
     clf.fit(train_features, train_labels)
 
-    if args.eval_mode == "linear":
-        preds = clf.predict(test_features)
-        acc1 = (preds == test_labels).mean() * 100.0
+    preds = clf.predict(test_features)
+    acc1 = (preds == test_labels).mean() * 100.0
 
-        probs = clf.predict_proba(test_features)
-        top5 = np.argsort(probs, axis=1)[:, -5:]
-        acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
+    probs = clf.predict_proba(test_features)
+    top5 = np.argsort(probs, axis=1)[:, -5:]
+    acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
 
-        logging.info(f"Top-1 Accuracy: {acc1:.3f}%")
-        logging.info(f"Top-5 Accuracy: {acc5:.3f}%")
-
-    else:
-        logits = clf.decision_function(test_features)
-
-        acc1 = (np.argmax(logits, axis=1) == test_labels).mean() * 100.0
-        top5 = np.argsort(logits, axis=1)[:, -5:]
-        acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
-
-        preds = clf.predict(test_features)
-        assert np.all(np.argmax(logits, axis=1) == preds), "Logits sanity check failed"
-
-        logging.info(f"Top-1 Accuracy (logits): {acc1:.3f}%")
-        logging.info(f"Top-5 Accuracy (logits): {acc5:.3f}%")
+    logging.info(f"Top-1 Accuracy: {acc1:.3f}%")
+    logging.info(f"Top-5 Accuracy: {acc5:.3f}%")
 
     logging.info(f"Total runtime: {(time.time() - start_time)/60:.2f} min")
 
