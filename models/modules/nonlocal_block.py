@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 
 # =============================================================================
-# 1-Head Conv2d Non-Local Block (Embedded Gaussian, paper Section 3.2)
+# 1-Head Conv2d Non-Local Block
 # =============================================================================
 class NonLocalBlock2d(nn.Module):
     """Single-head Non-Local Block using Conv2d (1x1) projections.
