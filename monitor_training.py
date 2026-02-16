@@ -92,8 +92,8 @@ while True:
     plt.savefig(PLOT_PATH, dpi=140)
     plt.close()
 
-    print(f"Updated plot — best={best_acc:.2f}%")
-
+    print(f"Updated plot - best={best_acc:.2f}%")
+    
     # OPTIONAL HARD STOP WARNING
     if overtime and plateau:
         print("\n🔥 TRAINING LIKELY WASTING GPU TIME 🔥")
