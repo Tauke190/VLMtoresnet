@@ -27,7 +27,6 @@ def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, ba
     log_str = f"Train: {epoch} [{batch_idx:>4d}/{total_len} ({percent:>3.0f}%)]\t"
     log_str += f"Loss: {losses_m.val:#.4g} ({losses_m.avg:#.3g})\t"
 
-    # Log individual losses - .item() called only here at log intervals
     if loss_dict:
         for name, val in loss_dict.items():
             log_str += f"{name}: {val.item():.4f}\t"
@@ -66,6 +65,9 @@ def train_one_epoch(
     
     if args.rank  == 0:
         _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={loader.loader.batch_size}, with {len(loader) * loader.loader.batch_size} datapoints")
+
+    unwrapped_model = model.module if hasattr(model, "module") else model
+
     for batch_idx, (input, target) in enumerate(loader):
         if args.debug and batch_idx % 100 ==0 and batch_idx != 0 :
                 break 
@@ -81,17 +83,19 @@ def train_one_epoch(
 
         with amp_autocast():
             if args.model in VANILLA_MODELS:
-                output = model(input) # For models without projection head
+                output = model(input)
                 projected_embed = None
             else:
-                projected_embed, output, x = model(input) # For models with projection head 
+                projected_embed, output, x = model(input)
 
-            # Compute CLIP image features if needed for MSE loss
             clip_image_features = None
             if clip_model is not None and projected_embed is not None:
                 with torch.no_grad():
                     clip_image_features = clip_model.encode_image(input)
-            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
+
+            logit_scale = unwrapped_model.get_logit_scale() if hasattr(unwrapped_model, "get_logit_scale") else None
+            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, logit_scale)
+
         losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:
@@ -118,13 +122,9 @@ def train_one_epoch(
         if model_ema is not None:
             model_ema.update(model)
 
-        # -----------------------------------------------------------------
-        # Optional generic zero-shot eval every N batches inside epoch
         if ( zeroshot_eval_ctx is not None and args.rank == 0 and getattr(args, "zeroshot_eval_interval", 0) > 0 and (batch_idx + 1) % args.zeroshot_eval_interval == 0):
             run_zeroshot_eval( zeroshot_eval_ctx, args, model,
                 when="batch", epoch=epoch, batch_idx=batch_idx + 1)
-
-        # -----------------------------------------------------------------
 
         torch.cuda.synchronize()
         num_updates += 1

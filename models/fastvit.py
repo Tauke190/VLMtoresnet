@@ -767,6 +767,7 @@ class FastViT(nn.Module):
         pretrained=None,
         cls_ratio=2.0,
         inference_mode=False,
+        nonscalar_logit_scale=False,
         **kwargs,
     ) -> None:
 
@@ -778,6 +779,13 @@ class FastViT(nn.Module):
 
         if pos_embs is None:
             pos_embs = [None] * len(layers)
+        
+        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
+        lshape = [1] if nonscalar_logit_scale else []
+
+        self.logit_scale = nn.Parameter(
+            torch.ones(lshape) * init_logit_scale
+        )
 
         # Convolutional stem
         self.patch_embed = convolutional_stem(3, embed_dims[0], inference_mode)
@@ -918,6 +926,11 @@ class FastViT(nn.Module):
             sterile_dict = FastViT._scrub_checkpoint(_state_dict, self)
             state_dict = sterile_dict
             missing_keys, unexpected_keys = self.load_state_dict(state_dict, False)
+        
+    def get_logit_scale(self) -> Optional[torch.Tensor]:
+        with torch.no_grad():
+            self.logit_scale.clamp_(0, torch.log(torch.tensor(100.0)))
+        return self.logit_scale.exp()
 
     def forward_embeddings(self, x: torch.Tensor) -> torch.Tensor:
         x = self.patch_embed(x)
