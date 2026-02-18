@@ -5,29 +5,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from torchvision.transforms import InterpolationMode
 from itertools import islice
-BICUBIC = InterpolationMode.BICUBIC
 
-
-def choose_resolution(n_px):
-    n_px = n_px.split("/")
-    if len(n_px) > 1:
-        return int(random.choice(n_px))
-    else:
-        return int(n_px[0])
-
-def _convert_image_to_rgb(image):
-    return image.convert("RGB")
-
-def few_shot_resolution_transform(n_px, n_px_org=224):
-    return Compose([
-        Resize(n_px, interpolation=BICUBIC),
-        Resize(n_px_org, interpolation=BICUBIC),
-        CenterCrop(n_px_org),
-        _convert_image_to_rgb,
-        ToTensor(),
-        Normalize((0.48145466, 0.4578275, 0.40821073),
-                  (0.26862954, 0.26130258, 0.27577711)),
-    ])
 
 class DiffisionImages(Dataset):
 
@@ -40,52 +18,33 @@ class DiffisionImages(Dataset):
             ('Mul_samples_40_5K', 'Mul_samples_50_5K')
         ],
         train=True,
+        val=False,
         full_set=False,
         transform="224",
-        num_samples_per_caption=3,
+        num_samples_per_caption=90,
         train_size=6000,
-        test_size=1000,
-        k_shot=None,                     
+        test_size=1000           
     ):
         self.root = root
         self.caption_file = caption_file
         self.sample_folders = list(sample_folders)
         self.train = train
         self.transform = transform
-        self.num_samples_per_caption = num_samples_per_caption
-        self.k_shot = k_shot           
+        self.num_samples_per_caption = num_samples_per_caption  
         self._caption_offset = 0
         self.train_size = train_size
         self.test_size = test_size
         self.full_set = full_set
 
+        if train:
+            self.num_samples_per_caption = 90
+        if val:
+            self.num_samples_per_caption = 3
+        
         self.__load_captions__()
-        self.__build_images__()
-
-        if self.k_shot is not None:
-            if self.k_shot == -1:
-                print("Not in few-shot setting")
-            else:
-                self.fewshot()         
+        self.__build_images__()    
 
         self.__setup_transform__()
-
-    def fewshot(self):
-        selected_images, selected_labels = [], []
-        unique_classes = set(self.labels)
-
-        for class_label in unique_classes:
-            class_indices = [i for i in range(len(self.images)) if self.labels[i] == class_label]
-            if len(class_indices) >= self.k_shot:
-                chosen = random.sample(class_indices, self.k_shot)
-            else:
-                chosen = class_indices
-
-            selected_images.extend([self.images[i] for i in chosen])
-            selected_labels.extend([self.labels[i] for i in chosen])
-
-        self.images = selected_images
-        self.labels = selected_labels
 
     def __load_captions__(self):
         self.captions = []
@@ -166,27 +125,10 @@ class DiffisionImages(Dataset):
 
         if self.full_set:
             selected = all_per_caption_images
-            caption_offset = 0
         elif self.train:
             selected = all_per_caption_images[:train_end]
-            caption_offset = 0
         else:
             selected = all_per_caption_images[train_end:test_end]
-            caption_offset = train_end
-
-        # 🔍 DEBUG / VALIDATION SECTION
-        missing_total = 0
-        for idx, imgs in enumerate(selected):
-            if len(imgs) != self.num_samples_per_caption:
-                diff = self.num_samples_per_caption - len(imgs)
-                missing_total += max(diff, 0)
-                print(
-                    f"[WARNING] Caption {idx + caption_offset} "
-                    f"has {len(imgs)} images (missing {diff})"
-                )
-
-        if missing_total > 0:
-            print(f"\nTOTAL MISSING IMAGES: {missing_total}\n")
 
         for caption_idx, imgs in enumerate(selected):
             imgs = imgs[:self.num_samples_per_caption]
@@ -195,8 +137,6 @@ class DiffisionImages(Dataset):
                 self.labels.append(caption_idx)
 
         assert len(self.images) == len(self.labels)
-
-
 
     def __setup_transform__(self):
         if isinstance(self.transform, str):
@@ -208,9 +148,6 @@ class DiffisionImages(Dataset):
         return len(self.images)
 
     def __getitem__(self, index):
-        if self.k_shot is not None:
-            self.trans = few_shot_resolution_transform(n_px=choose_resolution(self.transform))
-
         img = Image.open(self.images[index])
         if self.trans is not None:
             img = self.trans(img)
