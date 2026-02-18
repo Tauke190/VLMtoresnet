@@ -25,22 +25,22 @@ class LossManager:
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,
+        logit_scale: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute base loss + all registered losses."""
         loss_dict = {}
 
-        # Base loss is always computed
         base_loss = self.base_loss_fn(output, target)
         total_loss = base_loss
         loss_dict["Base Loss"] = base_loss
 
-        # Compute each registered loss
         for name, loss_fn in self._losses:
             loss_val = loss_fn(
                 output=output,
                 target=target,
                 projected_embed=projected_embed,
                 clip_image_features=clip_image_features,
+                logit_scale=logit_scale,
             )
             if loss_val is not None:
                 total_loss = total_loss + loss_val
@@ -57,15 +57,18 @@ class LossManager:
 def create_clip_loss(
     clip_loss_fn: Callable,
     clip_text_features: torch.Tensor,
-    clip_logit_scale: torch.Tensor,
+    clip_logit_scale: Optional[torch.Tensor] = None,
 ) -> Callable:
-    """Create a CLIP loss function with pre-bound text features and scale."""
+    """Create a CLIP loss function with pre-bound text features.
+    If clip_logit_scale is provided it is used as a static fallback when no
+    trainable scale is supplied at compute time."""
 
     def compute_clip_loss(
         output: torch.Tensor,  # noqa: ARG001
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,  # noqa: ARG001
+        logit_scale: Optional[torch.Tensor] = None,
     ) -> Optional[torch.Tensor]:
         if projected_embed is None:
             return None
@@ -74,7 +77,8 @@ def create_clip_loss(
         if feats.ndim == 4 and feats.shape[2] > 1:
             feats = feats.mean(dim=[2, 3])
 
-        return clip_loss_fn(feats, clip_text_features[target], clip_logit_scale)
+        scale = logit_scale if logit_scale is not None else clip_logit_scale
+        return clip_loss_fn(feats, clip_text_features[target], scale)
 
     return compute_clip_loss
 
@@ -88,6 +92,7 @@ def create_mse_loss() -> Callable:
         target: torch.Tensor,  # noqa: ARG001
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,
+        logit_scale: Optional[torch.Tensor] = None,  # noqa: ARG001
     ) -> Optional[torch.Tensor]:
         if projected_embed is None or clip_image_features is None:
             return None
@@ -176,14 +181,15 @@ def get_loss_manager_for_method(
         base_loss_fn: Base classification loss function
         clip_loss_fn: Optional CLIP loss function
         clip_text_features: Optional pre-computed CLIP text features
-        clip_logit_scale: Optional CLIP logit scale
+        clip_logit_scale: Optional static CLIP logit scale (overridden by model's
+                          trainable log_logit_scale when present)
 
     Returns:
         Configured LossManager instance
     """
     method = method.lower()
 
-    if method == "default": 
+    if method == "default":
         return create_default_loss_manager(base_loss_fn=base_loss_fn)
     elif method == "baseline":
         return create_baseline_loss_manager(
