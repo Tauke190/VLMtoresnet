@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sa36_lrtokens
+#SBATCH --job-name=atn_distill_lora
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
@@ -37,20 +37,20 @@ cd /home/av354855/VLMtoresnet
 
 WT=Weights/fastvit_sa36.pth.tar
 IMAGENET_PATH=/home/c3-0/datasets/ImageNet
-EXP=fastvit
 VAL_SET="food101"
 VAL_PATH=/home/c3-0/datasets/food-101
 OUTPUT=./checkpoints
 NUM_GPU=2
-MODEL=fastvit_sa36_adapter
 
 
-# Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
+# Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens,fastvit_sa36_lora_pp]
 # Training methods = [default, baseline, distillation]
+MODEL=fastvit_sa36_lora_pp
+EXP=fastvit_attention_distillation
 
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \
-    --method distillation --validation-eval-interval 2000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
+    --method attention_distillationn --validation-eval-interval 2000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --freeze-backbone --native-amp --workers 12 \
     -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224
 

@@ -16,11 +16,11 @@ NUM_GPU=1
 LOG=500
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens, fastvit_sa36_lora_pp]
-# Training methods = [default, baseline, distillation,attention_distillation]
+# Training methods = [default, baseline, distillation, attention_distillation]
 
 EXP=fastvit
-MODEL=fastvit_sa36_lrtokens
-CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
+MODEL=fastvit_sa36_lora_pp
+CUDA_VISIBLE_DEVICES=2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH --log-interval $LOG \
     --validation-eval-interval 1000 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --freeze-backbone --native-amp --workers 12 --method attention_distillation \

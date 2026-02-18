@@ -112,7 +112,7 @@ def main():
     
     model , num_aug_splits, data_config = setup_model(args)
         
-    # Training method: 'default', 'baseline', or 'distillation'
+    # Training method: 'default', 'baseline', or 'distillation' or 'attention_distillation
     method = args.method
     if args.local_rank == 0:
         print(f"[DEBUG] Training method: {method}")
@@ -121,6 +121,8 @@ def main():
     clip_loss_fn = None
     clip_logit_scale = None
     clip_model_for_mse = None
+    clip_grouped_model = None
+    attn_extractor = None
 
     # Setup CLIP components based on method
     # if method in ('baseline', 'distillation'):
@@ -149,6 +151,24 @@ def main():
             clip_model_for_mse = _clip_model
             if args.local_rank == 0:
                 print(f"[DEBUG] CLIP model kept for MSE loss (image encoder)")
+        elif method == 'attention_distillation':
+            # Build grouped CLIP model for attention extraction from layer4
+            from CLIP.clip.model_grouped import build_model as build_grouped_model
+            grouped_state_dict = _clip_model.state_dict()
+            clip_grouped_model = build_grouped_model(grouped_state_dict).to(args.device)
+            clip_grouped_model.eval()
+            for p in clip_grouped_model.parameters():
+                p.requires_grad = False
+
+            # Set up student attention extractor (hooks on MHSA modules)
+            from models.modules.attention_extractor import AttentionMapExtractor
+            attn_extractor = AttentionMapExtractor(model)
+
+            if args.local_rank == 0:
+                print(f"[DEBUG] Grouped CLIP model built for attention distillation")
+                print(f"[DEBUG] Student attention layers: {attn_extractor.list_attention_layers()}")
+
+            del _clip_model  # Free standard CLIP, we use grouped version
         else:
             del _clip_model  # Free memory if not needed for MSE
 
@@ -469,6 +489,7 @@ def main():
         clip_loss_fn=clip_loss_fn,
         clip_text_features=clip_text_features,
         clip_logit_scale=clip_logit_scale,
+        attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
     )
 
     # setup checkpoint saver and eval metric tracking
@@ -529,11 +550,6 @@ def main():
             eval_metrics_vanilla.update({'acc1_zeroshot': acc1_zeroshot, 'acc5_zeroshot': acc5_zeroshot})
         print(eval_metrics_vanilla)
         
-        
-        
-        
-
-
     # pdb.set_trace()
     acc1_zeroshot = None 
     for epoch in range(start_epoch, num_epochs):
@@ -557,6 +573,8 @@ def main():
             wd_scheduler=wd_scheduler,
             zeroshot_eval_ctx=zeroshot_eval_ctx,
             clip_model=clip_model_for_mse,
+            attn_extractor=attn_extractor,
+            clip_grouped_model=clip_grouped_model,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):

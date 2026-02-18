@@ -791,8 +791,14 @@ def _parse_args():
         "--method",
         type=str,
         default="baseline",
-        choices=["default", "baseline", "distillation"],
-        help="Training method: 'default' (base loss only), 'baseline' (base + clip), 'distillation' (base + clip + mse).",
+        choices=["default", "baseline", "distillation","attention_distillation"],
+        help="Training method: 'default' (base loss only), 'baseline' (base + clip), 'distillation' (base + clip + mse), 'attention_distillation' (base + clip + attn distill).",
+    )
+    parser.add_argument(
+        "--attn-distill-weight",
+        type=float,
+        default=1.0,
+        help="Weight for attention distillation loss (used with --method attention_distillation).",
     )
 
     parser.add_argument(
