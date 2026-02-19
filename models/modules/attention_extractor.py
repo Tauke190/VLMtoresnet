@@ -96,8 +96,9 @@ class AttentionMapExtractor:
             attn = (q * module.scale) @ k.transpose(-2, -1)
             attn = attn.softmax(dim=-1)
 
-            # CAPTURE HERE: Store on GPU to avoid sync overhead
-            extractor.attention_maps[name] = attn.detach()
+            # CAPTURE HERE: Store on GPU — NO .detach() so gradients
+            # flow back through the attention distillation loss
+            extractor.attention_maps[name] = attn
 
             # Continue with original forward (dropout + projection)
             attn = module.attn_drop(attn)
