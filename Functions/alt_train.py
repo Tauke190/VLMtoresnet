@@ -63,6 +63,8 @@ def train_one_epoch(
     end = time.time()
     last_idx = len(loader) - 1
     num_updates = epoch * len(loader)
+
+    unwrapped_model = model.module if hasattr(model, "module") else model
     
     if args.rank  == 0:
         _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={loader.loader.batch_size}, with {len(loader) * loader.loader.batch_size} datapoints")
@@ -91,7 +93,9 @@ def train_one_epoch(
             if clip_model is not None and projected_embed is not None:
                 with torch.no_grad():
                     clip_image_features = clip_model.encode_image(input)
-            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
+
+            logit_scale = unwrapped_model.get_logit_scale()
+            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, logit_scale)
         losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:
