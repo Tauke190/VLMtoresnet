@@ -25,6 +25,7 @@ class LossManager:
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute base loss + all registered losses."""
         loss_dict = {}
@@ -41,6 +42,7 @@ class LossManager:
                 target=target,
                 projected_embed=projected_embed,
                 clip_image_features=clip_image_features,
+                **kwargs,
             )
             if loss_val is not None:
                 total_loss = total_loss + loss_val
@@ -66,6 +68,7 @@ def create_clip_loss(
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,  # noqa: ARG001
+        **kwargs,
     ) -> Optional[torch.Tensor]:
         if projected_embed is None:
             return None
@@ -88,6 +91,7 @@ def create_mse_loss() -> Callable:
         target: torch.Tensor,  # noqa: ARG001
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Optional[torch.Tensor]:
         if projected_embed is None or clip_image_features is None:
             return None
@@ -161,29 +165,77 @@ def create_distillation_loss_manager(
     return manager
 
 
+def create_attn_distill_loss(attn_distill_weight: float = 1.0) -> Callable:
+    """Create an attention distillation loss using last-layer spatial alignment."""
+    from .attention_distillation_loss import AttentionDistillationLoss
+
+    attn_loss_fn = AttentionDistillationLoss(normalize=True)
+
+    def compute_attn_distill_loss(
+        output: torch.Tensor,  # noqa: ARG001
+        target: torch.Tensor,  # noqa: ARG001
+        projected_embed: Optional[torch.Tensor] = None,  # noqa: ARG001
+        clip_image_features: Optional[torch.Tensor] = None,  # noqa: ARG001
+        teacher_attn_layers=None,
+        student_attn_layers=None,
+        **kwargs,
+    ) -> Optional[torch.Tensor]:
+        if teacher_attn_layers is None or student_attn_layers is None:
+            return None
+        return attn_distill_weight * attn_loss_fn(teacher_attn_layers, student_attn_layers)
+
+    return compute_attn_distill_loss
+
+
+def create_attention_distillation_loss_manager(
+    base_loss_fn: nn.Module,
+    clip_loss_fn: Optional[Callable] = None,
+    clip_text_features: Optional[torch.Tensor] = None,
+    clip_logit_scale: Optional[torch.Tensor] = None,
+    attn_distill_weight: float = 1.0,
+) -> LossManager:
+    """
+    Create a LossManager for attention distillation training.
+    Losses: base_loss, clip_loss, attention_distillation_loss
+    """
+    manager = LossManager(base_loss_fn)
+
+    if clip_loss_fn is not None and clip_text_features is not None:
+        manager.add_loss(
+            "CLIP Loss",
+            create_clip_loss(clip_loss_fn, clip_text_features, clip_logit_scale),
+        )
+
+    manager.add_loss("Attn Distill Loss", create_attn_distill_loss(attn_distill_weight))
+
+    return manager
+
+
 def get_loss_manager_for_method(
     method: str,
     base_loss_fn: nn.Module,
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
     clip_logit_scale: Optional[torch.Tensor] = None,
+    attn_distill_weight: float = 1.0,
     ) -> LossManager:
     """
     Factory function to create appropriate LossManager based on training method.
 
     Args:
-        method: Training method name. Supported: 'default', 'baseline', 'distillation'
+        method: Training method name. Supported: 'default', 'baseline', 'distillation', 'attention_distillation'
         base_loss_fn: Base classification loss function
         clip_loss_fn: Optional CLIP loss function
         clip_text_features: Optional pre-computed CLIP text features
         clip_logit_scale: Optional CLIP logit scale
+        attn_distill_weight: Weight for attention distillation loss
 
     Returns:
         Configured LossManager instance
     """
     method = method.lower()
 
-    if method == "default": 
+    if method == "default":
         return create_default_loss_manager(base_loss_fn=base_loss_fn)
     elif method == "baseline":
         return create_baseline_loss_manager(
@@ -199,8 +251,16 @@ def get_loss_manager_for_method(
             clip_text_features=clip_text_features,
             clip_logit_scale=clip_logit_scale,
         )
+    elif method == "attention_distillation":
+        return create_attention_distillation_loss_manager(
+            base_loss_fn=base_loss_fn,
+            clip_loss_fn=clip_loss_fn,
+            clip_text_features=clip_text_features,
+            clip_logit_scale=clip_logit_scale,
+            attn_distill_weight=attn_distill_weight,
+        )
     else:
         raise ValueError(
             f"Unknown training method: '{method}'. "
-            f"Supported methods: 'default', 'baseline', 'distillation'"
+            f"Supported methods: 'default', 'baseline', 'distillation', 'attention_distillation'"
         )
