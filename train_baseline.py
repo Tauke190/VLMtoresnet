@@ -26,7 +26,7 @@ import math
 import logging
 from contextlib import suppress
 from datetime import datetime
-from misc import ClipLoss
+from misc import LogitScalingClipLoss
 import clip 
 from typing import Union
 
@@ -133,12 +133,12 @@ def main():
             p.requires_grad = False
 
         clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
-        clip_logit_scale = _clip_model.logit_scale.exp().detach().to(args.device)
+        clip_logit_scale = model.logit_scale
 
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
 
-        clip_loss_fn = ClipLoss(
+        clip_loss_fn = LogitScalingClipLoss(
             local_loss=False,
             gather_with_grad=False,
             cache_labels=True,

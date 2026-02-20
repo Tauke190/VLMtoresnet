@@ -788,6 +788,13 @@ def _parse_args():
     )
 
     parser.add_argument(
+    "--nonscalar_logit_scale",
+    action="store_true",
+    default=False,
+    help="Use a 1D tensor ([1]) for logit_scale instead of a scalar ([]).",
+)
+
+    parser.add_argument(
         "--method",
         type=str,
         default="baseline",

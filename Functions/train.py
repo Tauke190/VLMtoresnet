@@ -164,8 +164,16 @@ def train_one_epoch(
             wd1 = param_groups[1]["weight_decay"] if len(param_groups) > 1 else wd0
 
             if args.local_rank == 0:
+                # Add logit_scale to loss dict if model has it
+                loss_dict_to_log = loss_dict.copy() if loss_dict else {}
+                model_unwrapped = model.module if hasattr(model, "module") else model
+                if hasattr(model_unwrapped, "logit_scale"):
+                    logit_scale_val = model_unwrapped.logit_scale
+                    if logit_scale_val.numel() == 1:
+                        loss_dict_to_log["logit_scale"] = logit_scale_val
+                
                 log_output(epoch, batch_idx, total_len=len(loader), last_idx=last_idx, input_size=input.size(0), world_size=args.world_size, batch_time_m=batch_time_m,
-                        lr=lr, wd0=wd0, wd1=wd1, data_time_m=data_time_m, losses_m=losses_m, loss_dict=loss_dict)
+                        lr=lr, wd0=wd0, wd1=wd1, data_time_m=data_time_m, losses_m=losses_m, loss_dict=loss_dict_to_log)
 
                 if args.save_images and output_dir:
                     torchvision.utils.save_image(

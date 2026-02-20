@@ -179,6 +179,7 @@ def setup_model(args):
         bn_eps=args.bn_eps,
         scriptable=args.torchscript,
         checkpoint_path=args.initial_checkpoint,
+        nonscalar_logit_scale=args.nonscalar_logit_scale if hasattr(args, 'nonscalar_logit_scale') else False,
         **extra_args
     )
     if args.num_classes is None:

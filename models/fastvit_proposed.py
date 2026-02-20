@@ -21,7 +21,7 @@ IMPORT_NONE = None
 
 ###### baseline with projectors 
 class FastViT_Projector(FastViT):
-    def __init__(self, freeze_backbone=True, clip_dim=768, **kwargs):
+    def __init__(self, freeze_backbone=True, clip_dim=768, nonscalar_logit_scale=False,**kwargs):
         super().__init__(**kwargs)
 
         if freeze_backbone:
@@ -30,7 +30,11 @@ class FastViT_Projector(FastViT):
                 if not name.startswith("projector"):
                     param.requires_grad = False
 
-       
+        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
+        lshape = [1] if nonscalar_logit_scale else []
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale,requires_grad=True)
+
+
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
     
@@ -43,6 +47,8 @@ class FastViT_Projector(FastViT):
             state_dict["projector.fc2.weight"] = self.projector.fc2.weight
         if "projector.fc2.bias" not in state_dict:
             state_dict["projector.fc2.bias"] = self.projector.fc2.bias
+        if "logit_scale" not in state_dict:
+            state_dict["logit_scale"] = self.logit_scale
 
         super().load_state_dict(state_dict, strict)
 

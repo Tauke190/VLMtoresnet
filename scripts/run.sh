@@ -19,11 +19,11 @@ LOG=100
 # Training methods = [default, baseline, distillation, attention_distillation]
 
 EXP=fastvit
-MODEL=fastvit_sa36_lora_pp
+MODEL=fastvit_sa36_projector
 CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH --log-interval $LOG \
     --validation-eval-interval 1 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
-    --freeze-backbone --native-amp --workers 12 --method attention_distillation \
+    --freeze-backbone --native-amp --workers 12 --method baseline \
     -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 
 
 conda deactivate

@@ -3,4 +3,4 @@
 # Copyright (C) 2023 Apple Inc. All rights reserved.
 #
 
-from .clip_loss import ClipLoss
+from .clip_loss import LogitScalingClipLoss
