@@ -45,6 +45,7 @@ def train_one_epoch(
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
     model_ema=None, mixup_fn=None, wd_scheduler=None,
     zeroshot_eval_ctx=None, clip_model=None,
+    attn_extractor=None, clip_grouped_model=None,
     ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -91,7 +92,33 @@ def train_one_epoch(
             if clip_model is not None and projected_embed is not None:
                 with torch.no_grad():
                     clip_image_features = clip_model.encode_image(input)
-            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features)
+
+            # Extract attention maps for attention distillation
+            extra_kwargs = {}
+            if attn_extractor is not None and clip_grouped_model is not None:
+                from CLIP.clip.model_grouped import get_layer4_attention_maps
+                # Student attention maps were already captured by hooks during model(input)
+                student_attn_maps = attn_extractor.attention_maps
+                # Sort by layer name and collect values as a list
+                student_attn_layers = [student_attn_maps[k] for k in sorted(student_attn_maps.keys())]
+
+                # Extract teacher attention from grouped CLIP layer4
+                with torch.no_grad():
+                    teacher_attn_layers, _ = get_layer4_attention_maps(clip_grouped_model, input)
+
+                extra_kwargs["teacher_attn_layers"] = teacher_attn_layers
+                extra_kwargs["student_attn_layers"] = student_attn_layers
+
+                if batch_idx == 0 and epoch == 0 and args.local_rank == 0:
+                    _logger.info(f"[Attn Distill] Teacher layers: {len(teacher_attn_layers)}, "
+                                 f"Student layers: {len(student_attn_layers)}")
+                    _logger.info(f"[Attn Distill] Teacher shape: {teacher_attn_layers[0].shape}, "
+                                 f"Student shape: {student_attn_layers[0].shape}")
+
+                # Clear for next batch
+                attn_extractor.attention_maps.clear()
+
+            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, **extra_kwargs)
         losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:

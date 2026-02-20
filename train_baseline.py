@@ -112,7 +112,7 @@ def main():
     
     model , num_aug_splits, data_config = setup_model(args)
         
-    # Training method: 'default', 'baseline', or 'distillation'
+    # Training method: 'default', 'baseline', or 'distillation' or 'attention_distillation
     method = args.method
     if args.local_rank == 0:
         print(f"[DEBUG] Training method: {method}")
@@ -121,6 +121,8 @@ def main():
     clip_loss_fn = None
     clip_logit_scale = None
     clip_model_for_mse = None
+    clip_grouped_model = None
+    attn_extractor = None
 
     # Setup CLIP components based on method
     # if method in ('baseline', 'distillation'):
@@ -149,6 +151,24 @@ def main():
             clip_model_for_mse = _clip_model
             if args.local_rank == 0:
                 print(f"[DEBUG] CLIP model kept for MSE loss (image encoder)")
+        elif method == 'attention_distillation':
+            # Build grouped CLIP model for attention extraction from layer4
+            from CLIP.clip.model_grouped import build_model as build_grouped_model
+            grouped_state_dict = _clip_model.state_dict()
+            clip_grouped_model = build_grouped_model(grouped_state_dict).to(args.device)
+            clip_grouped_model.eval()
+            for p in clip_grouped_model.parameters():
+                p.requires_grad = False
+
+            # Set up student attention extractor (hooks on MHSA modules)
+            from models.modules.attention_extractor import AttentionMapExtractor
+            attn_extractor = AttentionMapExtractor(model)
+
+            if args.local_rank == 0:
+                print(f"[DEBUG] Grouped CLIP model built for attention distillation")
+                print(f"[DEBUG] Student attention layers: {attn_extractor.list_attention_layers()}")
+
+            del _clip_model  # Free standard CLIP, we use grouped version
         else:
             del _clip_model  # Free memory if not needed for MSE
 
@@ -278,6 +298,8 @@ def main():
         _logger.info("Scheduled epochs: {}".format(num_epochs))
 
     # Instantiate teacher model, if distillation is requested.
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Starting teacher model instantiation...")
     teacher_model = None
     if args.distillation_type != "none":
         assert args.teacher_path, "need to specify teacher-path when using distillation"
@@ -297,8 +319,12 @@ def main():
         teacher_model.load_state_dict(checkpoint["model"])
         teacher_model.cuda()
         teacher_model.eval()
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Teacher model ready")
 
     # create the train and eval datasets
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Creating training dataset...")
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir,
@@ -309,6 +335,8 @@ def main():
         batch_size=args.batch_size,
         repeats=args.epoch_repeats,
     )
+    if args.local_rank == 0:
+        _logger.info(f"[PROGRESS] Training dataset created: {len(dataset_train)} samples")
     
     if args.debug:
         SAMPLES = args.batch_size * args.world_size * 3
@@ -359,6 +387,8 @@ def main():
         dataset_train = AugMixDataset(dataset_train, num_splits=num_aug_splits)
 
     # create data loaders w/ augmentation pipeiine
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Creating training data loader...")
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config["interpolation"]
@@ -391,6 +421,8 @@ def main():
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
     )
+    if args.local_rank == 0:
+        _logger.info(f"[PROGRESS] Training data loader created with {len(loader_train)} batches")
 
     loader_eval = None 
     if args.vanilla_eval:
@@ -435,6 +467,8 @@ def main():
 
     # -----------------------------------------------------------------
     # Generic zero-shot evaluation setup (CLIP-based)
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Setting up zero-shot evaluation...")
     zeroshot_eval_ctx = None
     if args.val_set:
         template_file = os.path.join("CLIP", "dataloaders", "templates", f"{args.val_set}.txt")
@@ -463,13 +497,18 @@ def main():
             args.distillation_tau,
         )
 
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Creating loss manager...")
     loss_manager = get_loss_manager_for_method(
         method=method,
         base_loss_fn=train_loss_fn,
         clip_loss_fn=clip_loss_fn,
         clip_text_features=clip_text_features,
         clip_logit_scale=clip_logit_scale,
+        attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
     )
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Loss manager created")
 
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
@@ -510,7 +549,11 @@ def main():
 
     if args.distributed:
         torch.distributed.barrier()
+        if args.local_rank == 0:
+            _logger.info("[PROGRESS] Distributed synchronization complete")
 
+    if args.local_rank == 0:
+        _logger.info("[PROGRESS] Setup complete, starting training...")
     
     if args.sanity_check:
         # batch_size=args.validation_batch_size or args.batch_size
@@ -529,13 +572,10 @@ def main():
             eval_metrics_vanilla.update({'acc1_zeroshot': acc1_zeroshot, 'acc5_zeroshot': acc5_zeroshot})
         print(eval_metrics_vanilla)
         
-        
-        
-        
-
-
     # pdb.set_trace()
-    acc1_zeroshot = None 
+    acc1_zeroshot = None
+    eval_metrics = {}  # Initialize before loop to prevent NameError on non-validation epochs
+    
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
             loader_train.sampler.set_epoch(epoch)
@@ -557,6 +597,8 @@ def main():
             wd_scheduler=wd_scheduler,
             zeroshot_eval_ctx=zeroshot_eval_ctx,
             clip_model=clip_model_for_mse,
+            attn_extractor=attn_extractor,
+            clip_grouped_model=clip_grouped_model,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):
