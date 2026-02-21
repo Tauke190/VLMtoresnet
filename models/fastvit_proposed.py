@@ -21,7 +21,7 @@ IMPORT_NONE = None
 
 ###### baseline with projectors 
 class FastViT_Projector(FastViT):
-    def __init__(self, freeze_backbone=True, clip_dim=768, nonscalar_logit_scale=False,**kwargs):
+    def __init__(self, freeze_backbone=True, clip_dim=768, nonscalar_logit_scale=False, **kwargs):
         super().__init__(**kwargs)
 
         if freeze_backbone:
@@ -30,13 +30,16 @@ class FastViT_Projector(FastViT):
                 if not name.startswith("projector"):
                     param.requires_grad = False
 
-        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
-        lshape = [1] if nonscalar_logit_scale else []
-        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale,requires_grad=True)
-
-
+       
         self.projector = Mlp(in_features=self.head.in_features, out_features=clip_dim)
         self.apply(self.cls_init_weights)
+
+        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
+        lshape = [1] if nonscalar_logit_scale else []
+
+        self.logit_scale = nn.Parameter(
+            torch.ones(lshape) * init_logit_scale
+        )
     
     def load_state_dict(self, state_dict, strict):
         if "projector.fc1.weight" not in state_dict:
@@ -47,8 +50,6 @@ class FastViT_Projector(FastViT):
             state_dict["projector.fc2.weight"] = self.projector.fc2.weight
         if "projector.fc2.bias" not in state_dict:
             state_dict["projector.fc2.bias"] = self.projector.fc2.bias
-        if "logit_scale" not in state_dict:
-            state_dict["logit_scale"] = self.logit_scale
 
         super().load_state_dict(state_dict, strict)
 
@@ -67,7 +68,10 @@ class FastViT_Projector(FastViT):
         cls_out = self.head(x)
         projected_embed = self.projector(x)
 
-        return projected_embed, cls_out, x
+        logit_scale_clamped = self.logit_scale.clamp(0, torch.log(torch.tensor(100.0)))
+        logit_scale_exp = logit_scale_clamped.exp()
+
+        return projected_embed, cls_out, x, logit_scale_exp
 
             
 ###### Lr-tokens 
@@ -302,22 +306,6 @@ class FastViT_lora_PP(FastViT_Projector):
 
         super().load_state_dict(state_dict, strict)
 
-class FastVit_lora_PP_logit_scale(FastViT_lora_PP):
-    def __init__(self, nonscalar_logit_scale=False, **kwargs):
-        super().__init__(**kwargs)
-        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
-        lshape = [1] if nonscalar_logit_scale else []
-
-        self.logit_scale = nn.Parameter(
-            torch.ones(lshape) * init_logit_scale
-        )
-
-    def forward(self, x):
-        projected_embed, output, x_features = super().forward(x)
-        logit_scale_clamped = self.logit_scale.clamp(0, torch.log(torch.tensor(100.0)))
-        logit_scale_exp = logit_scale_clamped.exp()
-        return projected_embed, output, x_features, logit_scale_exp
-
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
     embed_dims = [64, 128, 256, 512],
@@ -366,12 +354,5 @@ def fastvit_sa36_lora(pretrained=False, **kwargs):
 def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with LoRA"""
     model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
-    model.default_cfg = default_cfgs["fastvit_m"]
-    return model
-
-#### with logit scaling
-@register_model
-def fastvit_lora_pp_logit_scale(pretrained=False, **kwargs):
-    model = FastVit_lora_PP_logit_scale(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
