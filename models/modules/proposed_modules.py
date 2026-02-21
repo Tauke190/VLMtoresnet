@@ -101,12 +101,14 @@ class AttentionBlock_Adapter(AttentionBlock):
 
     def forward(self, x):
         if self.use_layer_scale:
-            z = self.layer_scale_1 * self.token_mixer(self.norm(x))
+            z = self.token_mixer(self.norm(x))
             z = self.adapter1(z)
+            z = self.layer_scale_1 * z
             x = x + self.drop_path( z )
 
-            z = self.layer_scale_2 * self.convffn(x)
+            z = self.convffn(x)
             z = self.adapter2(z)
+            z = self.layer_scale_2 * z
             x = x + self.drop_path( z )
         else:
             z = self.token_mixer(self.norm(x))
@@ -141,8 +143,9 @@ class RepMixerBlock_Adapter(RepMixerBlock):
     def forward(self, x):
         if self.use_layer_scale:
             x = self.token_mixer(x)
-            z = self.layer_scale * self.convffn(x)
+            z = self.convffn(x)
             z = self.adapter1(z)
+            z = self.layer_scale * z
             x = x + self.drop_path( z )
         else:
             x = self.token_mixer(x)
