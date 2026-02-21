@@ -302,6 +302,22 @@ class FastViT_lora_PP(FastViT_Projector):
 
         super().load_state_dict(state_dict, strict)
 
+class FastVit_lora_PP_logit_scale(FastViT_lora_PP):
+    def __init__(self, nonscalar_logit_scale=False, **kwargs):
+        super().__init__(**kwargs)
+        init_logit_scale = torch.log(torch.tensor(1 / 0.07))
+        lshape = [1] if nonscalar_logit_scale else []
+
+        self.logit_scale = nn.Parameter(
+            torch.ones(lshape) * init_logit_scale
+        )
+
+    def forward(self, x):
+        projected_embed, output, x_features = super().forward(x)
+        logit_scale_clamped = self.logit_scale.clamp(0, torch.log(torch.tensor(100.0)))
+        logit_scale_exp = logit_scale_clamped.exp()
+        return projected_embed, output, x_features, logit_scale_exp
+
 fastvit_sa36_config = dict(
     layers = [6, 6, 18, 6],
     embed_dims = [64, 128, 256, 512],
@@ -350,5 +366,12 @@ def fastvit_sa36_lora(pretrained=False, **kwargs):
 def fastvit_sa36_lora_pp(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with LoRA"""
     model = FastViT_lora_PP(**fastvit_sa36_config, **kwargs)
+    model.default_cfg = default_cfgs["fastvit_m"]
+    return model
+
+#### with logit scaling
+@register_model
+def fastvit_lora_pp_logit_scale(pretrained=False, **kwargs):
+    model = FastVit_lora_PP_logit_scale(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
