@@ -50,6 +50,8 @@ class FastViT_Projector(FastViT):
             state_dict["projector.fc2.weight"] = self.projector.fc2.weight
         if "projector.fc2.bias" not in state_dict:
             state_dict["projector.fc2.bias"] = self.projector.fc2.bias
+        if "logit_scale" not in state_dict:
+            state_dict["logit_scale"] = self.logit_scale
 
         super().load_state_dict(state_dict, strict)
 
