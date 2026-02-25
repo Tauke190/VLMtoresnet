@@ -83,7 +83,7 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
 conda deactivate
 
 rsync -a ucf_output/* nm1:~/robustness_object_detection/GLIP/ucf_output/
-
+rsync -a checkpoints/ nm1:~/robustness_object_detection/GLIP/checkpoints/
 # cd ~/VLMtoresnet/
 # sbatch scripts/train_nicolas.slurm
 # scancel <job id>
