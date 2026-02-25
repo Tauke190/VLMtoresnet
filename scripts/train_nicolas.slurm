@@ -75,7 +75,7 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
     $DIFF_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH --log-interval $LOG \
     --validation-eval-interval 1 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --native-amp --workers 12 \
-    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 >> ucf_output/name_of_exp.txt
+    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 >> $OUTPUT_TXT
   # --freeze-backbone # remove to train entire model 
 
 
@@ -83,7 +83,6 @@ CUDA_VISIBLE_DEVICES=0,2 python -m torch.distributed.launch --nproc_per_node=$NU
 conda deactivate
 
 rsync -a ucf_output/* nm1:~/robustness_object_detection/GLIP/ucf_output/
-rsync -a checkpoints/ nm1:~/robustness_object_detection/GLIP/checkpoints/
 # cd ~/VLMtoresnet/
 # sbatch scripts/train_nicolas.slurm
 # scancel <job id>
