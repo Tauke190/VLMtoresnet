@@ -28,6 +28,14 @@ from contextlib import suppress
 from datetime import datetime
 from misc import LogitScalingClipLoss
 import clip 
+
+# Import real-time monitoring
+try:
+    from realtime_monitor import start_monitoring, update_training_metrics, stop_monitoring
+    HAS_REALTIME_MONITOR = True
+except ImportError:
+    HAS_REALTIME_MONITOR = False
+    print("Warning: Real-time monitor not available. Install realtime_monitor.py for live monitoring.") 
 from typing import Union
 
 
@@ -576,6 +584,10 @@ def main():
     acc1_zeroshot = None
     eval_metrics = {}  # Initialize before loop to prevent NameError on non-validation epochs
     
+    # Start real-time monitoring if available
+    if HAS_REALTIME_MONITOR and args.rank == 0:
+        start_monitoring()
+    
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(loader_train.sampler, "set_epoch"):
             loader_train.sampler.set_epoch(epoch)
@@ -689,8 +701,16 @@ def main():
                 log_wandb=args.log_wandb and has_wandb and args.rank == 0,
             )
         
+        # Update real-time monitoring if available
+        if HAS_REALTIME_MONITOR and args.rank == 0:
+            update_training_metrics(epoch, train_metrics, eval_metrics)
+        
     if best_metric is not None:
         _logger.info("*** Best metric: {0} (epoch {1})".format(best_metric, best_epoch))
+    
+    # Stop real-time monitoring if available
+    if HAS_REALTIME_MONITOR and args.rank == 0:
+        stop_monitoring()
 
 
 if __name__ == "__main__":
