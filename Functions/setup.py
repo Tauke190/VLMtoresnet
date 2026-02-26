@@ -165,6 +165,12 @@ def setup_model(args):
     extra_args = {}
     extra_args['freeze_backbone'] = args.freeze_backbone
     
+    # Add multi-head non-local parameters if available
+    if hasattr(args, 'mhsa_num_heads'):
+        extra_args['mhsa_num_heads'] = args.mhsa_num_heads
+    if hasattr(args, 'mhsa_inter_channels'):
+        extra_args['mhsa_inter_channels'] = args.mhsa_inter_channels
+    
     model = create_model(
         args.model,
         pretrained=args.pretrained,
