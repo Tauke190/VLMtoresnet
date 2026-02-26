@@ -4,7 +4,8 @@ import torch.nn as nn
 from timm.models.registry import register_model
 
 from .fastvit import FastViT, default_cfgs
-from .modules.nonlocal_block import NonLocalBlock2d
+from .fastvit_proposed import FastViT_Projector, fastvit_sa36_config
+from .modules.nonlocal_block import NonLocalBlock2d, NonLocalBlockLinear
 
 import logging
 
@@ -18,23 +19,30 @@ class FastViT_nonlocal(FastViT_Projector):
         freeze_backbone=True,
         clip_dim=768,
         nl_inter_channels=None,
-        nl_mode='embedded',
         nl_bn_layer=True,
         **kwargs,
     ):
         super().__init__(freeze_backbone=freeze_backbone, clip_dim=clip_dim, **kwargs)
 
-        # Create NonLocal blocks
+        # Create NonLocal blocks:
+        #   Stages 0-2 (first 3): NonLocalBlock2d  (Conv2d projections)
+        #   Stage  3   (last):     NonLocalBlockLinear (Linear projections)
         self.nonlocal_blocks = nn.ModuleList()
-        for dim in self.embed_dims:
+        for stage_idx, dim in enumerate(self.embed_dims):
             inter_ch = nl_inter_channels if nl_inter_channels is not None else dim // 2
             inter_ch = min(inter_ch, dim)
-            block = NonLocalBlock2d(
-                in_channels=dim,
-                inter_channels=inter_ch,
-                mode=nl_mode,
-                bn_layer=nl_bn_layer,
-            )
+            if stage_idx < len(self.embed_dims) - 1:
+                block = NonLocalBlock2d(
+                    in_channels=dim,
+                    inter_channels=inter_ch,
+                    bn_layer=nl_bn_layer,
+                )
+            else:
+                block = NonLocalBlockLinear(
+                    in_channels=dim,
+                    inter_channels=inter_ch,
+                    bn_layer=nl_bn_layer,
+                )
 
             self.nonlocal_blocks.append(block)
 
