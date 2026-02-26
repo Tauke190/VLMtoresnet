@@ -158,10 +158,26 @@ def _parse_args():
     )
     parser.add_argument(
         "--interpolation",
-        default="",
+        default=None,
         type=str,
         metavar="NAME",
         help="Image resize interpolation type (overrides model)",
+    )
+    
+    # Multi-Head Non-Local parameters
+    parser.add_argument(
+        "--mhsa-num-heads",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Number of heads for multi-head non-local blocks (default: 5)",
+    )
+    parser.add_argument(
+        "--mhsa-inter-channels",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Intermediate channels for multi-head non-local blocks (default: channels//2)",
     )
     parser.add_argument(
         "-b",
@@ -848,4 +864,3 @@ def _parse_args():
     # Cache the args as a text string to save them in the output dir later
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     return args, args_text
-
