@@ -135,6 +135,16 @@ def extract_features(loader, backbone, device, mode="forward_features"):
             elif mode == "classification_neck" and hasattr(model, "forward_classification_neck"):
                 feats = model.forward_classification_neck(images)
 
+            elif mode == "projector" and hasattr(model, "projector"):
+                # Extract CLIP-space projector embeddings
+                outputs = model(images)
+                if isinstance(outputs, tuple):
+                    # Projector models return (projected_embed, cls_out, features, logit_scale)
+                    projected_embed = outputs[0]  # CLIP-space embeddings
+                    feats = projected_embed
+                else:
+                    feats = outputs
+
             else:
                 feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
 
@@ -187,7 +197,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--feature-mode",
-                        choices=["forward_features", "backbone1", "classification_neck", "classifier"],
+                        choices=["forward_features", "backbone1", "classification_neck", "classifier", "projector"],
                         default="forward_features")
 
     parser.add_argument("--model", required=True)
@@ -214,6 +224,9 @@ def main():
 
     print(f"Feature mode: {args.feature_mode}")
     print(f"Using device: {device}")
+    
+    if args.feature_mode == "projector":
+        print("🎯 Using CLIP-space projector embeddings for linear probing")
 
     train_loader, test_loader = setup_loaders(
         args.dataset, args.data_dir, args.batch_size, args.workers
@@ -223,6 +236,12 @@ def main():
 
     total, trainable = count_parameters(backbone)
     print(f"Total params: {total:,} | Trainable: {trainable:,}")
+    
+    if args.feature_mode == "projector":
+        if hasattr(backbone, "projector"):
+            print(f"✅ Projector found: CLIP dim = {backbone.projector.out_features}")
+        else:
+            print("❌ No projector found in model!")
 
     if args.feature_mode == "classifier":
         evaluate_classifier(backbone, test_loader, device)
