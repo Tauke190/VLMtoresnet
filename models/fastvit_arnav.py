@@ -89,7 +89,7 @@ class FastViT_mhsa(FastViT_Projector):
         freeze_backbone=True,
         clip_dim=768,
         mhsa_inter_channels=None,
-        mhsa_num_heads=4,
+        mhsa_num_heads=5,
         mhsa_bn_layer=True,
         **kwargs,
     ):
@@ -169,6 +169,7 @@ def fastvit_sa36_nonlocal(pretrained=False, **kwargs):
 @register_model
 def fastvit_sa36_mhsa(pretrained=False, **kwargs):
     """Instantiate FastViT-SA36 model variant with MHSA blocks."""
+    kwargs.setdefault('mhsa_num_heads', 5)
     model = FastViT_mhsa(**fastvit_sa36_config, **kwargs)
     model.default_cfg = default_cfgs["fastvit_m"]
     return model
