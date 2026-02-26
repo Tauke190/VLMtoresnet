@@ -12,7 +12,7 @@ from .fastvit import (
     fastvit_ma36,
 )
 
-from .fastvit_proposed import IMPORT_NONE
+from .fastvit_proposed import IMPORT_NONE, fastvit_sa36_projector
 
 from .fastvit_arnav import fastvit_sa36_nonlocal  # register nonlocal model with timm
 
