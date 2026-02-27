@@ -167,10 +167,14 @@ class FastViT_adapter(FastViT_Projector):
                             layer_scale_init_value=kwargs.get('layer_scale_init_value', 1e-5))
                     else:
                         assert False, "module not recognized"
-                      
+
         num_sequential = sum(isinstance(m, nn.Sequential) for m in self.network)
         _logger.info(f"Number of nn.Sequential blocks in self.network: {num_sequential}")
         _logger.info(f"Adapter reduction factor: {adapter_reduction}")
+
+        # Freeze all non-adapter parameters in the backbone
+        # Only adapter parameters, projector and layer scale should be trainable
+        self._freeze_non_adapter_params()
 
     def load_state_dict(self, state_dict, strict):
         # Initialize adapter weights if not in checkpoint (allows backward compatibility)
@@ -191,10 +195,21 @@ class FastViT_adapter(FastViT_Projector):
                             state_dict[ f"network.{i}.{j}.adapter2.2.bias" ] = sub_block.adapter2[2].bias
                             state_dict[ f"network.{i}.{j}.adapter2.2.weight" ] = sub_block.adapter2[2].weight
 
-        
+
         super().load_state_dict(state_dict, strict)
 
-    
+    def _freeze_non_adapter_params(self):
+        """Freeze all non-adapter parameters in the backbone."""
+        _logger.info("Freezing non-adapter backbone parameters")
+        for name, param in self.named_parameters():
+            # Keep adapters, projector, and logit_scale trainable
+            if "adapter" in name or name.startswith("projector") or name.startswith("logit_scale") or "layer_scale" in name:
+                param.requires_grad = True
+            else:
+                # Freeze all other backbone parameters
+                param.requires_grad = False
+
+
 ###### LoRA 
 class FastViT_lora(FastViT_Projector):
     def __init__(self, freeze_backbone=True, clip_dim=768, lora_rank=8, lora_alpha=16, **kwargs):

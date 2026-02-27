@@ -511,6 +511,7 @@ def main():
         clip_loss_fn=clip_loss_fn,
         clip_text_features=clip_text_features,
         attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
+        mse_distill_weight=getattr(args, 'mse_distill_weight', 1.0),
     )
     if args.local_rank == 0:
         _logger.info("[PROGRESS] Loss manager created")
