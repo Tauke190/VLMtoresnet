@@ -37,9 +37,6 @@ def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, ba
     _logger.info(log_str)
         
 
-
-
-
 def train_one_epoch(
     epoch, model, loader, optimizer, loss_manager: LossManager, args, lr_scheduler=None,
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
@@ -84,9 +81,10 @@ def train_one_epoch(
             if args.model in VANILLA_MODELS:
                 output = model(input) # For models without projection head
                 projected_embed = None
+                logit_scale = None
             else:
-                projected_embed, output, x = model(input) # For models with projection head 
-
+                projected_embed, output, x, logit_scale = model(input)
+               
             # Compute CLIP image features if needed for MSE loss
             clip_image_features = None
             if clip_model is not None and projected_embed is not None:
@@ -118,7 +116,7 @@ def train_one_epoch(
                 # Clear for next batch
                 attn_extractor.attention_maps.clear()
 
-            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, **extra_kwargs)
+            loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, logit_scale=logit_scale, **extra_kwargs)
         losses_m.update(loss.item(), input.size(0))
         optimizer.zero_grad()
         if loss_scaler is not None:

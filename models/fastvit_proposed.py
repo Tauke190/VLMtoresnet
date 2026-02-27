@@ -70,10 +70,10 @@ class FastViT_Projector(FastViT):
         cls_out = self.head(x)
         projected_embed = self.projector(x)
 
+        # Clamp logit_scale in log space. Loss function will exponentiate it.
         logit_scale_clamped = self.logit_scale.clamp(0, torch.log(torch.tensor(100.0)))
-        logit_scale_exp = logit_scale_clamped.exp()
 
-        return projected_embed, cls_out, x, logit_scale_exp
+        return projected_embed, cls_out, x, logit_scale_clamped
 
             
 ###### Lr-tokens 

@@ -141,7 +141,7 @@ def main():
             p.requires_grad = False
 
         clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
-        clip_logit_scale = model.logit_scale
+        # clip_logit_scale = model.logit_scale
 
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")

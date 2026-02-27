@@ -25,6 +25,7 @@ class LossManager:
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,
+        logit_scale: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute base loss + all registered losses."""
@@ -42,6 +43,7 @@ class LossManager:
                 target=target,
                 projected_embed=projected_embed,
                 clip_image_features=clip_image_features,
+                logit_scale=logit_scale,
                 **kwargs,
             )
             if loss_val is not None:
@@ -59,15 +61,19 @@ class LossManager:
 def create_clip_loss(
     clip_loss_fn: Callable,
     clip_text_features: torch.Tensor,
-    clip_logit_scale: torch.Tensor,
+    clip_logit_scale: Optional[torch.Tensor] = None,
 ) -> Callable:
-    """Create a CLIP loss function with pre-bound text features and scale."""
+    """Create a CLIP loss function with pre-bound text features.
+
+    logit_scale MUST be explicitly passed during compute() from the model's forward pass.
+    """
 
     def compute_clip_loss(
         output: torch.Tensor,  # noqa: ARG001
         target: torch.Tensor,
         projected_embed: Optional[torch.Tensor] = None,
         clip_image_features: Optional[torch.Tensor] = None,  # noqa: ARG001
+        logit_scale: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Optional[torch.Tensor]:
         if projected_embed is None:
@@ -77,7 +83,9 @@ def create_clip_loss(
         if feats.ndim == 4 and feats.shape[2] > 1:
             feats = feats.mean(dim=[2, 3])
 
-        return clip_loss_fn(feats, clip_text_features[target], clip_logit_scale)
+        # logit_scale MUST be provided from model forward pass
+        assert logit_scale is not None, "logit_scale must be explicitly passed from model"
+        return clip_loss_fn(feats, clip_text_features[target], logit_scale)
 
     return compute_clip_loss
 
