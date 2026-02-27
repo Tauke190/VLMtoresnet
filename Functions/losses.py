@@ -61,7 +61,6 @@ class LossManager:
 def create_clip_loss(
     clip_loss_fn: Callable,
     clip_text_features: torch.Tensor,
-    clip_logit_scale: Optional[torch.Tensor] = None,
 ) -> Callable:
     """Create a CLIP loss function with pre-bound text features.
 
@@ -133,7 +132,6 @@ def create_baseline_loss_manager(
     base_loss_fn: nn.Module,
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
-    clip_logit_scale: Optional[torch.Tensor] = None,
 ) -> LossManager:
     """
     Create a LossManager for standard baseline training.
@@ -144,7 +142,7 @@ def create_baseline_loss_manager(
     if clip_loss_fn is not None and clip_text_features is not None:
         manager.add_loss(
             "CLIP Loss",
-            create_clip_loss(clip_loss_fn, clip_text_features, clip_logit_scale),
+            create_clip_loss(clip_loss_fn, clip_text_features),
         )
 
     return manager
@@ -154,7 +152,6 @@ def create_distillation_loss_manager(
     base_loss_fn: nn.Module,
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
-    clip_logit_scale: Optional[torch.Tensor] = None,
 ) -> LossManager:
     """
     Create a LossManager for distillation training.
@@ -165,7 +162,7 @@ def create_distillation_loss_manager(
     if clip_loss_fn is not None and clip_text_features is not None:
         manager.add_loss(
             "CLIP Loss",
-            create_clip_loss(clip_loss_fn, clip_text_features, clip_logit_scale),
+            create_clip_loss(clip_loss_fn, clip_text_features),
         )
 
     manager.add_loss("MSE Loss", create_mse_loss())
@@ -199,7 +196,6 @@ def create_attention_distillation_loss_manager(
     base_loss_fn: nn.Module,
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
-    clip_logit_scale: Optional[torch.Tensor] = None,
     attn_distill_weight: float = 1.0,
 ) -> LossManager:
     """
@@ -211,7 +207,7 @@ def create_attention_distillation_loss_manager(
     if clip_loss_fn is not None and clip_text_features is not None:
         manager.add_loss(
             "CLIP Loss",
-            create_clip_loss(clip_loss_fn, clip_text_features, clip_logit_scale),
+            create_clip_loss(clip_loss_fn, clip_text_features),
         )
 
     manager.add_loss("Attn Distill Loss", create_attn_distill_loss(attn_distill_weight))
@@ -224,7 +220,6 @@ def get_loss_manager_for_method(
     base_loss_fn: nn.Module,
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
-    clip_logit_scale: Optional[torch.Tensor] = None,
     attn_distill_weight: float = 1.0,
     ) -> LossManager:
     """
@@ -235,7 +230,6 @@ def get_loss_manager_for_method(
         base_loss_fn: Base classification loss function
         clip_loss_fn: Optional CLIP loss function
         clip_text_features: Optional pre-computed CLIP text features
-        clip_logit_scale: Optional CLIP logit scale
         attn_distill_weight: Weight for attention distillation loss
 
     Returns:
@@ -250,21 +244,18 @@ def get_loss_manager_for_method(
             base_loss_fn=base_loss_fn,
             clip_loss_fn=clip_loss_fn,
             clip_text_features=clip_text_features,
-            clip_logit_scale=clip_logit_scale,
         )
     elif method == "distillation":
         return create_distillation_loss_manager(
             base_loss_fn=base_loss_fn,
             clip_loss_fn=clip_loss_fn,
             clip_text_features=clip_text_features,
-            clip_logit_scale=clip_logit_scale,
         )
     elif method == "attention_distillation":
         return create_attention_distillation_loss_manager(
             base_loss_fn=base_loss_fn,
             clip_loss_fn=clip_loss_fn,
             clip_text_features=clip_text_features,
-            clip_logit_scale=clip_logit_scale,
             attn_distill_weight=attn_distill_weight,
         )
     else:

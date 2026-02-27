@@ -127,7 +127,6 @@ def main():
 
     clip_text_features = None
     clip_loss_fn = None
-    clip_logit_scale = None
     clip_model_for_mse = None
     clip_grouped_model = None
     attn_extractor = None
@@ -141,7 +140,6 @@ def main():
             p.requires_grad = False
 
         clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
-        # clip_logit_scale = model.logit_scale
 
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
@@ -512,7 +510,6 @@ def main():
         base_loss_fn=train_loss_fn,
         clip_loss_fn=clip_loss_fn,
         clip_text_features=clip_text_features,
-        clip_logit_scale=clip_logit_scale,
         attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
     )
     if args.local_rank == 0:

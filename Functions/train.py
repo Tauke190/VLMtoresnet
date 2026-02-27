@@ -79,7 +79,7 @@ def train_one_epoch(
 
         with amp_autocast():
             if args.model in VANILLA_MODELS:
-                output = model(input) # For models without projection head
+                output = model(input) # # For models with projection head 
                 projected_embed = None
                 logit_scale = None
             else:
