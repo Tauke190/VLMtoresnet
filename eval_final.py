@@ -173,7 +173,12 @@ def load_backbone(args, device):
     print("Missing keys:", len(missing))
     print("Unexpected keys:", len(unexpected))
     if missing:
-        print("Missing:", missing[:5])  # Show first 5 missing keys
+        # Check if only head keys are missing (expected when num_classes changed)
+        head_only = all(k.startswith("head.") for k in missing)
+        if head_only:
+            print(f"Missing: {missing}  ← (expected: head was removed due to num_classes mismatch)")
+        else:
+            print("Missing:", missing[:5])  # Show first 5 missing keys
     if unexpected:
         print("Unexpected:", unexpected[:5])  # Show first 5 unexpected keys
     print("==================================\n")
@@ -285,34 +290,65 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
     """Setup CLIP zero-shot evaluation"""
     print(f"🎯 Setting up zero-shot evaluation for {dataset_name}...")
     
-    # Load CLIP model for text features
-    clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
+    # Load CLIP model for text features (must match training: ViT-L/14 → 768-dim)
+    clip_model, _ = clip.load("ViT-L/14", device=device, jit=False)
     clip_model.eval()
     
-    # Load templates
-    template_file = os.path.join("CLIP", "dataloaders", "templates", f"{dataset_name}.txt")
+    # Load templates (handle naming differences: imagenet -> imagenet1k, etc.)
+    template_aliases = {
+        "imagenet": "imagenet1k",
+    }
+    template_name = template_aliases.get(dataset_name, dataset_name)
+    template_file = os.path.join("CLIP", "dataloaders", "templates", f"{template_name}.txt")
     if not os.path.exists(template_file):
         print(f"⚠️  Template file not found: {template_file}")
         print("💡 Using default CLIP template")
         templates = ["a photo of a {}."]
     else:
         with open(template_file, 'r') as f:
-            templates = [line.strip() for line in f.readlines()]
+            templates = [line.strip() for line in f.readlines() if line.strip()]
     
     # Get class names
     if dataset_name == "imagenet":
-        from timm.data import create_dataset
-        dataset = create_dataset('', root=dataset_root, split='validation')
-        class_names = dataset.classes
+        # Read ImageNet class names from local file (timm's ImageDataset has no .classes)
+        classes_file = os.path.join(os.path.dirname(__file__), "misc", "imagenet_classes.txt")
+        if os.path.exists(classes_file):
+            with open(classes_file, 'r') as f:
+                class_names = [line.strip() for line in f.readlines() if line.strip()]
+        else:
+            raise FileNotFoundError(f"ImageNet class names file not found: {classes_file}")
     elif dataset_name == "food101":
         dataset = Food101(root=dataset_root, train=False, transform=None)
-        class_names = dataset.classes
+        # Food101 stores class names in .categories
+        if hasattr(dataset, 'categories'):
+            class_names = dataset.categories
+        elif hasattr(dataset, 'classes'):
+            class_names = dataset.classes
+        elif hasattr(dataset, '_dataset_classes'):
+            class_names = dataset._dataset_classes
+        else:
+            # Food101 class names need to be extracted differently
+            class_names = [str(i) for i in range(101)]  # Fallback
+            print("⚠️  Using fallback class names for Food101")
     elif dataset_name == "ucf101":
-        dataset = UCF101(root=dataset_root, train=False, transform=None)
-        class_names = dataset.classes
+        # Read class names from the class info file (same file the dataloader references)
+        ucf_classes_file = os.path.join("CLIP", "dataloaders", "classes", "ucf101.txt")
+        if os.path.exists(ucf_classes_file):
+            with open(ucf_classes_file, 'r') as f:
+                class_names = [line.strip() for line in f.readlines() if line.strip()]
+            print(f"✅ Loaded {len(class_names)} UCF101 class names from {ucf_classes_file}")
+        else:
+            class_names = [str(i) for i in range(101)]  # Fallback
+            print(f"⚠️  UCF101 class file not found: {ucf_classes_file}, using fallback")
     elif dataset_name == "aircraft":
         dataset = aircraft_dataloader(root=dataset_root, train=False, transform=None)
-        class_names = dataset.classes
+        if hasattr(dataset, 'classes'):
+            class_names = dataset.classes
+        elif hasattr(dataset, '_dataset_classes'):
+            class_names = dataset._dataset_classes
+        else:
+            class_names = [str(i) for i in range(100)]  # Fallback
+            print("⚠️  Using fallback class names for Aircraft")
     else:
         raise ValueError(f"Unsupported dataset for zero-shot: {dataset_name}")
     
@@ -332,7 +368,7 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
             class_text_features = class_text_features / class_text_features.norm(dim=-1, keepdim=True)
             text_features.append(class_text_features)
         
-        text_features = torch.stack(text_features, dim=0)  # [num_classes, 512]
+        text_features = torch.stack(text_features, dim=0).float()  # [num_classes, clip_dim] cast to float32
     
     # Setup data loader
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -399,8 +435,8 @@ def run_zeroshot_evaluation(eval_ctx, model, device):
             # Normalize features
             image_features = image_features / (image_features.norm(dim=-1, keepdim=True) + 1e-6)
             
-            # Compute similarity
-            logits = 100.0 * image_features @ text_features.T
+            # Compute similarity (ensure matching dtypes)
+            logits = 100.0 * image_features.float() @ text_features.T
             
             # Calculate accuracy
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
