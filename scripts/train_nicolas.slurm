@@ -3,7 +3,7 @@
 #SBATCH --output=ucf_output/slurm-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
-#SBATCH -C gmem48
+#SBATCH -C gmem16
 #SBATCH --gres=gpu:2
 #SBATCH --mem-per-cpu=6G 
 #SBATCH --cpus-per-gpu=12
