@@ -41,7 +41,7 @@ NUM_GPU=2
 WT=Weights/fastvit_sa36.pth.tar
 
 # Change directory
-cd ~/ 
+cd ~/VLMtoresnet/
 
 ######## Dont change anything above (except GPUs)
 
