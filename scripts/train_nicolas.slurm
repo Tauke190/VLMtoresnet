@@ -53,6 +53,7 @@ OUTPUT=./checkpoints
 MODEL=fastvit_sa36_adapter
 
 OUTPUT_TXT=ucf_output/$EXP.txt
+LOG=500
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
 # Training methods = [default, baseline, distillation]
