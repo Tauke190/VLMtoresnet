@@ -22,6 +22,12 @@ eval "$(conda shell.bash hook)"
 
 # Activate your conda environment
 conda activate fastvit
+
+# Set UTF-8 encoding to handle Unicode characters
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+export PYTHONIOENCODING=utf-8
+
 echo "Job started at $(date)"
 echo "Running on node: $(hostname)"
 echo "GPU info:"
@@ -45,7 +51,7 @@ LOG=500
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens,fastvit_sa36_lora_pp]
 # Training methods = [default, baseline, distillation, attention_distillation]
-MODEL=fastvit_sa36_lora_pp
+MODEL=fastvit_sa36_adapter
 EXP=fastvit
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \

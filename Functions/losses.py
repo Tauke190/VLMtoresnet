@@ -130,7 +130,8 @@ def create_mse_loss() -> Callable:
 
         feats = F.normalize(feats, dim=-1)
 
-        clip_image_features = clip_image_features.float() # Unormalized CLIP features may be in fp16, ensure they're float for MSE
+        clip_image_features = clip_image_features.float()
+        clip_image_features = F.normalize(clip_image_features, dim=-1)
 
         return mse_fn(feats, clip_image_features)
 

@@ -47,7 +47,7 @@ def evaluate_zeroshot(eval_ctx, model, device, channels_last=None, amp_autocast=
                 images = images.contiguous(memory_format=torch.channels_last)
 
             images = images.float()
-            feats, _, _ = backbone(images)
+            feats, _, _, _ = backbone(images)
 
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]

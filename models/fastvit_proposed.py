@@ -138,7 +138,7 @@ class FastViT_lrtokens(FastViT_Projector):
     
 ###### Adapters
 class FastViT_adapter(FastViT_Projector):
-    def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, adapter_reduction=4, **kwargs):
+    def __init__(self, layers=-1, embed_dims=None, freeze_backbone=True, adapter_reduction=2, **kwargs):
         super().__init__(layers=layers, embed_dims=embed_dims, **kwargs)
 
         self.layers = layers

@@ -33,7 +33,16 @@ def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, ba
             log_str += f"{name}: {val.item():.4f}\t"
 
     log_str += f"Time: {batch_time_m.val:.3f}s, {rate:>7.2f}/s ({batch_time_m.avg:.3f}s, {rate_avg:>7.2f}/s)\t"
-    log_str += f"LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}  Data: {data_time_m.val:.3f} ({data_time_m.avg:.3f})"
+    log_str += f"LR: {lr:.3e}, WD0: {wd0:.6e}, WD1: {wd1:.6e}  Data: {data_time_m.val:.3f} ({data_time_m.avg:.3f})\t"
+
+    # Log GPU memory stats (total used as shown in nvidia-smi)
+    if torch.cuda.is_available():
+        device_id = torch.cuda.current_device()
+        free_mem, total_mem = torch.cuda.mem_get_info(device=device_id)
+        used_mem = (total_mem - free_mem) / 1024**3  # Convert to GB
+        total_mem_gb = total_mem / 1024**3
+        log_str += f"GPU{device_id} Mem: {used_mem:.2f}GB / {total_mem_gb:.2f}GB"
+
     _logger.info(log_str)
         
 
