@@ -43,14 +43,17 @@ class RealtimeMonitor:
     def update_metrics(self, epoch, train_metrics, eval_metrics):
         """Update training metrics in shared memory"""
         with self.lock:
-            self.training_data['epoch'].append(epoch)
-            self.training_data['train_loss'].append(train_metrics.get('loss', 0))
-            self.training_data['train_top1'].append(train_metrics.get('top1', 0))
-            self.training_data['train_top5'].append(train_metrics.get('top5', 0))
-            self.training_data['eval_loss'].append(eval_metrics.get('loss', 0))
-            self.training_data['eval_top1'].append(eval_metrics.get('top1', 0))
-            self.training_data['eval_top5'].append(eval_metrics.get('top5', 0))
-            self.training_data['timestamp'].append(time.time())
+            # Manager dict doesn't detect in-place list mutations.
+            # Must reassign the whole list for the proxy to sync.
+            epochs = list(self.training_data['epoch']) + [epoch]
+            self.training_data['epoch'] = epochs
+            self.training_data['train_loss'] = list(self.training_data['train_loss']) + [train_metrics.get('loss', 0)]
+            self.training_data['train_top1'] = list(self.training_data['train_top1']) + [train_metrics.get('top1', 0)]
+            self.training_data['train_top5'] = list(self.training_data['train_top5']) + [train_metrics.get('top5', 0)]
+            self.training_data['eval_loss'] = list(self.training_data['eval_loss']) + [eval_metrics.get('loss', 0)]
+            self.training_data['eval_top1'] = list(self.training_data['eval_top1']) + [eval_metrics.get('top1', 0)]
+            self.training_data['eval_top5'] = list(self.training_data['eval_top5']) + [eval_metrics.get('top5', 0)]
+            self.training_data['timestamp'] = list(self.training_data['timestamp']) + [time.time()]
             
     def start_training(self):
         """Signal that training has started"""
@@ -71,7 +74,7 @@ class RealtimeMonitor:
             
     def monitor_loop(self):
         """Main monitoring loop - runs in separate thread"""
-        print("🚀 Real-time monitor started")
+        print("[START] Real-time monitor started")
         
         while True:
             data = self.get_current_data()
@@ -138,9 +141,9 @@ class RealtimeMonitor:
         # Add status indicators
         title_extra = ""
         if plateau:
-            title_extra += " ⚠️ Plateau detected"
+            title_extra += " [WARNING] Plateau detected"
         if overtime:
-            title_extra += " 🔴 >24hrs"
+            title_extra += " [ALERT] >24hrs"
         if title_extra:
             plt.title(f"Accuracy Progress - Best={self.best_acc:.2f}% @ epoch {int(best_epoch)}{title_extra}")
             
@@ -168,7 +171,7 @@ class RealtimeMonitor:
         
         # Critical warnings
         if overtime and plateau:
-            print("\n🔥 TRAINING LIKELY WASTING GPU TIME 🔥")
+            print("\n[!!] TRAINING LIKELY WASTING GPU TIME [!!]")
             print("Consider killing this job.\n")
             
     def start_monitor_thread(self):
@@ -192,7 +195,7 @@ def start_monitoring():
     monitor = get_monitor()
     monitor.start_training()
     monitor.start_monitor_thread()
-    print("📊 Real-time monitoring activated")
+    print("[INFO] Real-time monitoring activated")
     return monitor
 
 def update_training_metrics(epoch, train_metrics, eval_metrics):
@@ -204,11 +207,11 @@ def stop_monitoring():
     """Stop monitoring - call this when training ends"""
     monitor = get_monitor()
     monitor.stop_training()
-    print("📊 Real-time monitoring stopped")
+    print("[INFO] Real-time monitoring stopped")
 
 # Signal handler for graceful shutdown
 def signal_handler(sig, frame):
-    print('\n🛑 Shutting down monitor...')
+    print('\n[STOP] Shutting down monitor...')
     stop_monitoring()
     sys.exit(0)
 
