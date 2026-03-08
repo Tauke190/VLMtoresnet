@@ -174,7 +174,7 @@ class FastViT_adapter(FastViT_Projector):
 
         # Freeze all non-adapter parameters in the backbone
         # Only adapter parameters, projector and layer scale should be trainable
-        self._freeze_non_adapter_params()
+        # self._freeze_non_adapter_params()
 
     def load_state_dict(self, state_dict, strict):
         # Initialize adapter weights if not in checkpoint (allows backward compatibility)

@@ -75,6 +75,10 @@ class ConvAdapter(nn.Module):
 class AttentionBlock_Adapter(AttentionBlock):
     def __init__(self, dim=-1, reduction_factor=-1, **kwargs):
         super().__init__(dim=dim, **kwargs)
+
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+
         hidden_dim = max(dim // reduction_factor, 8)
 
         self.adapter1 = nn.Sequential(
@@ -126,6 +130,11 @@ class RepMixerBlock_Adapter(RepMixerBlock):
     
     def __init__(self, dim=-1, reduction_factor=-1, **kwargs):
         super().__init__(dim=dim, **kwargs)
+
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+
+       
 
         hidden_dim = max(dim // reduction_factor, 8)
 
