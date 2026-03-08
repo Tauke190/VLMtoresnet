@@ -47,7 +47,7 @@ def evaluate_zeroshot(eval_ctx, model, device, channels_last=None, amp_autocast=
                 images = images.contiguous(memory_format=torch.channels_last)
 
             images = images.float()
-            feats, _, _, _ = backbone(images)
+            feats, _, _, logit_scale = backbone(images)
 
             if isinstance(feats, (tuple, list)):
                 feats = feats[0]
@@ -60,7 +60,7 @@ def evaluate_zeroshot(eval_ctx, model, device, channels_last=None, amp_autocast=
             if feats.dtype != text_features.dtype:
                 text_features = text_features.to(feats.dtype)
 
-            logits = 100.0 * feats @ text_features.T  # [B, num_classes]
+            logits = logit_scale.exp() * feats @ text_features.T  # [B, num_classes]
 
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
 
