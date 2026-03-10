@@ -505,7 +505,8 @@ def parse_args():
                         default="forward_features")
 
     parser.add_argument("--model", required=True)
-    parser.add_argument("--num-classes", type=int, required=True)
+    parser.add_argument("--num-classes", type=int, default=None,
+                        help="Number of output classes. Auto-detected from --dataset if not provided.")
     parser.add_argument("--model-checkpoint", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--data-dir", required=True)
@@ -523,11 +524,32 @@ def parse_args():
 
 
 # ---------------- Main ----------------
+# Mapping of known datasets to their number of classes
+DATASET_NUM_CLASSES = {
+    "food101": 101,
+    "imagenet": 1000,
+    "oxfordpet": 37,
+    "aircraft": 100,
+    "ucf101": 101,
+    "diffusion": 2,
+}
+
+
 def main():
     start_time = time.time()
 
     args = parse_args()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Auto-detect num_classes if not provided
+    if args.num_classes is None:
+        if args.dataset in DATASET_NUM_CLASSES:
+            args.num_classes = DATASET_NUM_CLASSES[args.dataset]
+        else:
+            raise ValueError(
+                f"--num-classes is required for unknown dataset '{args.dataset}'. "
+                f"Known datasets: {list(DATASET_NUM_CLASSES.keys())}"
+            )
 
     print(f"Feature mode: {args.feature_mode}")
     print(f"Using device: {device}")
