@@ -2,7 +2,7 @@ import os
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.transforms import InterpolationMode
-
+from torch import isfinite
 
 class DiffisionImages(Dataset):
     def __init__(
@@ -41,7 +41,7 @@ class DiffisionImages(Dataset):
         self.__build_images__()    
         self.__setup_transform__()
 
-        self.classes = [i for i in range(len(self.captions))] 
+        self.classes = self.captions
         self.class_to_idx = {cls_name: i for i, cls_name in enumerate(self.classes)}
         self.targets = self.labels.copy()
         self.samples = list(zip(self.images, self.labels))

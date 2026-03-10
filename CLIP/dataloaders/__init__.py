@@ -333,9 +333,12 @@ def get_dataloader(dataset_name, transform=None, loader_type = "test", transform
     
     elif dataset_name == "diffision_images":
         root = kwargs.get("root", "./datasets/Diffision_images")
-        caption_file = kwargs.get("caption_file", "caption_2k.txt")
-        sample_folders = kwargs.get("sample_folders", [])
-        num_samples_per_caption = kwargs.get("num_samples_per_caption", 3)
+        caption_file = kwargs.get("caption_file", ("caption_2k.txt", "caption_5k.txt"))
+        sample_folders = kwargs.get("sample_folders", sample_folders=[
+            ('Mul_samples_10_2K', 'Mul_samples_30_2K', 'Mul_samples_50_2K'),
+            ('Mul_samples_40_5K', 'Mul_samples_50_5K')
+        ])
+        num_samples_per_caption = kwargs.get("num_samples_per_caption", 90)
 
         test = DiffisionImages(
             root=root,
