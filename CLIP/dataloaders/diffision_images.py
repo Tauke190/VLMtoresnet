@@ -1,14 +1,10 @@
-import os, random
+import os
 from PIL import Image
-from itertools import chain
 from torch.utils.data import Dataset
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from torchvision.transforms import InterpolationMode
-from itertools import islice
 
 
 class DiffisionImages(Dataset):
-
     def __init__(
         self,
         root="./datasets/Diffision_images",
@@ -20,7 +16,7 @@ class DiffisionImages(Dataset):
         train=True,
         val=False,
         full_set=False,
-        transform="224",
+        transform=None,
         num_samples_per_caption=90,
         train_size=6000,
         test_size=1000           
@@ -31,31 +27,32 @@ class DiffisionImages(Dataset):
         self.train = train
         self.transform = transform
         self.num_samples_per_caption = num_samples_per_caption  
-        self._caption_offset = 0
         self.train_size = train_size
         self.test_size = test_size
         self.full_set = full_set
 
-        if train:
+        if train or full_set:
             self.num_samples_per_caption = 90
         if val:
             self.num_samples_per_caption = 3
         
+        # Load captions and build image paths
         self.__load_captions__()
         self.__build_images__()    
-
         self.__setup_transform__()
+
+        self.classes = [i for i in range(len(self.captions))] 
+        self.class_to_idx = {cls_name: i for i, cls_name in enumerate(self.classes)}
+        self.targets = self.labels.copy()
+        self.samples = list(zip(self.images, self.labels))
 
     def __load_captions__(self):
         self.captions = []
-        
-        for idx, caption_filename in enumerate(self.caption_file):
+        for caption_filename in self.caption_file:
             caption_path = os.path.join(self.root, caption_filename)
-            
             with open(caption_path, 'r', encoding='utf-8') as f:
                 captions = [line.strip() for line in f if line.strip()]
                 self.captions.extend(captions)
-        
         if not self.captions:
             raise FileNotFoundError(f"No valid caption files found in {self.root}")
 
@@ -69,10 +66,8 @@ class DiffisionImages(Dataset):
         for folder in sample_folders:
             if remaining <= 0:
                 break
-
             parts = folder.split("_")
-            folder_max = int(parts[2])  
-
+            folder_max = int(parts[2])
             take = min(folder_max, remaining)
 
             for sample_idx in range(1, take + 1):
@@ -91,15 +86,12 @@ class DiffisionImages(Dataset):
                 for f in os.listdir(sample_dir):
                     if not f.lower().endswith(".png"):
                         continue
-
                     base = os.path.splitext(f)[0]
                     idx = int(base.replace("rohit_caption_", ""))
-
                     if 0 <= idx <= max_caption_index:
                         image_files.append(os.path.join(sample_dir, f))
 
                 image_files = self.__numeric_sort(image_files)
-
                 for caption_i, img_path in enumerate(image_files):
                     if len(per_caption) <= caption_i:
                         per_caption.append([])
@@ -112,7 +104,6 @@ class DiffisionImages(Dataset):
     def __build_images__(self):
         self.images = []
         self.labels = []
-
         all_per_caption_images = []
 
         for sample_folder_tuple in self.sample_folders:
@@ -139,16 +130,13 @@ class DiffisionImages(Dataset):
         assert len(self.images) == len(self.labels)
 
     def __setup_transform__(self):
-        if isinstance(self.transform, str):
-            self.trans = None
-        else:
-            self.trans = self.transform
+        self.trans = self.transform
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, index):
-        img = Image.open(self.images[index])
+        img = Image.open(self.images[index]).convert('RGB')
         if self.trans is not None:
             img = self.trans(img)
         label = self.labels[index]
