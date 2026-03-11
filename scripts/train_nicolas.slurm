@@ -76,7 +76,7 @@ python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $DIFF_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH --log-interval $LOG \
     --validation-eval-interval 1 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
     --native-amp --workers 12 \
-    -b 32 --lr 1e-3 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 >> $OUTPUT_TXT
+    -b 32 --lr 1e-4 --drop-path 0.35 --mixup 0 --cutmix 0 --epochs 50 --input-size 3 224 224 >> $OUTPUT_TXT
   # --freeze-backbone # remove to train entire model 
 
 
