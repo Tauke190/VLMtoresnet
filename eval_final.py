@@ -52,22 +52,22 @@ def load_backbone(args, device):
     print("Creating model from local models package...")
     model_fn = getattr(models, args.model)
     
-    # Handle projector models with special parameters
-    if "projector" in args.model:
-        print("🎯 Detected projector model - using projector parameters")
+    # Vanilla models don't have a projector; all others do
+    if args.model in models.VANILLA_MODELS:
+        model = model_fn(num_classes=args.num_classes)
+    else:
+        print("Detected projector model - using projector parameters")
         model = model_fn(
             num_classes=args.num_classes,
             freeze_backbone=False,  # Don't freeze for evaluation
             clip_dim=768,
             nonscalar_logit_scale=False
         )
-    else:
-        model = model_fn(num_classes=args.num_classes)
 
     # Load pretrained backbone first if available
     pretrained_path = getattr(args, 'pretrained_backbone', None)
     if pretrained_path and os.path.exists(pretrained_path):
-        print(f"🔄 Loading pretrained backbone from: {pretrained_path}")
+        print(f" Loading pretrained backbone from: {pretrained_path}")
         pretrained_state = torch.load(pretrained_path, map_location="cpu")
         if isinstance(pretrained_state, dict):
             if "state_dict" in pretrained_state:
@@ -86,7 +86,7 @@ def load_backbone(args, device):
         
         # Load pretrained backbone
         model.load_state_dict(clean_pretrained, strict=False)
-        print(f"✅ Loaded {len(clean_pretrained)} pretrained backbone weights")
+        print(f" Loaded {len(clean_pretrained)} pretrained backbone weights")
 
     print("Loading checkpoint via torch.load()...")
     state = torch.load(args.model_checkpoint, map_location="cpu")
@@ -107,7 +107,7 @@ def load_backbone(args, device):
             k = k[7:]
         clean_state[k] = v
 
-    print(f"\n🔍 Analyzing checkpoint for frozen backbone training...")
+    print(f"\n Analyzing checkpoint for frozen backbone training...")
     
     # Check if this is a frozen backbone checkpoint
     projector_keys = [k for k in clean_state.keys() if "projector" in k]
@@ -118,9 +118,9 @@ def load_backbone(args, device):
     
     # For frozen backbone training, we might need to load pretrained backbone separately
     if len(projector_keys) > 0 and len(backbone_keys) == 0:
-        print("⚠️  Detected frozen backbone training (only projector weights in checkpoint)")
-        print("💡 You may need to load a pretrained backbone separately for best results")
-        print("🎯 Current evaluation will use randomly initialized backbone")
+        print("  Detected frozen backbone training (only projector weights in checkpoint)")
+        print(" You may need to load a pretrained backbone separately for best results")
+        print(" Current evaluation will use randomly initialized backbone")
     
     # Handle num_classes mismatch for classification head
     if "head.weight" in clean_state and "head.bias" in clean_state:
@@ -128,7 +128,7 @@ def load_backbone(args, device):
         model_head_shape = model.head.weight.shape[0]
         
         if checkpoint_head_shape != model_head_shape:
-            print(f"⚠️  Num classes mismatch detected:")
+            print(f"  Num classes mismatch detected:")
             print(f"   Checkpoint: {checkpoint_head_shape} classes")
             print(f"   Model: {model_head_shape} classes")
             
@@ -137,7 +137,7 @@ def load_backbone(args, device):
                 print(f"   Removing classification head weights from checkpoint...")
                 del clean_state["head.weight"]
                 del clean_state["head.bias"]
-                print("✅ Classification head weights removed - will use random initialization")
+                print(" Classification head weights removed - will use random initialization")
             else:
                 print(f"   Keeping original head weights - will adapt to {model_head_shape} classes")
                 # Adapt head weights to new number of classes
@@ -148,14 +148,14 @@ def load_backbone(args, device):
                     # Truncate head weights
                     clean_state["head.weight"] = old_head_weight[:model_head_shape]
                     clean_state["head.bias"] = old_head_bias[:model_head_shape]
-                    print(f"✅ Head weights truncated from {checkpoint_head_shape} to {model_head_shape} classes")
+                    print(f" Head weights truncated from {checkpoint_head_shape} to {model_head_shape} classes")
                 elif checkpoint_head_shape < model_head_shape:
                     # Pad head weights with random initialization
                     padding_weight = torch.randn(model_head_shape - checkpoint_head_shape, old_head_weight.shape[1])
                     padding_bias = torch.randn(model_head_shape - checkpoint_head_shape)
                     clean_state["head.weight"] = torch.cat([old_head_weight, padding_weight], dim=0)
                     clean_state["head.bias"] = torch.cat([old_head_bias, padding_bias], dim=0)
-                    print(f"✅ Head weights padded from {checkpoint_head_shape} to {model_head_shape} classes")
+                    print(f" Head weights padded from {checkpoint_head_shape} to {model_head_shape} classes")
 
     # Load state dict and handle the return value
     load_result = model.load_state_dict(clean_state, strict=False)
@@ -176,7 +176,7 @@ def load_backbone(args, device):
         # Check if only head keys are missing (expected when num_classes changed)
         head_only = all(k.startswith("head.") for k in missing)
         if head_only:
-            print(f"Missing: {missing}  ← (expected: head was removed due to num_classes mismatch)")
+            print(f"Missing: {missing}   (expected: head was removed due to num_classes mismatch)")
         else:
             print("Missing:", missing[:5])  # Show first 5 missing keys
     if unexpected:
@@ -288,7 +288,7 @@ def extract_features(loader, backbone, device, mode="forward_features"):
 # ---------------- Zero-Shot Evaluation ----------------
 def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128, num_workers=4):
     """Setup CLIP zero-shot evaluation"""
-    print(f"🎯 Setting up zero-shot evaluation for {dataset_name}...")
+    print(f" Setting up zero-shot evaluation for {dataset_name}...")
     
     # Load CLIP model for text features (must match training: ViT-L/14 → 768-dim)
     clip_model, _ = clip.load("ViT-L/14", device=device, jit=False)
@@ -301,8 +301,8 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
     template_name = template_aliases.get(dataset_name, dataset_name)
     template_file = os.path.join("CLIP", "dataloaders", "templates", f"{template_name}.txt")
     if not os.path.exists(template_file):
-        print(f"⚠️  Template file not found: {template_file}")
-        print("💡 Using default CLIP template")
+        print(f"  Template file not found: {template_file}")
+        print(" Using default CLIP template")
         templates = ["a photo of a {}."]
     else:
         with open(template_file, 'r') as f:
@@ -329,17 +329,17 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
         else:
             # Food101 class names need to be extracted differently
             class_names = [str(i) for i in range(101)]  # Fallback
-            print("⚠️  Using fallback class names for Food101")
+            print("  Using fallback class names for Food101")
     elif dataset_name == "ucf101":
         # Read class names from the class info file (same file the dataloader references)
         ucf_classes_file = os.path.join("CLIP", "dataloaders", "classes", "ucf101.txt")
         if os.path.exists(ucf_classes_file):
             with open(ucf_classes_file, 'r') as f:
                 class_names = [line.strip() for line in f.readlines() if line.strip()]
-            print(f"✅ Loaded {len(class_names)} UCF101 class names from {ucf_classes_file}")
+            print(f" Loaded {len(class_names)} UCF101 class names from {ucf_classes_file}")
         else:
             class_names = [str(i) for i in range(101)]  # Fallback
-            print(f"⚠️  UCF101 class file not found: {ucf_classes_file}, using fallback")
+            print(f"  UCF101 class file not found: {ucf_classes_file}, using fallback")
     elif dataset_name == "aircraft":
         dataset = aircraft_dataloader(root=dataset_root, train=False, transform=None)
         if hasattr(dataset, 'classes'):
@@ -348,12 +348,12 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
             class_names = dataset._dataset_classes
         else:
             class_names = [str(i) for i in range(100)]  # Fallback
-            print("⚠️  Using fallback class names for Aircraft")
+            print("  Using fallback class names for Aircraft")
     else:
         raise ValueError(f"Unsupported dataset for zero-shot: {dataset_name}")
     
-    print(f"📝 Found {len(class_names)} classes")
-    print(f"📝 Using {len(templates)} templates")
+    print(f" Found {len(class_names)} classes")
+    print(f" Using {len(templates)} templates")
     
     # Create text features
     with torch.no_grad():
@@ -405,13 +405,13 @@ def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128
         'loader': test_loader
     }
     
-    print(f"✅ Zero-shot evaluation setup complete")
+    print(f" Zero-shot evaluation setup complete")
     return eval_ctx
 
 
 def run_zeroshot_evaluation(eval_ctx, model, device):
     """Run CLIP zero-shot evaluation"""
-    print("🎯 Running zero-shot evaluation...")
+    print(" Running zero-shot evaluation...")
     
     text_features = eval_ctx['text_features'].to(device)
     loader = eval_ctx['loader']
@@ -444,7 +444,7 @@ def run_zeroshot_evaluation(eval_ctx, model, device):
             top1_m.update(acc1.item(), images.size(0))
             top5_m.update(acc5.item(), images.size(0))
     
-    print(f"✅ Zero-shot evaluation complete")
+    print(f" Zero-shot evaluation complete")
     return top1_m.avg, top5_m.avg
 
 
@@ -555,9 +555,9 @@ def main():
     print(f"Using device: {device}")
     
     if args.feature_mode == "projector":
-        print("🎯 Using CLIP-space projector embeddings for linear probing")
+        print(" Using CLIP-space projector embeddings for linear probing")
     elif args.feature_mode == "zeroshot":
-        print("🎯 Using CLIP zero-shot evaluation")
+        print(" Using CLIP zero-shot evaluation")
 
     # For linear probing, we need both train and test loaders
     if args.feature_mode == "zeroshot":
@@ -579,18 +579,18 @@ def main():
     if args.feature_mode == "projector":
         if hasattr(backbone, "projector"):
             if hasattr(backbone.projector, "out_features"):
-                print(f"✅ Projector found: CLIP dim = {backbone.projector.out_features}")
+                print(f" Projector found: CLIP dim = {backbone.projector.out_features}")
             elif hasattr(backbone.projector, "fc2") and hasattr(backbone.projector.fc2, "out_features"):
-                print(f"✅ Projector found: CLIP dim = {backbone.projector.fc2.out_features}")
+                print(f" Projector found: CLIP dim = {backbone.projector.fc2.out_features}")
             else:
-                print(f"✅ Projector found: CLIP dim = 768 (default)")
+                print(f" Projector found: CLIP dim = 768 (default)")
         else:
-            print("❌ No projector found in model!")
+            print(" No projector found in model!")
     elif args.feature_mode == "zeroshot":
         if hasattr(backbone, "projector"):
-            print(f"✅ Projector found for zero-shot evaluation")
+            print(f" Projector found for zero-shot evaluation")
         else:
-            print("❌ No projector found - zero-shot evaluation requires projector model!")
+            print(" No projector found - zero-shot evaluation requires projector model!")
 
     if args.feature_mode == "classifier":
         evaluate_classifier(backbone, test_loader, device)
@@ -600,7 +600,7 @@ def main():
         # Run zero-shot evaluation
         acc1_zeroshot, acc5_zeroshot = run_zeroshot_evaluation(eval_ctx, backbone, device)
         
-        print(f"\n🎯 Zero-Shot Evaluation Results")
+        print(f"\n Zero-Shot Evaluation Results")
         print(f"Top-1 Accuracy: {acc1_zeroshot:.3f}%")
         print(f"Top-5 Accuracy: {acc5_zeroshot:.3f}%")
         print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
@@ -632,7 +632,7 @@ def main():
     top5 = np.argsort(probs, axis=1)[:, -5:]
     acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
 
-    print(f"\n🎯 Linear Probe Evaluation Results")
+    print(f"\n Linear Probe Evaluation Results")
     print(f"Top-1 Accuracy: {acc1:.3f}%")
     print(f"Top-5 Accuracy: {acc5:.3f}%")
     print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
