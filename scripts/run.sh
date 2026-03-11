@@ -28,6 +28,7 @@ VAL_SET="food101"
 VAL_PATH=/mnt/SSD2/food-101
 OUTPUT=./checkpoints
 NUM_GPU=1
+NUM_GPU=1
 LOG=100
 PORT=12351
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens, fastvit_sa36_lora_pp]

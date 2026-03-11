@@ -1,11 +1,11 @@
 # python Scripts/run.sh
 conda activate fastvit
 
- #[ Models - [fastvit_sa36 fastvit_sa36_adapter , fastvit_sa36_lrtokens]
+ #[ Models - [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens]
 
 # --- Configuration ---
-MODEL=fastvit_sa36_adapter
-CHECKPOINT=checkpoints/fastvit-adapter/model_best_zeroshot.pth.tar
+MODEL=fastvit_sa36_lrtokens
+CHECKPOINT=checkpoints/fastvit_lrtokens/fastvit_sa36_lrtokens_distillation.pth.tar
 EVAL_MODE=linearprobe   # [ logit , linearprobe , zeroshot ]
 
 # --- Dataset name -> path mapping ---

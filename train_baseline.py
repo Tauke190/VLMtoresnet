@@ -72,6 +72,8 @@ from Functions.train import train_one_epoch
 from Functions.eval import run_zeroshot_eval, validate
 from Functions.argument import _parse_args
 from Functions.losses import get_loss_manager_for_method
+from Functions.indexed_dataset import IndexedDatasetWrapper, collate_with_indices
+from Functions.crd_loss import CRDLoss
 from Functions.setup import (
     build_imagenet_clip_text_features, build_clip_text_features, 
     setup_validation_zeroshot, setup_model, setup_distributed, basic_setup
@@ -152,8 +154,8 @@ def main():
             world_size=args.world_size,
         )
 
-        # Keep CLIP model for MSE loss in distillation mode
-        if method == 'distillation':
+        # Keep CLIP model for feature extraction in distillation/CRD modes
+        if method in ('distillation', 'contrastive_distillation'):
             clip_model_for_mse = _clip_model
             if args.local_rank == 0:
                 print(f"[DEBUG] CLIP model kept for MSE loss (image encoder)")
@@ -352,7 +354,13 @@ def main():
         print( f"Dbugging:: Training:  {orig_size} --> {new_size} ")
         
 
-    dataset_eval = None 
+    # Wrap dataset to return sample indices for CRD memory bank
+    if method == 'contrastive_distillation':
+        dataset_train = IndexedDatasetWrapper(dataset_train)
+        if args.local_rank == 0:
+            _logger.info(f"[CRD] Wrapped dataset with IndexedDatasetWrapper ({len(dataset_train)} samples)")
+
+    dataset_eval = None
     if args.vanilla_eval:
         dataset_eval = create_dataset(
             args.dataset,
@@ -398,12 +406,27 @@ def main():
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config["interpolation"]
+
+    # Disable prefetcher for CRD: timm's fast_collate only handles (image, target) 2-tuples,
+    # but CRD needs (image, target, index) 3-tuples from IndexedDatasetWrapper.
+    use_prefetcher = args.prefetcher
+    collate_fn = None
+    pin_memory = args.pin_mem
+
+    if method == 'contrastive_distillation':
+        use_prefetcher = False
+        args.prefetcher = False  # Sync args so train loop knows to manually move tensors to GPU
+        collate_fn = collate_with_indices
+        pin_memory = True  # Force pin_memory=True for custom collate to ensure proper GPU transfer
+        if args.local_rank == 0:
+            _logger.info("[CRD] Prefetcher disabled, using collate_with_indices for 3-tuple batches (pin_memory=True)")
+
     loader_train = create_loader(
         dataset_train,
         input_size=data_config["input_size"],
         batch_size=args.batch_size,
         is_training=True,
-        use_prefetcher=args.prefetcher,
+        use_prefetcher=use_prefetcher,
         no_aug=args.no_aug,
         re_prob=args.reprob,
         re_mode=args.remode,
@@ -423,7 +446,7 @@ def main():
         num_workers=args.workers,
         distributed=args.distributed,
         collate_fn=collate_fn,
-        pin_memory=args.pin_mem,
+        pin_memory=pin_memory,
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
     )
@@ -503,6 +526,40 @@ def main():
             args.distillation_tau,
         )
 
+    # -----------------------------------------------------------------
+    # Initialize CRD module for contrastive distillation
+    crd_module = None
+    if method == 'contrastive_distillation':
+        # CRD hyperparameters (hardcoded)
+        # feat_dim=768: matches CLIP ViT-L/14 and student projected_embed dimension
+        # nce_k=16384: number of negative samples per positive
+        # nce_t=0.07: temperature for contrastive scoring
+        # nce_m=0.5: momentum for memory bank updates
+        n_data = len(dataset_train)
+        crd_module = CRDLoss(
+            n_data=n_data,
+            feat_dim=768,
+            nce_k=min(16384, n_data - 1),  # can't have more negatives than data points
+            nce_t=0.07,
+            nce_m=0.5,
+        ).cuda()
+
+        # NOTE: Don't wrap CRDLoss in DDP because it has no learnable parameters
+        # (only buffers: memory_v1, memory_v2). Each GPU maintains its own memory bank,
+        # updated via in-place momentum updates. This is a reasonable approximation.
+
+        # Add CRD learnable parameters to optimizer so they get updated
+        optimizer.add_param_group({
+            'params': list(crd_module.parameters()),
+            'lr': optimizer.param_groups[0]['lr'],
+            'weight_decay': 0.0,  # no weight decay on memory banks
+        })
+
+        if args.local_rank == 0:
+            _logger.info(f"[CRD] Initialized CRDLoss: n_data={n_data}, feat_dim=768, nce_k=16384, nce_t=0.07, nce_m=0.5")
+            crd_param_count = sum(p.numel() for p in crd_module.parameters())
+            _logger.info(f"[CRD] CRD parameters: {crd_param_count:,} (added to optimizer)")
+
     if args.local_rank == 0:
         _logger.info("[PROGRESS] Creating loss manager...")
     loss_manager = get_loss_manager_for_method(
@@ -512,6 +569,8 @@ def main():
         clip_text_features=clip_text_features,
         attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
         mse_distill_weight=getattr(args, 'mse_distill_weight', 1.0),
+        crd_module=crd_module,
+        crd_weight=getattr(args, 'crd_weight', 1.0),
     )
     if args.local_rank == 0:
         _logger.info("[PROGRESS] Loss manager created")
@@ -571,13 +630,14 @@ def main():
         if args.vanilla_eval:
             eval_metrics_vanilla = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
 
-        # Baseline vanilla models cant do zero shot text based eval 
+        # Baseline vanilla models cant do zero shot text based eval
         if args.model not in models.VANILLA_MODELS:
-            ##### Zero shot Text Based evaluation 
+            ##### Zero shot Text Based evaluation
             acc1_zeroshot, acc5_zeroshot = run_zeroshot_eval( zeroshot_eval_ctx, args, model, when="epoch", epoch=-1, has_wandb=has_wandb,)
             eval_metrics_vanilla.update({'acc1_zeroshot': acc1_zeroshot, 'acc5_zeroshot': acc5_zeroshot})
         print(eval_metrics_vanilla)
-        
+
+
     # pdb.set_trace()
     acc1_zeroshot = None
     eval_metrics = {}  # Initialize before loop to prevent NameError on non-validation epochs
