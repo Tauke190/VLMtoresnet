@@ -115,7 +115,7 @@ DATASET_PATH=$DIFF_PATH
 ########################
 # CLIP ZERO SHOT (Text Based)
 ########################
-python zeroshot_eval.py --model clip --zeroshot-dataset $DATASET --zeroshot-data-dir $DATASET_PATH
+python eval_final.py --feature-mode zeroshot --model clip --dataset $DATASET --data-dir $DATASET_PATH
 
 ########################
 # FastViT BACKBONE PROBE
@@ -159,33 +159,37 @@ python eval_final.py --model $FASTVIT_MODEL --dataset $DATASET --data-dir $DATAS
 # FastViT ZERO SHOT (PROJECTOR) 
 ########################
 
-python zeroshot_eval.py \
---model fastvit_sa36 \
---zeroshot-dataset food101 \
---zeroshot-data-dir $FOOD_PATH \
---model-checkpoint $FASTVIT_CKPT \
---projector-checkpoint $PROJECTOR_CKPT
+python eval_final.py \
+--feature-mode zeroshot \
+--model fastvit_sa36_projector \
+--dataset food101 \
+--data-dir $FOOD_PATH \
+--pretrained-backbone $FASTVIT_CKPT \
+--model-checkpoint $PROJECTOR_CKPT
 
-python zeroshot_eval.py \
---model fastvit_sa36 \
---zeroshot-dataset aircraft \
---zeroshot-data-dir $AIRCRAFT_PATH \
---model-checkpoint $FASTVIT_CKPT \
---projector-checkpoint $PROJECTOR_CKPT
+python eval_final.py \
+--feature-mode zeroshot \
+--model fastvit_sa36_projector \
+--dataset aircraft \
+--data-dir $AIRCRAFT_PATH \
+--pretrained-backbone $FASTVIT_CKPT \
+--model-checkpoint $PROJECTOR_CKPT
 
-python zeroshot_eval.py \
---model fastvit_sa36 \
---zeroshot-dataset imagenet \
---zeroshot-data-dir $IMAGENET_PATH \
---model-checkpoint $FASTVIT_CKPT \
---projector-checkpoint $PROJECTOR_CKPT
+python eval_final.py \
+--feature-mode zeroshot \
+--model fastvit_sa36_projector \
+--dataset imagenet \
+--data-dir $IMAGENET_PATH \
+--pretrained-backbone $FASTVIT_CKPT \
+--model-checkpoint $PROJECTOR_CKPT
 
-python zeroshot_eval.py \
---model fastvit_sa36 \
---zeroshot-dataset diffusion \
---zeroshot-data-dir $DIFF_PATH \
---model-checkpoint $FASTVIT_CKPT \
---projector-checkpoint $PROJECTOR_CKPT
+python eval_final.py \
+--feature-mode zeroshot \
+--model fastvit_sa36_projector \
+--dataset diffusion \
+--data-dir $DIFF_PATH \
+--pretrained-backbone $FASTVIT_CKPT \
+--model-checkpoint $PROJECTOR_CKPT
 
 
 
