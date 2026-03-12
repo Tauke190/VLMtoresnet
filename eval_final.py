@@ -1,6 +1,6 @@
 import argparse
 import os
-
+​
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -11,44 +11,44 @@ import time
 import logging
 import models
 import clip
-
+​
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
-
+​
 from CLIP.dataloaders.aircraft import aircraft as aircraft_dataloader
 from CLIP.dataloaders.oxford_pets import OxfordPets
 from CLIP.dataloaders.food101 import Food101
 from CLIP.dataloaders.ucf101 import UCF101
 from CLIP.dataloaders import DiffisionImages
-
-
+​
+​
 # ---------------- Utils ----------------
 def count_parameters(model):
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total, trainable
-
+​
 class AverageMeter:
     """Computes and stores the average and current value"""
     def __init__(self):
         self.reset()
-
+​
     def reset(self):
         self.val = 0
         self.avg = 0
         self.sum = 0
         self.count = 0
-
+​
     def update(self, val, n=1):
         self.val = val
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-
-
+​
+​
 # ---------------- Backbone ----------------
 def load_backbone(args, device):
-
+​
     print("Creating model from local models package...")
     model_fn = getattr(models, args.model)
     
@@ -63,7 +63,7 @@ def load_backbone(args, device):
             clip_dim=768,
             nonscalar_logit_scale=False
         )
-
+​
     # Load pretrained backbone first if available
     pretrained_path = getattr(args, 'pretrained_backbone', None)
     if pretrained_path and os.path.exists(pretrained_path):
@@ -87,10 +87,10 @@ def load_backbone(args, device):
         # Load pretrained backbone
         model.load_state_dict(clean_pretrained, strict=False)
         print(f" Loaded {len(clean_pretrained)} pretrained backbone weights")
-
+​
     print("Loading checkpoint via torch.load()...")
     state = torch.load(args.model_checkpoint, map_location="cpu")
-
+​
     if isinstance(state, dict):
         if "state_dict_ema" in state:
             state_dict = state["state_dict_ema"]
@@ -100,13 +100,13 @@ def load_backbone(args, device):
             state_dict = state["model"]
     else:
         state_dict = state
-
+​
     clean_state = {}
     for k, v in state_dict.items():
         if k.startswith("module."):
             k = k[7:]
         clean_state[k] = v
-
+​
     print(f"\n Analyzing checkpoint for frozen backbone training...")
     
     # Check if this is a frozen backbone checkpoint
@@ -156,7 +156,7 @@ def load_backbone(args, device):
                     clean_state["head.weight"] = torch.cat([old_head_weight, padding_weight], dim=0)
                     clean_state["head.bias"] = torch.cat([old_head_bias, padding_bias], dim=0)
                     print(f" Head weights padded from {checkpoint_head_shape} to {model_head_shape} classes")
-
+​
     # Load state dict and handle the return value
     load_result = model.load_state_dict(clean_state, strict=False)
     
@@ -168,7 +168,7 @@ def load_backbone(args, device):
         unexpected = [k for k in clean_state if k not in model_state_dict]
     else:
         missing, unexpected = load_result
-
+​
     print("\n===== CHECKPOINT LOAD REPORT =====")
     print("Missing keys:", len(missing))
     print("Unexpected keys:", len(unexpected))
@@ -182,20 +182,20 @@ def load_backbone(args, device):
     if unexpected:
         print("Unexpected:", unexpected[:5])  # Show first 5 unexpected keys
     print("==================================\n")
-
+​
     model.to(device)
     model.eval()
-
+​
     print(f"Backbone ready: {args.model}")
     return model
-
-
+​
+​
 # ---------------- Data ----------------
 def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
-
+​
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
     CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
-
+​
     preprocess = transforms.Compose(
         [
             transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
@@ -204,61 +204,61 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
             transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
         ]
     )
-
+​
     if dataset_name == "aircraft":
         train_ds = aircraft_dataloader(root=dataset_root, train=True, transform=preprocess)
         test_ds = aircraft_dataloader(root=dataset_root, train=False, transform=preprocess)
-
+​
     elif dataset_name == "oxfordpet":
         train_ds = OxfordPets(root=dataset_root, train=True, transform=preprocess)
         test_ds = OxfordPets(root=dataset_root, train=False, transform=preprocess)
-
+​
     elif dataset_name == "food101":
         train_ds = Food101(root=dataset_root, train=True, transform=preprocess)
         test_ds = Food101(root=dataset_root, train=False, transform=preprocess)
-
+​
     elif dataset_name == "imagenet":
         train_ds = ImageFolder(os.path.join(dataset_root, "train"), transform=preprocess)
         test_ds = ImageFolder(os.path.join(dataset_root, "validation"), transform=preprocess)
-
+​
     elif dataset_name == "ucf101":
         train_ds = UCF101(root=dataset_root, train=True, transform=preprocess)
         test_ds = UCF101(root=dataset_root, train=False, transform=preprocess)
-
+​
     elif dataset_name == "diffusion":
         train_ds = DiffisionImages(root=dataset_root, train=True, transform=preprocess)
         test_ds = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
-
+​
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
-
+​
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
                               num_workers=num_workers, pin_memory=True)
-
+​
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
                              num_workers=num_workers, pin_memory=True)
-
+​
     return train_loader, test_loader
-
-
+​
+​
 # ---------------- Feature extraction ----------------
 def extract_features(loader, backbone, device, mode="forward_features"):
     all_features, all_labels = [], []
     model = backbone.module if hasattr(backbone, "module") else backbone
     model.eval()
-
+​
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Extracting features"):
             images = images.to(device)
-
+​
             if mode == "backbone1" and hasattr(model, "forward_backbone"):
                 feats = model.forward_backbone(images)
                 B, C, H, W = feats.shape
                 feats = feats.reshape(B, C, -1).mean(-1)
-
+​
             elif mode == "classification_neck" and hasattr(model, "forward_classification_neck"):
                 feats = model.forward_classification_neck(images)
-
+​
             elif mode == "projector" and hasattr(model, "projector"):
                 # Extract CLIP-space projector embeddings
                 outputs = model(images)
@@ -268,186 +268,403 @@ def extract_features(loader, backbone, device, mode="forward_features"):
                     feats = projected_embed
                 else:
                     feats = outputs
-
+​
             else:
                 feats = model.forward_features(images) if hasattr(model, "forward_features") else model(images)
-
+​
                 if isinstance(feats, (tuple, list)):
                     feats = feats[0]
                 if feats.ndim == 4:
                     feats = feats.mean(dim=[2, 3])
-
+​
             feats = F.normalize(feats.float(), dim=-1)
-
+​
             all_features.append(feats.cpu())
             all_labels.append(labels.cpu())
-
+​
     return torch.cat(all_features).numpy(), torch.cat(all_labels).numpy()
-
-
-# ---------------- Zero-Shot Evaluation ----------------
-def setup_zeroshot_evaluation(dataset_name, dataset_root, device, batch_size=128, num_workers=4):
-    """Setup CLIP zero-shot evaluation"""
-    print(f" Setting up zero-shot evaluation for {dataset_name}...")
-    
-    # Load CLIP model for text features (must match training: ViT-L/14 → 768-dim)
-    clip_model, _ = clip.load("ViT-L/14", device=device, jit=False)
-    clip_model.eval()
-    
-    # Load templates (handle naming differences: imagenet -> imagenet1k, etc.)
-    template_aliases = {
-        "imagenet": "imagenet1k",
-    }
+​
+def _load_diffusion_captions(dataset_root):
+    """Load captions from the diffusion dataset caption files."""
+    captions_2 = os.path.join(dataset_root, "caption_2k.txt")
+    captions_5 = os.path.join(dataset_root, "caption_5k.txt")
+    captions = []
+    for path in (captions_2, captions_5):
+        with open(path, "r") as f:
+            captions.extend(line.strip() for line in f if line.strip())
+    return captions
+​
+​
+def _build_diffusion_text_features_fastvit_x(dataset_root, clip_model, device):
+    """
+    Build text features for the diffusion dataset using caption-per-sample
+    matching (not class templates). Captions are encoded via the shared CLIP
+    text encoder that was loaded alongside the FastViT-X projector checkpoint.
+​
+    Returns:
+        text_features : Tensor [N, clip_dim], float32, L2-normalised
+        captions       : list[str]  – the ordered caption list
+    """
+    all_captions = _load_diffusion_captions(dataset_root)
+​
+    # The DiffisionImages dataloader splits: first 6 000 → train, last 1 000 → test
+    # We need the test slice for zero-shot evaluation
+    test_captions = all_captions[-1000:]
+    print(f" Diffusion captions (test): {len(test_captions)}")
+​
+    text_tokens = clip.tokenize(test_captions).to(device)
+    with torch.no_grad():
+        text_features = clip_model.encode_text(text_tokens)
+​
+    text_features = F.normalize(text_features.float(), dim=-1)
+    return text_features, test_captions
+​
+​
+def _build_template_text_features_fastvit_x(dataset_name, dataset_root, clip_model, device):
+    """
+    Build averaged template-based text features for standard classification
+    datasets using the shared CLIP text encoder.
+    """
+    template_aliases = {"imagenet": "imagenet1k"}
     template_name = template_aliases.get(dataset_name, dataset_name)
-    template_file = os.path.join("CLIP", "dataloaders", "templates", f"{template_name}.txt")
+    template_file = os.path.join(
+        "CLIP", "dataloaders", "templates", f"{template_name}.txt"
+    )
+​
     if not os.path.exists(template_file):
         print(f"  Template file not found: {template_file}")
-        print(" Using default CLIP template")
         templates = ["a photo of a {}."]
     else:
-        with open(template_file, 'r') as f:
-            templates = [line.strip() for line in f.readlines() if line.strip()]
-    
-    # Get class names
+        with open(template_file, "r") as f:
+            templates = [ln.strip() for ln in f if ln.strip()]
+​
+    # Resolve class names per dataset
     if dataset_name == "imagenet":
-        # Read ImageNet class names from local file (timm's ImageDataset has no .classes)
-        classes_file = os.path.join(os.path.dirname(__file__), "misc", "imagenet_classes.txt")
-        if os.path.exists(classes_file):
-            with open(classes_file, 'r') as f:
-                class_names = [line.strip() for line in f.readlines() if line.strip()]
-        else:
-            raise FileNotFoundError(f"ImageNet class names file not found: {classes_file}")
+        classes_file = os.path.join(
+            os.path.dirname(__file__), "misc", "imagenet_classes.txt"
+        )
+        if not os.path.exists(classes_file):
+            raise FileNotFoundError(
+                f"ImageNet class names file not found: {classes_file}"
+            )
+        with open(classes_file, "r") as f:
+            class_names = [ln.strip() for ln in f if ln.strip()]
+​
     elif dataset_name == "food101":
         dataset = Food101(root=dataset_root, train=False, transform=None)
-        # Food101 stores class names in .categories
-        if hasattr(dataset, 'categories'):
-            class_names = dataset.categories
-        elif hasattr(dataset, 'classes'):
-            class_names = dataset.classes
-        elif hasattr(dataset, '_dataset_classes'):
-            class_names = dataset._dataset_classes
-        else:
-            # Food101 class names need to be extracted differently
-            class_names = [str(i) for i in range(101)]  # Fallback
-            print("  Using fallback class names for Food101")
+        class_names = (
+            dataset.categories
+            if hasattr(dataset, "categories")
+            else getattr(dataset, "classes", [str(i) for i in range(101)])
+        )
+​
     elif dataset_name == "ucf101":
-        # Read class names from the class info file (same file the dataloader references)
-        ucf_classes_file = os.path.join("CLIP", "dataloaders", "classes", "ucf101.txt")
-        if os.path.exists(ucf_classes_file):
-            with open(ucf_classes_file, 'r') as f:
-                class_names = [line.strip() for line in f.readlines() if line.strip()]
-            print(f" Loaded {len(class_names)} UCF101 class names from {ucf_classes_file}")
+        ucf_file = os.path.join("CLIP", "dataloaders", "classes", "ucf101.txt")
+        if os.path.exists(ucf_file):
+            with open(ucf_file, "r") as f:
+                class_names = [ln.strip() for ln in f if ln.strip()]
         else:
-            class_names = [str(i) for i in range(101)]  # Fallback
-            print(f"  UCF101 class file not found: {ucf_classes_file}, using fallback")
+            class_names = [str(i) for i in range(101)]
+​
     elif dataset_name == "aircraft":
         dataset = aircraft_dataloader(root=dataset_root, train=False, transform=None)
-        if hasattr(dataset, 'classes'):
-            class_names = dataset.classes
-        elif hasattr(dataset, '_dataset_classes'):
-            class_names = dataset._dataset_classes
-        else:
-            class_names = [str(i) for i in range(100)]  # Fallback
-            print("  Using fallback class names for Aircraft")
+        class_names = getattr(dataset, "classes", [str(i) for i in range(100)])
+​
+    elif dataset_name == "oxfordpet":
+        dataset = OxfordPets(root=dataset_root, train=False, transform=None)
+        class_names = getattr(dataset, "classes", [str(i) for i in range(37)])
+​
     else:
-        raise ValueError(f"Unsupported dataset for zero-shot: {dataset_name}")
-    
-    print(f" Found {len(class_names)} classes")
-    print(f" Using {len(templates)} templates")
-    
-    # Create text features
+        raise ValueError(
+            f"Unsupported dataset for template-based zero-shot: {dataset_name}"
+        )
+​
+    print(f" Classes: {len(class_names)} | Templates: {len(templates)}")
+​
     with torch.no_grad():
         text_features = []
         for classname in class_names:
-            # Use multiple templates per class
-            texts = [template.format(classname.replace('_', ' ')) for template in templates]
+            texts = [t.format(classname.replace("_", " ")) for t in templates]
             tokens = clip.tokenize(texts).to(device)
-            class_text_features = clip_model.encode_text(tokens)
-            class_text_features = class_text_features / class_text_features.norm(dim=-1, keepdim=True)
-            class_text_features = class_text_features.mean(dim=0)
-            class_text_features = class_text_features / class_text_features.norm(dim=-1, keepdim=True)
-            text_features.append(class_text_features)
-        
-        text_features = torch.stack(text_features, dim=0).float()  # [num_classes, clip_dim] cast to float32
-    
-    # Setup data loader
+            cls_feats = clip_model.encode_text(tokens)
+            cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
+            cls_feats = cls_feats.mean(dim=0)
+            cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
+            text_features.append(cls_feats)
+​
+        text_features = torch.stack(text_features, dim=0).float()  # [C, D]
+​
+    return text_features, class_names
+​
+​
+def setup_zeroshot_evaluation_fastvit_x(
+    dataset_name, dataset_root, device, batch_size=128, num_workers=4
+):
+    print(f" [FastViT-X] Setting up zero-shot evaluation for {dataset_name}...")
+​
+    clip_model, clip_preprocess = clip.load("ViT-L/14", device=device, jit=False)
+    clip_model.eval()
+​
+    # CLIP normalisation pipeline (override clip_preprocess to ensure 224 crop)
     CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
-    CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
-    
+    CLIP_STD  = (0.26862954, 0.26130258, 0.27577711)
     preprocess = transforms.Compose([
         transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
     ])
-    
-    if dataset_name == "imagenet":
-        test_dataset = ImageFolder(os.path.join(dataset_root, "validation"), transform=preprocess)
-    elif dataset_name == "food101":
-        test_dataset = Food101(root=dataset_root, train=False, transform=preprocess)
-    elif dataset_name == "ucf101":
-        test_dataset = UCF101(root=dataset_root, train=False, transform=preprocess)
-    elif dataset_name == "aircraft":
-        test_dataset = aircraft_dataloader(root=dataset_root, train=False, transform=preprocess)
-    
+​
+    # ---------- text features ----------
+    if dataset_name == "diffusion":
+        text_features, class_info = _build_diffusion_text_features_fastvit_x(
+            dataset_root, clip_model, device
+        )
+        test_dataset = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
+    else:
+        text_features, class_info = _build_template_text_features_fastvit_x(
+            dataset_name, dataset_root, clip_model, device
+        )
+        if dataset_name == "imagenet":
+            test_dataset = ImageFolder(
+                os.path.join(dataset_root, "validation"), transform=preprocess
+            )
+        elif dataset_name == "food101":
+            test_dataset = Food101(root=dataset_root, train=False, transform=preprocess)
+        elif dataset_name == "ucf101":
+            test_dataset = UCF101(root=dataset_root, train=False, transform=preprocess)
+        elif dataset_name == "aircraft":
+            test_dataset = aircraft_dataloader(
+                root=dataset_root, train=False, transform=preprocess
+            )
+        elif dataset_name == "oxfordpet":
+            test_dataset = OxfordPets(root=dataset_root, train=False, transform=preprocess)
+        else:
+            raise ValueError(f"Unsupported dataset for FastViT-X zero-shot: {dataset_name}")
+​
     test_loader = DataLoader(
-        test_dataset, 
-        batch_size=batch_size, 
+        test_dataset,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers, 
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
     )
-    
+​
     eval_ctx = {
-        'text_features': text_features,
-        'class_names': class_names,
-        'templates': templates,
-        'loader': test_loader
+        "text_features": text_features,
+        "class_info": class_info,
+        "loader": test_loader,
+        "dataset_name": dataset_name,
+        "is_diffusion": dataset_name == "diffusion",
     }
-    
-    print(f" Zero-shot evaluation setup complete")
+​
+    print(" [FastViT-X] Zero-shot evaluation setup complete")
     return eval_ctx
-
-
-def run_zeroshot_evaluation(eval_ctx, model, device):
-    """Run CLIP zero-shot evaluation"""
-    print(" Running zero-shot evaluation...")
-    
-    text_features = eval_ctx['text_features'].to(device)
-    loader = eval_ctx['loader']
-    
+​
+​
+def run_zeroshot_evaluation_fastvit_x(eval_ctx, model, device):
+    print(" [FastViT-X] Running zero-shot evaluation...")
+​
+    text_features = eval_ctx["text_features"].to(device)
+    loader = eval_ctx["loader"]
+​
     top1_m = AverageMeter()
     top5_m = AverageMeter()
-    
+​
     model.eval()
     with torch.no_grad():
-        for images, targets in tqdm(loader, desc="Zero-shot evaluation"):
-            images = images.to(device, non_blocking=True)
+        for images, targets in tqdm(loader, desc="[FastViT-X] Zero-shot"):
+            images  = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
-            
-            # Extract image features from projector model
+​
             outputs = model(images)
-            if isinstance(outputs, tuple):
-                image_features = outputs[0]  # CLIP embeddings
-            else:
-                image_features = outputs
-            
-            # Normalize features
-            image_features = image_features / (image_features.norm(dim=-1, keepdim=True) + 1e-6)
-            
-            # Compute similarity (ensure matching dtypes)
+            image_features = outputs[0] if isinstance(outputs, tuple) else outputs
+            image_features = image_features / (
+                image_features.norm(dim=-1, keepdim=True) + 1e-6
+            )
+​
             logits = 100.0 * image_features.float() @ text_features.T
-            
-            # Calculate accuracy
+​
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
-            
             top1_m.update(acc1.item(), images.size(0))
             top5_m.update(acc5.item(), images.size(0))
-    
-    print(f" Zero-shot evaluation complete")
+​
+    print(" [FastViT-X] Zero-shot evaluation complete")
     return top1_m.avg, top5_m.avg
-
-
+​
+​
+def _build_diffusion_text_features_clip(dataset_root, clip_model, device, train=False):
+    all_captions = _load_diffusion_captions(dataset_root)
+    # train slice: first 6 000; test slice: last 1 000
+    captions_slice = all_captions[:6000] if train else all_captions[-1000:]
+    print(f" Diffusion captions ({'train' if train else 'test'}): {len(captions_slice)}")
+​
+    text_tokens = clip.tokenize(captions_slice).to(device)
+    with torch.no_grad():
+        text_features = clip_model.encode_text(text_tokens)
+​
+    text_features = F.normalize(text_features.float(), dim=-1)
+    return text_features, captions_slice
+​
+​
+def _build_template_text_features_clip(dataset_name, dataset_root, clip_model, device):
+    template_aliases = {"imagenet": "imagenet1k"}
+    template_name = template_aliases.get(dataset_name, dataset_name)
+    template_file = os.path.join(
+        "CLIP", "dataloaders", "templates", f"{template_name}.txt"
+    )
+​
+    if not os.path.exists(template_file):
+        templates = ["a photo of a {}."]
+    else:
+        with open(template_file, "r") as f:
+            templates = [ln.strip() for ln in f if ln.strip()]
+​
+    # Resolve class names (same logic as fastvit_x variant)
+    if dataset_name == "imagenet":
+        classes_file = os.path.join(
+            os.path.dirname(__file__), "misc", "imagenet_classes.txt"
+        )
+        with open(classes_file, "r") as f:
+            class_names = [ln.strip() for ln in f if ln.strip()]
+​
+    elif dataset_name == "food101":
+        dataset = Food101(root=dataset_root, train=False, transform=None)
+        class_names = getattr(
+            dataset, "categories", getattr(dataset, "classes", [str(i) for i in range(101)])
+        )
+​
+    elif dataset_name == "ucf101":
+        ucf_file = os.path.join("CLIP", "dataloaders", "classes", "ucf101.txt")
+        if os.path.exists(ucf_file):
+            with open(ucf_file, "r") as f:
+                class_names = [ln.strip() for ln in f if ln.strip()]
+        else:
+            class_names = [str(i) for i in range(101)]
+​
+    elif dataset_name == "aircraft":
+        dataset = aircraft_dataloader(root=dataset_root, train=False, transform=None)
+        class_names = getattr(dataset, "classes", [str(i) for i in range(100)])
+​
+    elif dataset_name == "oxfordpet":
+        dataset = OxfordPets(root=dataset_root, train=False, transform=None)
+        class_names = getattr(dataset, "classes", [str(i) for i in range(37)])
+​
+    else:
+        raise ValueError(
+            f"Unsupported dataset for CLIP-only template zero-shot: {dataset_name}"
+        )
+​
+    print(f" Classes: {len(class_names)} | Templates: {len(templates)}")
+​
+    with torch.no_grad():
+        text_features = []
+        for classname in class_names:
+            texts = [t.format(classname.replace("_", " ")) for t in templates]
+            tokens = clip.tokenize(texts).to(device)
+            cls_feats = clip_model.encode_text(tokens)
+            cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
+            cls_feats = cls_feats.mean(dim=0)
+            cls_feats = cls_feats / cls_feats.norm(dim=-1, keepdim=True)
+            text_features.append(cls_feats)
+​
+        text_features = torch.stack(text_features, dim=0).float()
+​
+    return text_features, class_names
+​
+​
+def setup_zeroshot_evaluation_clip(
+    dataset_name, dataset_root, device, batch_size=128, num_workers=4
+):
+    print(f" [CLIP] Setting up zero-shot evaluation for {dataset_name}...")
+​
+    clip_model, clip_preprocess = clip.load("ViT-L/14", device=device, jit=False)
+    clip_model.eval()
+​
+    CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+    CLIP_STD  = (0.26862954, 0.26130258, 0.27577711)
+    preprocess = transforms.Compose([
+        transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=CLIP_MEAN, std=CLIP_STD),
+    ])
+​
+    if dataset_name == "diffusion":
+        text_features, class_info = _build_diffusion_text_features_clip(
+            dataset_root, clip_model, device, train=False
+        )
+        test_dataset = DiffisionImages(root=dataset_root, train=False, transform=preprocess)
+    else:
+        text_features, class_info = _build_template_text_features_clip(
+            dataset_name, dataset_root, clip_model, device
+        )
+        if dataset_name == "imagenet":
+            test_dataset = ImageFolder(
+                os.path.join(dataset_root, "validation"), transform=preprocess
+            )
+        elif dataset_name == "food101":
+            test_dataset = Food101(root=dataset_root, train=False, transform=preprocess)
+        elif dataset_name == "ucf101":
+            test_dataset = UCF101(root=dataset_root, train=False, transform=preprocess)
+        elif dataset_name == "aircraft":
+            test_dataset = aircraft_dataloader(
+                root=dataset_root, train=False, transform=preprocess
+            )
+        elif dataset_name == "oxfordpet":
+            test_dataset = OxfordPets(root=dataset_root, train=False, transform=preprocess)
+        else:
+            raise ValueError(f"Unsupported dataset for CLIP zero-shot: {dataset_name}")
+​
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+​
+    eval_ctx = {
+        "text_features": text_features,
+        "class_info": class_info,
+        "loader": test_loader,
+        "clip_model": clip_model,   # kept in ctx so run_ can use encode_image
+        "dataset_name": dataset_name,
+        "is_diffusion": dataset_name == "diffusion",
+    }
+​
+    print(" [CLIP] Zero-shot evaluation setup complete")
+    return eval_ctx
+​
+​
+def run_zeroshot_evaluation_clip(eval_ctx, device):
+    print(" [CLIP] Running zero-shot evaluation...")
+​
+    clip_model   = eval_ctx["clip_model"].to(device)
+    text_features = eval_ctx["text_features"].to(device)
+    loader        = eval_ctx["loader"]
+​
+    top1_m = AverageMeter()
+    top5_m = AverageMeter()
+​
+    clip_model.eval()
+    with torch.no_grad():
+        for images, targets in tqdm(loader, desc="[CLIP] Zero-shot"):
+            images  = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+​
+            image_features = clip_model.encode_image(images)
+            image_features = F.normalize(image_features.float(), dim=-1)
+​
+            logits = 100.0 * image_features @ text_features.T
+​
+            acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
+            top1_m.update(acc1.item(), images.size(0))
+            top5_m.update(acc5.item(), images.size(0))
+​
+    print(" [CLIP] Zero-shot evaluation complete")
+    return top1_m.avg, top5_m.avg
+​
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions"""
     with torch.no_grad():
@@ -463,85 +680,100 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
-
-
-# ---------------- Classifier Evaluation ----------------
+​
 def evaluate_classifier(model, loader, device):
     model.eval()
     correct1, correct5, total = 0, 0, 0
-
+​
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Classifier Eval"):
             images = images.to(device)
             labels = labels.to(device)
-
+​
             outputs = model(images)
-
+​
             if isinstance(outputs, tuple):
                 outputs = outputs[1]
-
+​
             _, pred1 = outputs.topk(1, dim=1)
             _, pred5 = outputs.topk(5, dim=1)
-
+​
             correct1 += (pred1.squeeze() == labels).sum().item()
-
+​
             for i in range(labels.size(0)):
                 if labels[i] in pred5[i]:
                     correct5 += 1
-
+​
             total += labels.size(0)
-
+​
     print("\nClassifier Results")
     print(f"Top-1 Accuracy: {100*correct1/total:.3f}%")
     print(f"Top-5 Accuracy: {100*correct5/total:.3f}%")
-
-
+​
+​
 # ---------------- Args ----------------
 def parse_args():
     parser = argparse.ArgumentParser()
-
-    parser.add_argument("--feature-mode",
-                        choices=["forward_features", "backbone1", "classification_neck", "classifier", "projector", "zeroshot"],
-                        default="forward_features")
-
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--num-classes", type=int, default=None,
-                        help="Number of output classes. Auto-detected from --dataset if not provided.")
-    parser.add_argument("--model-checkpoint", required=True)
+​
+    parser.add_argument(
+        "--feature-mode",
+        choices=["forward_features","backbone1","classification_neck","classifier","projector","zeroshot"],
+        default="forward_features",
+    )
+​
+    parser.add_argument("--model", required=True,
+                        help="Model name. Use 'clip' for CLIP-only zero-shot (no checkpoint needed).")
+    parser.add_argument(
+        "--num-classes",
+        type=int,
+        default=None,
+        help="Number of output classes. Auto-detected from the dataset if not provided.",
+    )
+    parser.add_argument("--model-checkpoint", default=None,
+                        help="Path to model checkpoint. Not required when --model clip.")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--device", default=None)
-
+​
     parser.add_argument("--C", type=float, default=0.316)
     parser.add_argument("--max-iter", type=int, default=1000)
-
-    parser.add_argument("--pretrained-backbone", default=None, help="Path to pretrained backbone weights")
-    parser.add_argument("--keep-original-head", action="store_true", help="Keep and adapt original head weights instead of random initialization")
-
+​
+    parser.add_argument(
+        "--pretrained-backbone",
+        default=None,
+        help="Path to pretrained backbone weights",
+    )
+    parser.add_argument(
+        "--keep-original-head",
+        action="store_true",
+        help="Keep and adapt original head weights instead of random initialization",
+    )
+​
     return parser.parse_args()
-
-
-# ---------------- Main ----------------
-# Mapping of known datasets to their number of classes
+​
+​
+# ---------------- Num-classes introspection ----------------
+​
 DATASET_NUM_CLASSES = {
     "food101": 101,
     "imagenet": 1000,
     "oxfordpet": 37,
     "aircraft": 100,
     "ucf101": 101,
-    "diffusion": 2,
+    "diffusion": 7000,
 }
-
-
+​
+# ---------------- Main ----------------
+​
 def main():
     start_time = time.time()
-
+​
     args = parse_args()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Auto-detect num_classes if not provided
+​
+    # Auto-detect num_classes from the dataset's own .classes attribute
     if args.num_classes is None:
         if args.dataset in DATASET_NUM_CLASSES:
             args.num_classes = DATASET_NUM_CLASSES[args.dataset]
@@ -550,69 +782,73 @@ def main():
                 f"--num-classes is required for unknown dataset '{args.dataset}'. "
                 f"Known datasets: {list(DATASET_NUM_CLASSES.keys())}"
             )
-
-    print(f"Feature mode: {args.feature_mode}")
-    print(f"Using device: {device}")
-    
-    if args.feature_mode == "projector":
-        print(" Using CLIP-space projector embeddings for linear probing")
-    elif args.feature_mode == "zeroshot":
-        print(" Using CLIP zero-shot evaluation")
-
-    # For linear probing, we need both train and test loaders
+​
+    print(f"Feature mode : {args.feature_mode}")
+    print(f"Model        : {args.model}")
+    print(f"Using device : {device}")
+​
+​
     if args.feature_mode == "zeroshot":
-        # Zero-shot only needs test loader
-        eval_ctx = setup_zeroshot_evaluation(
-            args.dataset, args.data_dir, device, args.batch_size, args.workers
-        )
-    else:
-        # Linear probing needs both train and test loaders
-        train_loader, test_loader = setup_loaders(
-            args.dataset, args.data_dir, args.batch_size, args.workers
-        )
-
+​
+        if args.model == "clip":
+            print(" Routing to CLIP-only zero-shot evaluation")
+            eval_ctx = setup_zeroshot_evaluation_clip(
+                args.dataset, args.data_dir, device,
+                args.batch_size, args.workers,
+            )
+            acc1, acc5 = run_zeroshot_evaluation_clip(eval_ctx, device)
+        else:
+            eval_ctx = setup_zeroshot_evaluation_fastvit_x(
+                args.dataset, args.data_dir, device,
+                args.batch_size, args.workers,
+            )
+            backbone = load_backbone(args, device)
+            total, trainable = count_parameters(backbone)
+            print(f"Total params: {total:,} | Trainable: {trainable:,}")
+            acc1, acc5 = run_zeroshot_evaluation_fastvit_x(eval_ctx, backbone, device)
+​
+        print(f"\n Zero-Shot Evaluation Results")
+        print(f"Top-1 Accuracy: {acc1:.3f}%")
+        print(f"Top-5 Accuracy: {acc5:.3f}%")
+        print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
+        return
+    
+    train_loader, test_loader = setup_loaders(
+        args.dataset, args.data_dir, args.batch_size, args.workers
+    )
+​
     backbone = load_backbone(args, device)
-
     total, trainable = count_parameters(backbone)
     print(f"Total params: {total:,} | Trainable: {trainable:,}")
-    
+​
     if args.feature_mode == "projector":
+        print(" Using CLIP-space projector embeddings for linear probing")
         if hasattr(backbone, "projector"):
-            if hasattr(backbone.projector, "out_features"):
-                print(f" Projector found: CLIP dim = {backbone.projector.out_features}")
-            elif hasattr(backbone.projector, "fc2") and hasattr(backbone.projector.fc2, "out_features"):
-                print(f" Projector found: CLIP dim = {backbone.projector.fc2.out_features}")
-            else:
-                print(f" Projector found: CLIP dim = 768 (default)")
+            proj = backbone.projector
+            out_dim = (
+                proj.out_features
+                if hasattr(proj, "out_features")
+                else getattr(getattr(proj, "fc2", None), "out_features", 768)
+            )
+            print(f" Projector found: CLIP dim = {out_dim}")
         else:
             print(" No projector found in model!")
-    elif args.feature_mode == "zeroshot":
-        if hasattr(backbone, "projector"):
-            print(f" Projector found for zero-shot evaluation")
-        else:
-            print(" No projector found - zero-shot evaluation requires projector model!")
-
+​
     if args.feature_mode == "classifier":
         evaluate_classifier(backbone, test_loader, device)
         return
-
-    if args.feature_mode == "zeroshot":
-        # Run zero-shot evaluation
-        acc1_zeroshot, acc5_zeroshot = run_zeroshot_evaluation(eval_ctx, backbone, device)
-        
-        print(f"\n Zero-Shot Evaluation Results")
-        print(f"Top-1 Accuracy: {acc1_zeroshot:.3f}%")
-        print(f"Top-5 Accuracy: {acc5_zeroshot:.3f}%")
-        print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
-        return
-
-    # Linear probing evaluation (projector and other modes)
+​
+    # Linear probing
     print("Extracting train features...")
-    train_features, train_labels = extract_features(train_loader, backbone, device, args.feature_mode)
-
+    train_features, train_labels = extract_features(
+        train_loader, backbone, device, args.feature_mode
+    )
+​
     print("Extracting test features...")
-    test_features, test_labels = extract_features(test_loader, backbone, device, args.feature_mode)
-
+    test_features, test_labels = extract_features(
+        test_loader, backbone, device, args.feature_mode
+    )
+​
     print("Training logistic regression...")
     clf = LogisticRegression(
         random_state=0,
@@ -624,19 +860,19 @@ def main():
         verbose=1,
     )
     clf.fit(train_features, train_labels)
-
+​
     preds = clf.predict(test_features)
-    acc1 = (preds == test_labels).mean() * 100.0
-
+    acc1  = (preds == test_labels).mean() * 100.0
+​
     probs = clf.predict_proba(test_features)
-    top5 = np.argsort(probs, axis=1)[:, -5:]
-    acc5 = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
-
+    top5  = np.argsort(probs, axis=1)[:, -5:]
+    acc5  = np.mean([y in t for y, t in zip(test_labels, top5)]) * 100.0
+​
     print(f"\n Linear Probe Evaluation Results")
     print(f"Top-1 Accuracy: {acc1:.3f}%")
     print(f"Top-5 Accuracy: {acc5:.3f}%")
     print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
-
-
+​
+​
 if __name__ == "__main__":
     main()
