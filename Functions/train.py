@@ -72,15 +72,25 @@ def train_one_epoch(
     num_updates = epoch * len(loader)
     
     if args.rank  == 0:
-        _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={loader.loader.batch_size}, with {len(loader) * loader.loader.batch_size} datapoints")
-    for batch_idx, (input, target) in enumerate(loader):
+        _batch_size = loader.loader.batch_size if hasattr(loader, 'loader') else loader.batch_size
+        _logger.info(f"Training.... {len(loader)} Iteratiopns on a B={_batch_size}, with {len(loader) * _batch_size} datapoints")
+    for batch_idx, batch_data in enumerate(loader):
+        # Unpack: standard (input, target) or CRD (input, target, sample_indices)
+        if len(batch_data) == 3:
+            input, target, sample_indices = batch_data
+        else:
+            input, target = batch_data
+            sample_indices = None
+
         if args.debug and batch_idx % 100 ==0 and batch_idx != 0 :
-                break 
+                break
 
         last_batch = batch_idx == last_idx
         data_time_m.update(time.time() - end)
         if not args.prefetcher:
             input, target = input.cuda(), target.cuda()
+            if sample_indices is not None:
+                sample_indices = sample_indices.cuda()
             if mixup_fn is not None:
                 input, target = mixup_fn(input, target)
         if args.channels_last:
@@ -94,7 +104,7 @@ def train_one_epoch(
             else:
                 projected_embed, output, x, logit_scale = model(input)
                
-            # Compute CLIP image features if needed for MSE loss
+            # Compute CLIP image features if needed (MSE loss / CRD loss)
             clip_image_features = None
             if clip_model is not None and projected_embed is not None:
                 with torch.no_grad():
@@ -103,18 +113,23 @@ def train_one_epoch(
             # Extract attention maps for attention distillation
             extra_kwargs = {}
             if attn_extractor is not None and clip_grouped_model is not None:
-                from CLIP.clip.model_grouped import get_layer4_attention_maps
+                from CLIP.clip.model_grouped import get_layer4_attention_maps, get_layer4_attention_logits
                 # Student attention maps were already captured by hooks during model(input)
                 student_attn_maps = attn_extractor.attention_maps
+                student_logits_maps = attn_extractor.attention_logits
                 # Sort by layer name and collect values as a list
                 student_attn_layers = [student_attn_maps[k] for k in sorted(student_attn_maps.keys())]
+                student_logits_layers = [student_logits_maps[k] for k in sorted(student_logits_maps.keys())]
 
                 # Extract teacher attention from grouped CLIP layer4
                 with torch.no_grad():
                     teacher_attn_layers, _ = get_layer4_attention_maps(clip_grouped_model, input)
+                    teacher_logits_layers, _ = get_layer4_attention_logits(clip_grouped_model, input)
 
                 extra_kwargs["teacher_attn_layers"] = teacher_attn_layers
                 extra_kwargs["student_attn_layers"] = student_attn_layers
+                extra_kwargs["teacher_logits_layers"] = teacher_logits_layers
+                extra_kwargs["student_logits_layers"] = student_logits_layers
 
                 if batch_idx == 0 and epoch == 0 and args.local_rank == 0:
                     _logger.info(f"[Attn Distill] Teacher layers: {len(teacher_attn_layers)}, "
@@ -124,6 +139,10 @@ def train_one_epoch(
 
                 # Clear for next batch
                 attn_extractor.attention_maps.clear()
+                attn_extractor.attention_logits.clear()
+
+            if sample_indices is not None:
+                extra_kwargs["sample_indices"] = sample_indices
 
             loss, loss_dict = loss_manager.compute(output, target, projected_embed, clip_image_features, logit_scale=logit_scale, **extra_kwargs)
         losses_m.update(loss.item(), input.size(0))

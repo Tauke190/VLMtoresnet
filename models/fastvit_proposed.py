@@ -203,7 +203,7 @@ class FastViT_adapter(FastViT_Projector):
         _logger.info("Freezing non-adapter backbone parameters")
         for name, param in self.named_parameters():
             # Keep adapters, layer_scale, projector, and logit_scale trainable
-            if "adapter" in name or "layer_scale" in name or name.startswith("projector") or name.startswith("logit_scale"):
+            if "adapter" in name or name.startswith("projector") or name.startswith("logit_scale"):
                 param.requires_grad = True
             else:
                 # Freeze all other backbone parameters

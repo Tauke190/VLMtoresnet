@@ -58,11 +58,19 @@ class LossManager:
 # Loss computation functions
 # =============================================================================
 
-def create_attn_distill_loss(attn_distill_weight: float = 1.0) -> Callable:
-    """Create an attention distillation loss using last-layer spatial alignment."""
+def create_attn_distill_loss(attn_distill_weight: float = 1.0, loss_type: str = 'mse') -> Callable:
+    """
+    Create an attention distillation loss using last-layer spatial alignment.
+
+    Args:
+        attn_distill_weight: Weight for the attention distillation loss.
+                            Default: 1.0
+        loss_type: Type of loss to use. Options: 'kl' (recommended), 'mse'.
+                  Default: 'kl' (better for probability distributions)
+    """
     from .attention_distillation_loss import AttentionDistillationLoss
 
-    attn_loss_fn = AttentionDistillationLoss(normalize=True)
+    attn_loss_fn = AttentionDistillationLoss(loss_type=loss_type, normalize=False)
 
     def compute_attn_distill_loss(
         output: torch.Tensor,  # noqa: ARG001
@@ -71,11 +79,18 @@ def create_attn_distill_loss(attn_distill_weight: float = 1.0) -> Callable:
         clip_image_features: Optional[torch.Tensor] = None,  # noqa: ARG001
         teacher_attn_layers=None,
         student_attn_layers=None,
+        teacher_logits_layers=None,
+        student_logits_layers=None,
         **kwargs,
     ) -> Optional[torch.Tensor]:
         if teacher_attn_layers is None or student_attn_layers is None:
             return None
-        return attn_distill_weight * attn_loss_fn(teacher_attn_layers, student_attn_layers)
+        # print the loss type each time we compute for transparency
+        return attn_distill_weight * attn_loss_fn(
+            teacher_attn_layers, student_attn_layers,
+            teacher_logits_layers=teacher_logits_layers,
+            student_logits_layers=student_logits_layers
+        )
 
     return compute_attn_distill_loss
 
@@ -108,6 +123,42 @@ def create_clip_loss(
         return clip_loss_fn(feats, clip_text_features[target], logit_scale)
 
     return compute_clip_loss
+
+
+def create_crd_loss(crd_module: nn.Module) -> Callable:
+    """Create a CRD (Contrastive Representation Distillation) loss function.
+
+    The crd_module (CRDLoss) contains learnable Embed layers and the memory bank.
+    It must be passed sample indices from the dataloader.
+    """
+    def compute_crd_loss(
+        output: torch.Tensor,  # noqa: ARG001
+        target: torch.Tensor,  # noqa: ARG001
+        projected_embed: Optional[torch.Tensor] = None,
+        clip_image_features: Optional[torch.Tensor] = None,
+        sample_indices: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Optional[torch.Tensor]:
+        if projected_embed is None or clip_image_features is None or sample_indices is None:
+            return None
+
+        # Student features — cast to float32 to avoid float16 overflow in exp(dot/T)
+        # With T=0.07, exp(dot/T) overflows float16 when dot > 0.77
+        f_s = projected_embed[0] if isinstance(projected_embed, (tuple, list)) else projected_embed
+        if f_s.ndim == 4 and f_s.shape[2] > 1:
+            f_s = f_s.mean(dim=[2, 3])
+        f_s = f_s.float()
+        f_s = F.normalize(f_s, dim=-1)
+
+        # Teacher features
+        f_t = clip_image_features.float()
+        f_t = F.normalize(f_t, dim=-1)
+
+        # Run CRD in float32 to prevent AMP autocasting bmm to float16
+        with torch.amp.autocast('cuda', enabled=False):
+            return crd_module(f_s, f_t, sample_indices)
+
+    return compute_crd_loss
 
 
 def create_mse_loss() -> Callable:
@@ -206,10 +257,19 @@ def create_attention_distillation_loss_manager(
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
     attn_distill_weight: float = 1.0,
+    attn_loss_type: str = 'mse_logits',
 ) -> LossManager:
     """
     Create a LossManager for attention distillation training.
     Losses: base_loss, clip_loss, attention_distillation_loss
+
+    Args:
+        base_loss_fn: Base classification loss
+        clip_loss_fn: Optional CLIP contrastive loss
+        clip_text_features: Optional CLIP text features
+        attn_distill_weight: Weight for attention distillation loss
+        attn_loss_type: Loss type for attention distillation.
+                       Options: 'kl' (default), 'mse', 'mse_logits'
     """
     manager = LossManager(base_loss_fn)
 
@@ -219,7 +279,35 @@ def create_attention_distillation_loss_manager(
             create_clip_loss(clip_loss_fn, clip_text_features),
         )
 
-    manager.add_loss("Attn Distill Loss", create_attn_distill_loss(attn_distill_weight))
+    # log the attn loss type for clarity during setup
+    print(f"[LossManager] attention distillation loss_type = '{attn_loss_type}'")
+
+    manager.add_loss("Attn Distill Loss", create_attn_distill_loss(attn_distill_weight, loss_type=attn_loss_type))
+
+    return manager
+
+
+def create_contrastive_distillation_loss_manager(
+    base_loss_fn: nn.Module,
+    clip_loss_fn: Optional[Callable] = None,
+    clip_text_features: Optional[torch.Tensor] = None,
+    crd_module: Optional[nn.Module] = None,
+    crd_weight: float = 1.0,
+) -> LossManager:
+    """
+    Create a LossManager for contrastive representation distillation.
+    Losses: base_loss, clip_loss, crd_loss
+    """
+    manager = LossManager(base_loss_fn)
+
+    if clip_loss_fn is not None and clip_text_features is not None:
+        manager.add_loss(
+            "CLIP Loss",
+            create_clip_loss(clip_loss_fn, clip_text_features),
+        )
+
+    if crd_module is not None:
+        manager.add_loss("CRD Loss", create_crd_loss(crd_module), weight=crd_weight)
 
     return manager
 
@@ -230,18 +318,26 @@ def get_loss_manager_for_method(
     clip_loss_fn: Optional[Callable] = None,
     clip_text_features: Optional[torch.Tensor] = None,
     attn_distill_weight: float = 1.0,
+    attn_loss_type: str = 'kl',
     mse_distill_weight: float = 1.0,
+    crd_module: Optional[nn.Module] = None,
+    crd_weight: float = 1.0,
     ) -> LossManager:
     """
     Factory function to create appropriate LossManager based on training method.
 
     Args:
-        method: Training method name. Supported: 'default', 'baseline', 'distillation', 'attention_distillation'
+        method: Training method name. Supported: 'default', 'baseline', 'distillation',
+                'attention_distillation', 'contrastive_distillation'
         base_loss_fn: Base classification loss function
         clip_loss_fn: Optional CLIP loss function
         clip_text_features: Optional pre-computed CLIP text features
         attn_distill_weight: Weight for attention distillation loss
+        attn_loss_type: Loss type for attention distillation.
+                       Options: 'kl' (default), 'mse', 'mse_logits'
         mse_distill_weight: Weight for MSE distillation loss (used with 'distillation' method)
+        crd_module: Initialized CRDLoss module (used with 'contrastive_distillation' method)
+        crd_weight: Weight for CRD loss
 
     Returns:
         Configured LossManager instance
@@ -269,9 +365,18 @@ def get_loss_manager_for_method(
             clip_loss_fn=clip_loss_fn,
             clip_text_features=clip_text_features,
             attn_distill_weight=attn_distill_weight,
+            attn_loss_type=attn_loss_type,
+        )
+    elif method == "contrastive_distillation":
+        return create_contrastive_distillation_loss_manager(
+            base_loss_fn=base_loss_fn,
+            clip_loss_fn=clip_loss_fn,
+            clip_text_features=clip_text_features,
+            crd_module=crd_module,
+            crd_weight=crd_weight,
         )
     else:
         raise ValueError(
             f"Unknown training method: '{method}'. "
-            f"Supported methods: 'default', 'baseline', 'distillation', 'attention_distillation'"
+            f"Supported methods: 'default', 'baseline', 'distillation', 'attention_distillation', 'contrastive_distillation'"
         )

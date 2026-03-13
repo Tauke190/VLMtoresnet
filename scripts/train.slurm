@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=atn_distill_lora
-#SBATCH --output=ucf_output/slurm-%j.out
+#SBATCH --output=ucf_output/atn_distill_lora-%j.out
 #SBATCH --gres-flags=enforce-binding
 #SBATCH -p gpu
 #SBATCH -C gmem48
@@ -51,7 +51,7 @@ LOG=500
 
 # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens,fastvit_sa36_lora_pp]
 # Training methods = [default, baseline, distillation, attention_distillation]
-MODEL=fastvit_sa36_adapter
+MODEL=fastvit_sa36_lora_pp
 EXP=fastvit
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $IMAGENET_PATH --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH \

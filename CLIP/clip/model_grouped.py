@@ -251,6 +251,7 @@ def get_layer4_attention_maps(model, images):
                 if mask is not None:
                     mask = mask.to(dtype=x.dtype, device=x.device)
                 out, weights = blk.attn(x, x, x, need_weights=True, attn_mask=mask)
+                # PyTorch's MultiheadAttention returns head-averaged weights [bsz, tgt_len, src_len]
                 store['weights'] = weights.detach()
                 return out
             return _patched_attention
@@ -267,6 +268,95 @@ def get_layer4_attention_maps(model, images):
         attn_maps.append(storage['weights'])
 
     return attn_maps, output
+
+
+def get_layer4_attention_logits(model, images):
+    """Extract raw attention logits (before softmax) from the last block in layer4.
+
+    Args:
+        model: A GroupedCLIP model (or its .visual component).
+        images: Input image tensor of shape (B, 3, H, W).
+
+    Returns:
+        attn_logits: List with raw attention logits from last layer4 block.
+                     Shape: (B, num_heads, seq_len, seq_len)
+        output: The image features returned by encode_image.
+    """
+    visual = model.visual if hasattr(model, 'visual') else model
+    layer4 = visual.transformer.layer4
+    captures = []
+
+    # Only patch the LAST block in layer4 for efficiency
+    for i, block in enumerate(layer4):
+        if i != len(layer4) - 1:
+            continue
+
+        orig_fn = block.attention
+        storage = {}
+
+        def _make_patched_logits(blk, store):
+            def _patched_attention(x):
+                mask = blk.attn_mask
+                if mask is not None:
+                    mask = mask.to(dtype=x.dtype, device=x.device)
+
+                # Get raw logits from MultiheadAttention
+                # We need to extract Q, K, V and compute logits manually
+                # since nn.MultiheadAttention doesn't expose raw logits
+                tgt_len, bsz, embed_dim = x.shape
+                head_dim = embed_dim // blk.attn.num_heads
+
+                # Manually compute Q, K, V projections
+                # in_proj_weight has shape [3*embed_dim, embed_dim]
+                # Split into W_q, W_k, W_v
+                in_proj_weight = blk.attn.in_proj_weight
+                in_proj_bias = blk.attn.in_proj_bias
+
+                # Compute linear projections
+                # x shape: [tgt_len, bsz, embed_dim]
+                q = F.linear(x, in_proj_weight[:embed_dim], in_proj_bias[:embed_dim] if in_proj_bias is not None else None)
+                k = F.linear(x, in_proj_weight[embed_dim:2*embed_dim], in_proj_bias[embed_dim:2*embed_dim] if in_proj_bias is not None else None)
+                v = F.linear(x, in_proj_weight[2*embed_dim:], in_proj_bias[2*embed_dim:] if in_proj_bias is not None else None)
+
+                # Reshape for multi-head attention
+                # q, k, v shape: [tgt_len, bsz, embed_dim]
+                q = q.contiguous().view(tgt_len, bsz * blk.attn.num_heads, head_dim).transpose(0, 1)
+                k = k.contiguous().view(-1, bsz * blk.attn.num_heads, head_dim).transpose(0, 1)
+                # q, k shape: [bsz * num_heads, tgt_len, head_dim]
+
+                # Compute logits (before softmax)
+                scaling = float(head_dim) ** -0.5
+                attn_logits = torch.bmm(q, k.transpose(-2, -1)) * scaling
+                # attn_logits shape: [bsz * num_heads, tgt_len, tgt_len]
+
+                # Apply mask if present
+                if mask is not None:
+                    attn_logits += mask
+
+                # Reshape to [bsz, num_heads, tgt_len, tgt_len] then average over heads
+                attn_logits = attn_logits.view(bsz, blk.attn.num_heads, tgt_len, tgt_len)
+                # Average over heads to match head-averaged attention weights
+                attn_logits = attn_logits.mean(dim=1)  # [bsz, tgt_len, tgt_len]
+
+                store['logits'] = attn_logits.detach()
+
+                # Continue with normal attention (softmax + output)
+                out, weights = blk.attn(x, x, x, need_weights=True, attn_mask=mask)
+                return out
+            return _patched_attention
+
+        block.attention = _make_patched_logits(block, storage)
+        captures.append((block, orig_fn, storage))
+
+    with torch.no_grad():
+        output = model.encode_image(images) if hasattr(model, 'encode_image') else model(images)
+
+    attn_logits = []
+    for block, orig_fn, storage in captures:
+        block.attention = orig_fn
+        attn_logits.append(storage['logits'])
+
+    return attn_logits, output
 
 
 def _remap_vit_state_dict(state_dict, layer_groups):

@@ -38,7 +38,8 @@ class AttentionMapExtractor:
             model: FastViT model instance
         """
         self.model = model
-        self.attention_maps = {}
+        self.attention_maps = {}      # Softmax attention [B, H, N, N]
+        self.attention_logits = {}    # Raw logits before softmax [B, H, N, N]
         self.original_forwards = {}
         self._patch_mhsa_modules()
 
@@ -93,12 +94,15 @@ class AttentionMapExtractor:
             q, k, v = qkv.unbind(0)
 
             # Compute and capture attention (on GPU, before dropout)
-            attn = (q * module.scale) @ k.transpose(-2, -1)
-            attn = attn.softmax(dim=-1)
+            attn_logits = (q * module.scale) @ k.transpose(-2, -1)
+            attn = attn_logits.softmax(dim=-1)
 
-            # CAPTURE HERE: Store on GPU — NO .detach() so gradients
-            # flow back through the attention distillation loss
+            # CAPTURE HERE: Store on GPU WITHOUT .detach()
+            # We want gradients to flow back through the attention computation
+            # so that Q, K weights are optimized to produce CLIP-like attention patterns.
+            # This directly transfers CLIP's attention knowledge to FastViT.
             extractor.attention_maps[name] = attn
+            extractor.attention_logits[name] = attn_logits  # Also capture raw logits
 
             # Continue with original forward (dropout + projection)
             attn = module.attn_drop(attn)
@@ -126,6 +130,7 @@ class AttentionMapExtractor:
             model_output: Output from the model
         """
         self.attention_maps.clear()
+        self.attention_logits.clear()
 
         with torch.no_grad():
             output = self.model(x)

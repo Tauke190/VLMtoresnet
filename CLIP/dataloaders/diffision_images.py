@@ -140,4 +140,5 @@ class DiffisionImages(Dataset):
         if self.trans is not None:
             img = self.trans(img)
         label = self.labels[index]
+        #caption = self.captions[label]
         return img, label

@@ -814,8 +814,8 @@ def _parse_args():
         "--method",
         type=str,
         default="baseline",
-        choices=["default", "baseline", "distillation","attention_distillation"],
-        help="Training method: 'default' (base loss only), 'baseline' (base + clip), 'distillation' (base + clip + mse), 'attention_distillation' (base + clip + attn distill).",
+        choices=["default", "baseline", "distillation","attention_distillation", "contrastive_distillation"],
+        help="Training method: 'default' (base loss only), 'baseline' (base + clip), 'distillation' (base + clip + mse), 'attention_distillation' (base + clip + attn distill), 'contrastive_distillation' (base + clip + CRD).",
     )
     parser.add_argument(
         "--attn-distill-weight",
@@ -828,6 +828,12 @@ def _parse_args():
         type=float,
         default=1.0,
         help="Weight for MSE distillation loss (used with --method distillation). Use lower values (e.g., 0.1-0.5) if MSE is dominating.",
+    )
+    parser.add_argument(
+        "--crd-weight",
+        type=float,
+        default=1.0,
+        help="Weight for CRD contrastive distillation loss (used with --method contrastive_distillation).",
     )
 
     parser.add_argument(
