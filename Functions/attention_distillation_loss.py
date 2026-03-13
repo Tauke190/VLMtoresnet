@@ -24,32 +24,39 @@ class AttentionDistillationLoss(nn.Module):
     """
     Loss module for attention-based knowledge distillation.
 
-    Takes the last attention layer from each block and computes MSE loss
-    after spatial alignment.
+    Takes the last attention layer from each block and computes KL divergence loss
+    after spatial alignment. KL divergence is preferred over MSE because attention
+    maps are probability distributions (softmax output).
 
     Usage:
-        loss_fn = AttentionDistillationLoss(normalize=True)
+        loss_fn = AttentionDistillationLoss(loss_type='kl')
         teacher_attn = [...]  # List of attention layers from teacher
         student_attn = [...]  # List of attention layers from student
         loss = loss_fn(teacher_attn, student_attn)
     """
 
-    def __init__(self, normalize=True, reduction='mean'):
+    def __init__(self, loss_type='kl', normalize=False, reduction='mean'):
         """
         Initialize attention distillation loss.
 
         Args:
-            normalize: If True, normalize attention maps before computing loss.
-                      Default: True
+            loss_type: Type of loss to use. Options: 'kl', 'mse', 'mse_logits'.
+                      Default: 'kl' (better for probability distributions)
+            normalize: If True, apply row-wise normalization before loss.
+                      Default: False (KL divergence doesn't need pre-normalization)
             reduction: How to reduce the loss. Options: 'mean', 'sum', 'none'.
-                      Default: 'mean'
+                      Default: 'mean' (gives normalized loss per spatial location)
         """
         super().__init__()
+        self.loss_type = loss_type
         self.normalize = normalize
         self.reduction = reduction
 
+        if loss_type.lower() not in ['kl', 'mse', 'mse_logits']:
+            raise ValueError(f"Unsupported loss_type: {loss_type}. Use 'kl', 'mse', or 'mse_logits'")
+
     def forward(self, teacher_attn_layers, student_attn_layers,
-                spatial_align=True):
+                spatial_align=True, teacher_logits_layers=None, student_logits_layers=None):
         """
         Compute attention distillation loss using last layer from each block.
 
@@ -64,6 +71,10 @@ class AttentionDistillationLoss(nn.Module):
                                 Uses the last layer: [B, 16, 49, 49]
             spatial_align: If True, align teacher spatial dimensions to student.
                           Default: True
+            teacher_logits_layers: Optional list of teacher attention logits (raw, before softmax).
+                                  Required if loss_type='mse_logits'.
+            student_logits_layers: Optional list of student attention logits (raw, before softmax).
+                                  Required if loss_type='mse_logits'.
 
         Returns:
             loss: Scalar tensor containing the distillation loss
@@ -93,40 +104,31 @@ class AttentionDistillationLoss(nn.Module):
         else:
             student_attn = student_attn_layers
 
+        # Extract logits if provided
+        teacher_logits = None
+        student_logits = None
+
+        if teacher_logits_layers and student_logits_layers:
+            if isinstance(teacher_logits_layers, list):
+                teacher_logits = teacher_logits_layers[-1]
+            else:
+                teacher_logits = teacher_logits_layers
+
+            if isinstance(student_logits_layers, list):
+                student_logits = student_logits_layers[-1]
+            else:
+                student_logits = student_logits_layers
+
         # Compute distillation loss
         loss = attention_distillation_loss(
             teacher_attn,
             student_attn,
             spatial_align=spatial_align,
             normalize=self.normalize,
-            reduction=self.reduction
+            reduction=self.reduction,
+            loss_type=self.loss_type,
+            teacher_logits=teacher_logits,
+            student_logits=student_logits
         )
 
         return loss
-
-
-# Example usage
-if __name__ == '__main__':
-    print("Testing AttentionDistillationLoss...")
-
-    # Create loss module
-    loss_fn = AttentionDistillationLoss(normalize=True)
-
-    # Simulate CLIP layer4 attention (2 layers, uses last)
-    teacher_layers = [torch.randn(2, 16, 257, 257) for _ in range(2)]
-
-    # Simulate FastViT stage4 attention (6 layers, uses last)
-    student_layers = [torch.randn(2, 16, 49, 49) for _ in range(6)]
-
-    # Compute loss
-    loss = loss_fn(teacher_layers, student_layers)
-
-    print(f"Teacher input: 2 layers, using last: {teacher_layers[-1].shape}")
-    print(f"Student input: 6 layers, using last: {student_layers[-1].shape}")
-    print(f"Loss value: {loss.item():.6f}")
-    print(f"Loss requires grad: {loss.requires_grad}")
-
-    # Test backward pass
-    loss.backward()
-    print("Backward pass successful!")
-    print("Loss can be used in optimization!")

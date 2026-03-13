@@ -90,37 +90,59 @@ def align_attention_spatial(clip_attn, target_size=7):
 
 
 def attention_distillation_loss(teacher_attn, student_attn,
-                                spatial_align=True, normalize=True,
-                                reduction='mean'):
+                                spatial_align=True, normalize=False,
+                                reduction='mean', loss_type='kl',
+                                teacher_logits=None, student_logits=None):
     """
-    Compute MSE loss between teacher and student attention maps.
+    Compute distillation loss between teacher and student attention maps.
 
     This loss encourages the student network to learn similar attention
     patterns to the teacher network.
 
     Args:
-        teacher_attn: Teacher attention
+        teacher_attn: Teacher attention (softmax) — must be valid probability distribution
                      - CLIP (head-averaged): [B, 257, 257]
                      - Or with heads: [B, 16, 257, 257]
-        student_attn: Student attention
+        student_attn: Student attention (softmax) — must be valid probability distribution
                      - FastViT (with heads): [B, 16, 49, 49]
                      - Or head-averaged: [B, 49, 49]
         spatial_align: If True, spatially align teacher to student dimensions
                       and average across heads if needed. Default: True
-        normalize: If True, normalize attention maps before computing loss.
-                  Default: True (helps with scale differences)
+        normalize: If True, apply row-wise normalization (NOT recommended with KL).
+                  Default: False (KL divergence doesn't need it)
         reduction: 'mean', 'sum', or 'none'. Default: 'mean'
+        loss_type: Loss function to use. Options:
+                  - 'kl': KL divergence on softmax attention (recommended)
+                  - 'mse': MSE loss on softmax attention
+                  - 'mse_logits': MSE loss on raw logits (before softmax)
+                  Default: 'kl'
+        teacher_logits: Teacher attention logits (raw, before softmax).
+                       Required if loss_type='mse_logits'.
+                       Shape: [B, num_heads, N, N]
+        student_logits: Student attention logits (raw, before softmax).
+                       Required if loss_type='mse_logits'.
+                       Shape: [B, num_heads, N, N]
 
     Returns:
         loss: Scalar tensor (if reduction='mean' or 'sum')
               or [B] tensor (if reduction='none')
 
     Example:
-        >>> # CLIP (head-averaged) to FastViT (with heads)
-        >>> teacher = torch.randn(2, 257, 257)
-        >>> student = torch.randn(2, 16, 49, 49)
-        >>> loss = attention_distillation_loss(teacher, student)
+        >>> # CLIP (head-averaged) to FastViT (with heads) - KL divergence
+        >>> teacher = torch.randn(2, 257, 257).softmax(dim=-1)
+        >>> student = torch.randn(2, 16, 49, 49).softmax(dim=-1)
+        >>> loss = attention_distillation_loss(teacher, student, loss_type='kl')
         >>> loss.backward()
+
+        >>> # MSE on raw logits (captures attention sharpness)
+        >>> teacher_logits = torch.randn(2, 16, 257, 257)
+        >>> student_logits = torch.randn(2, 16, 49, 49)
+        >>> loss = attention_distillation_loss(
+        ...     teacher, student,
+        ...     loss_type='mse_logits',
+        ...     teacher_logits=teacher_logits,
+        ...     student_logits=student_logits
+        ... )
     """
     # Ensure tensors are on the same device (student attention might be on CPU)
     if student_attn.device != teacher_attn.device:
@@ -154,25 +176,95 @@ def attention_distillation_loss(teacher_attn, student_attn,
                 f"After alignment, teacher shape {teacher_attn.shape} "
                 f"!= student shape {student_attn.shape}"
             )
+    
+        teacher_attn = teacher_attn / (teacher_attn.sum(dim=-1, keepdim=True) + 1e-8)
+        student_attn = student_attn / (student_attn.sum(dim=-1, keepdim=True) + 1e-8)
 
-    # Normalize attention maps (optional but recommended)
+
+    # Normalize attention maps if requested (row-wise for probability distributions)
     if normalize:
-        # Normalize to [0, 1] range per sample and head
-        teacher_attn = normalize_attention(teacher_attn)
-        student_attn = normalize_attention(student_attn)
+        # Row-wise normalization: preserve per-query attention probability structure
+        teacher_attn = teacher_attn / (teacher_attn.sum(dim=-1, keepdim=True) + 1e-8)
+        student_attn = student_attn / (student_attn.sum(dim=-1, keepdim=True) + 1e-8)
 
-    # Compute MSE loss
-    loss = F.mse_loss(student_attn, teacher_attn, reduction=reduction)
+    # Compute loss using appropriate metric for probability distributions
+    if loss_type.lower() == 'kl':
+        # KL divergence: D_KL(teacher || student)
+        # Interprets attention maps as probability distributions
+        # Add small epsilon to avoid log(0)
+        teacher_attn = torch.clamp(teacher_attn, min=1e-6)
+        student_attn = torch.clamp(student_attn, min=1e-6)
+
+        # KL divergence expects log-probabilities for student, probabilities for teacher
+        kl_reduction = 'batchmean' if reduction == 'mean' else reduction
+
+        loss = F.kl_div(
+            student_attn.log(),  # log(student)
+            teacher_attn,         # teacher (unnormalized is OK, KL handles it)
+            reduction=kl_reduction
+        )
+
+
+    elif loss_type.lower() == 'mse':
+        # MSE loss on softmax attention: simpler but doesn't respect probability structure
+        loss = F.mse_loss(student_attn, teacher_attn, reduction=reduction)
+
+    elif loss_type.lower() == 'mse_logits':
+        # MSE loss on raw logits (before softmax)
+        # This captures attention "sharpness" and may be more informative
+        if teacher_logits is None or student_logits is None:
+            raise ValueError(
+                f"loss_type='mse_logits' requires teacher_logits and student_logits, "
+                f"but got teacher_logits={teacher_logits is not None}, "
+                f"student_logits={student_logits is not None}"
+            )
+
+        # Ensure logits are on same device
+        if student_logits.device != teacher_logits.device:
+            student_logits = student_logits.to(teacher_logits.device)
+
+        # Handle spatial alignment for logits
+        if spatial_align and teacher_logits.shape[-1] == 257:
+            # Align CLIP logits to FastViT spatial size
+            student_n = student_logits.shape[-1]
+            target_spatial = int(student_n ** 0.5)
+            if target_spatial * target_spatial != student_n:
+                raise ValueError(f"Student logits size {student_n} is not a perfect square")
+
+            teacher_logits = align_attention_spatial(teacher_logits, target_size=target_spatial)
+
+        # Handle head dimension mismatch in logits
+        if teacher_logits.dim() == 3 and student_logits.dim() == 4:
+            # Teacher has no heads, student has heads - average student's heads
+            student_logits = student_logits.mean(dim=1)
+        elif teacher_logits.dim() == 4 and student_logits.dim() == 3:
+            # Teacher has heads, student doesn't - average teacher's heads
+            teacher_logits = teacher_logits.mean(dim=1)
+
+        # Ensure dimensions match
+        if teacher_logits.shape != student_logits.shape:
+            raise ValueError(
+                f"After alignment, teacher_logits shape {teacher_logits.shape} "
+                f"!= student_logits shape {student_logits.shape}"
+            )
+
+        # Compute MSE loss on logits
+        loss = F.mse_loss(student_logits, teacher_logits, reduction=reduction)
+    else:
+        raise ValueError(
+            f"Unsupported loss_type: {loss_type}. "
+            f"Use 'kl', 'mse', or 'mse_logits'"
+        )
 
     return loss
 
 
 def normalize_attention(attn):
     """
-    Normalize attention maps to [0, 1] range.
+    Normalize attention maps to [0, 1] range per sample.
 
-    Normalization is done per sample and per head to handle
-    different scales and ensure fair comparison.
+    DEPRECATED: This min-max normalization destroys the attention probability
+    structure. Use row-wise normalization instead (divide by row sum).
 
     Args:
         attn: Attention tensor [B, num_heads, N, N] or [B, N, N]
@@ -180,6 +272,15 @@ def normalize_attention(attn):
     Returns:
         normalized: Attention tensor in [0, 1] range, same shape as input
     """
+    import warnings
+    warnings.warn(
+        "normalize_attention() uses min-max normalization which destroys "
+        "attention probability structure. Use row-wise normalization instead: "
+        "attn / (attn.sum(dim=-1, keepdim=True) + 1e-8)",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     # Determine dimensions
     if attn.dim() == 4:
         # [B, num_heads, N, N]
