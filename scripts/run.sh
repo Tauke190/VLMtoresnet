@@ -1,9 +1,7 @@
 
-conda create --name fastvit python=3.9 -y
+
 conda activate fastvit
-python -m pip install torch==1.10.0+cu111 torchvision==0.11.0+cu111 torchaudio==0.10.0 -f https://download.pytorch.org/whl/torch_stable.html
-python -m pip install einops shapely timm==1.0.15 yacs tensorboardX ftfy prettytable pymongo transformers diffdist seaborn vlkit inflect nltk umap-learn keyboard 
-python -m pip install -U scikit-image keyboard ultralytics pycocotools scikit-learn packaging
+
 
 
 # python -m pip install numpy==1.26.4

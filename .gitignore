@@ -145,3 +145,4 @@ dmypy.json
 *.csv
 *.png 
 *.log
+*ucf_output/
