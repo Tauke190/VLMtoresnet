@@ -1,8 +1,6 @@
 import os
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision.transforms import InterpolationMode
-from torch import isfinite
 
 class DiffisionImages(Dataset):
     def __init__(
@@ -137,8 +135,9 @@ class DiffisionImages(Dataset):
 
     def __getitem__(self, index):
         img = Image.open(self.images[index]).convert('RGB')
-        if self.trans is not None:
-            img = self.trans(img)
+        transform = getattr(self, "transform", None) or getattr(self, "trans", None)
+        if transform is not None:
+            img = transform(img)
         label = self.labels[index]
         #caption = self.captions[label]
         return img, label
