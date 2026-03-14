@@ -97,7 +97,8 @@ DATASET_PATH=$DIFF_PATH
 ########################
 # CLIP ZERO SHOT (Text Based)
 ########################
-python eval_final.py --feature-mode zeroshot --model clip --dataset $DATASET --data-dir $DATASET_PATH
+python eval_final.py --feature-mode zeroshot --model fastvit_sa36_projector --dataset $DATASET --data-dir $DATASET_PATH --pretrained-backbone $FASTVIT_CKPT --model-checkpoint $PROJECTOR_CKPT
+
 
 ########################
 # FastViT BACKBONE PROBE
