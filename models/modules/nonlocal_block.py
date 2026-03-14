@@ -8,8 +8,9 @@ from operator import mul
 class NonLocalBlock2d(nn.Module):
     """Single-head Non-Local Block using 1x1 Conv2d projections."""
 
-    def __init__(self, in_channels, inter_channels=None, bn_layer=True):
+    def __init__(self, in_channels, inter_channels=None, bn_layer=True, name=None):
         super().__init__()
+        self.name = name or "NonLocalBlock2d"
 
         self.in_channels = in_channels
         self.inter_channels = inter_channels or max(in_channels // 2, 1)
@@ -44,8 +45,18 @@ class NonLocalBlock2d(nn.Module):
         phi_x = phi_proj.view(B, self.inter_channels, N)
         g_x   = self.g(x).view(B, self.inter_channels, N).permute(0, 2, 1)
 
-        attn = torch.bmm(theta_x.float(), phi_x.float()) * self.scale
-        attn = F.softmax(attn, dim=-1).to(g_x.dtype)
+        with torch.cuda.amp.autocast(enabled=False):
+            attn = torch.bmm(theta_x.float(), phi_x.float()) * self.scale
+            
+            # NaN Debug Logging
+            if self.training:
+                with torch.no_grad():
+                    a_min, a_max = attn.min().item(), attn.max().item()
+                    if torch.isnan(attn).any() or torch.isinf(attn).any() or a_max > 60000:
+                        print(f"[NAN_DEBUG] {self.name} | ATTN STATS | min: {a_min:.2f}, max: {a_max:.2f}")
+            
+            attn = F.softmax(attn, dim=-1)
+        attn = attn.to(g_x.dtype)
 
         y = torch.bmm(attn, g_x)
         y = y.permute(0, 2, 1).contiguous().view(B, self.inter_channels, H, W)
@@ -56,8 +67,9 @@ class NonLocalBlock2d(nn.Module):
 class NonLocalBlockLinear(nn.Module):
     """Single-head Non-Local Block using nn.Linear projections."""
 
-    def __init__(self, in_channels, inter_channels=None, bn_layer=True):
+    def __init__(self, in_channels, inter_channels=None, bn_layer=True, name=None):
         super().__init__()
+        self.name = name or "NonLocalBlockLinear"
 
         self.in_channels = in_channels
         self.inter_channels = inter_channels or max(in_channels // 2, 1)
@@ -92,8 +104,18 @@ class NonLocalBlockLinear(nn.Module):
         K = self.phi_bn(K_proj.transpose(1, 2)).transpose(1, 2)
         V = self.g(x_flat)
 
-        attn = torch.bmm(Q.float(), K.float().transpose(1, 2)) * self.scale
-        attn = F.softmax(attn, dim=-1).to(V.dtype)
+        with torch.cuda.amp.autocast(enabled=False):
+            attn = torch.bmm(Q.float(), K.float().transpose(1, 2)) * self.scale
+
+            # NaN Debug Logging
+            if self.training:
+                with torch.no_grad():
+                    a_min, a_max = attn.min().item(), attn.max().item()
+                    if torch.isnan(attn).any() or torch.isinf(attn).any() or a_max > 60000:
+                        print(f"[NAN_DEBUG] {self.name} | ATTN STATS | min: {a_min:.2f}, max: {a_max:.2f}")
+
+            attn = F.softmax(attn, dim=-1)
+        attn = attn.to(V.dtype)
 
         y = self.W_z_linear(torch.bmm(attn, V))
         y = y.permute(0, 2, 1).contiguous().view(B, C, H, W)
@@ -108,8 +130,9 @@ class MultiHeadNonLocalBlock2d(nn.Module):
     """Multi-head Non-Local Block with parallel attention heads."""
 
     def __init__(self, in_channels, inter_channels=None, num_heads=4,
-                 bn_layer=True):
+                 bn_layer=True, name=None):
         super().__init__()
+        self.name = name or "MultiHeadNonLocalBlock2d"
 
         self.in_channels = in_channels
         self.inter_channels = inter_channels or max(in_channels // 2, 1)
@@ -152,8 +175,18 @@ class MultiHeadNonLocalBlock2d(nn.Module):
         K_proj = K_proj_raw.view(B, K, D, N).reshape(B * K, D, N)
         V = self.g(x).view(B, K, D, N).permute(0, 1, 3, 2).reshape(B * K, N, D)
 
-        attn = torch.bmm(Q.float(), K_proj.float()) * self.scale
-        attn = F.softmax(attn, dim=-1).to(V.dtype)
+        with torch.cuda.amp.autocast(enabled=False):
+            attn = torch.bmm(Q.float(), K_proj.float()) * self.scale
+
+            # NaN Debug Logging
+            if self.training:
+                with torch.no_grad():
+                    a_min, a_max = attn.min().item(), attn.max().item()
+                    if torch.isnan(attn).any() or torch.isinf(attn).any() or a_max > 60000:
+                        print(f"[NAN_DEBUG] {self.name} | ATTN STATS | min: {a_min:.2f}, max: {a_max:.2f}")
+
+            attn = F.softmax(attn, dim=-1)
+        attn = attn.to(V.dtype)
 
         y = torch.bmm(attn, V)
         y = y.view(B, K, N, D).permute(0, 1, 3, 2).reshape(B, self.inter_channels, H, W)
