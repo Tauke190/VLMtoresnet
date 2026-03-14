@@ -47,12 +47,14 @@ class FastViT_nonlocal(FastViT_Projector):
                     in_channels=dim,
                     inter_channels=inter_ch,
                     bn_layer=nl_bn_layer,
+                    name=f"NonLocal_Stage_{stage_idx}",
                 )
             else:
                 block = NonLocalBlockLinear(
                     in_channels=dim,
                     inter_channels=inter_ch,
                     bn_layer=nl_bn_layer,
+                    name=f"NonLocal_Stage_{stage_idx}",
                 )
 
             self.nonlocal_blocks.append(block)
@@ -157,7 +159,7 @@ class FastViT_mhsa(FastViT_Projector):
 
         # Create MHSA blocks after every stage
         self.mhsa_blocks = nn.ModuleList()
-        for dim in self.embed_dims:
+        for stage_idx, dim in enumerate(self.embed_dims):
             inter_ch = mhsa_inter_channels if mhsa_inter_channels is not None else dim // 2
             inter_ch = min(inter_ch, dim)
             # Ensure inter_ch is divisible by num_heads
@@ -168,6 +170,7 @@ class FastViT_mhsa(FastViT_Projector):
                 inter_channels=inter_ch,
                 num_heads=mhsa_num_heads,
                 bn_layer=mhsa_bn_layer,
+                name=f"MHSA_Stage_{stage_idx}",
             )
             self.mhsa_blocks.append(block)
 
