@@ -83,11 +83,11 @@ def build_diffusion_clip_text_features(clip_model, device):
     base_dir = os.path.dirname(__file__)
     base_dir = os.path.dirname(base_dir)
 
-    caption_files = ["caption_2k.txt", "caption_5k.txt"]
+    caption_files = ["diffusion_classes_2k.txt", "diffusion_classes_5k.txt"]
     
     class_names = []
     for caption_filename in caption_files:
-        caption_path = os.path.join(base_dir, caption_filename)
+        caption_path = os.path.join(base_dir, "misc", caption_filename)
         with open(caption_path, 'r', encoding='utf-8') as f:
             captions = [line.strip() for line in f if line.strip()]
             class_names.extend(captions)
