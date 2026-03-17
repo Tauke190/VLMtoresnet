@@ -79,6 +79,35 @@ def build_imagenet_clip_text_features(clip_model, device):
 
     return torch.stack(all_class_embeds, dim=0)  # [num_classes, dim]
 
+def build_diffusion_clip_text_features(clip_model, device):
+    base_dir = os.path.dirname(__file__)
+    base_dir = os.path.dirname(base_dir)
+
+    caption_files = ["caption_2k.txt", "caption_5k.txt"]
+    
+    class_names = []
+    for caption_filename in caption_files:
+        caption_path = os.path.join(base_dir, caption_filename)
+        with open(caption_path, 'r', encoding='utf-8') as f:
+            captions = [line.strip() for line in f if line.strip()]
+            class_names.extend(captions)
+
+    print(f"\n[DEBUG] Diffusion dataset: {len(class_names)} classes loaded from captions")
+    print(f"[DEBUG] Example captions: {class_names[:3]}")
+
+    all_class_embeds = []
+    clip_model.eval()
+    with torch.no_grad():
+        for caption in class_names:
+            text_tokens = clip.tokenize([caption], truncate=True).to(device)
+            feat = clip_model.encode_text(text_tokens)
+            feat = feat / feat.norm(dim=-1, keepdim=True)
+            all_class_embeds.append(feat.squeeze(0))
+
+    features = torch.stack(all_class_embeds, dim=0)  # [7000, dim]
+    print(f"[DEBUG] Diffusion CLIP text features shape: {features.shape}")
+    return features
+
 def build_clip_text_features(clip_model, class_names, device, template_file):
     """Build CLIP text features for validation set class names using multiple prompt templates."""
     # Load templates from file

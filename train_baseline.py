@@ -141,7 +141,11 @@ def main():
         for p in _clip_model.parameters():
             p.requires_grad = False
 
-        clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
+        if args.dataset == 'diffusion':
+            from Functions.setup import build_diffusion_clip_text_features
+            clip_text_features = build_diffusion_clip_text_features(_clip_model, args.device)
+        else:
+            clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
 
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")
