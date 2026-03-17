@@ -42,6 +42,10 @@ class FastViT_Projector(FastViT):
         )
     
     def load_state_dict(self, state_dict, strict):
+        for key in list(state_dict.keys()):
+            if key.startswith("head."):
+                del state_dict[key]
+
         if "projector.fc1.weight" not in state_dict:
             state_dict["projector.fc1.weight"] = self.projector.fc1.weight
         if "projector.fc1.bias" not in state_dict:
@@ -53,7 +57,7 @@ class FastViT_Projector(FastViT):
         if "logit_scale" not in state_dict:
             state_dict["logit_scale"] = self.logit_scale
 
-        super().load_state_dict(state_dict, strict)
+        super().load_state_dict(state_dict, strict=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # input embedding
