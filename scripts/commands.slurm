@@ -77,7 +77,6 @@ FASTVIT_CKPT=logs/fastvit_sa36.pth.tar
 FASTVIT_CKPT=checkpoints/CLIPtoResNet/model_best.pth.tar
 PROJECTOR_CKPT=checkpoints/CLIPtoResNet/projector_best.pth.tar
 
-
 ### Food 101
 DATASET=food101 
 DATASET_PATH=$FOOD_PATH
@@ -95,9 +94,14 @@ DATASET=diffusion
 DATASET_PATH=$DIFF_PATH
 
 ########################
-# CLIP ZERO SHOT (Text Based)
+# CLIP ZERO SHOT (Text Based) [when model is E2E trained]
 ########################
-python eval_final.py --feature-mode zeroshot --model clip --dataset $DATASET --data-dir $DATASET_PATH
+python eval_final.py --feature-mode zeroshot --model fastvit_sa36_projector --dataset $DATASET --data-dir $DATASET_PATH --model-checkpoint $E2E_CKPT
+
+########################
+# CLIP ZERO SHOT (Text Based) [when model is trained with backbone frozen]
+########################
+python eval_final.py --feature-mode zeroshot --model fastvit_sa36_projector --dataset $DATASET --data-dir $DATASET_PATH --pretrained-backbone $FASTVIT_CKPT --model-checkpoint $PROJECTOR_CKPT
 
 ########################
 # FastViT BACKBONE PROBE

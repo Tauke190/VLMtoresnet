@@ -45,7 +45,6 @@ import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
 from timm.data import (
-    create_dataset,
     create_loader,
     Mixup,
     FastCollateMixup,
@@ -68,6 +67,7 @@ import models
 from misc.distillation_loss import DistillationLoss
 from misc.cosine_annealing import CosineWDSchedule
 
+from Functions.create_dataset import create_dataset
 from Functions.train import train_one_epoch
 from Functions.eval import run_zeroshot_eval, validate
 from Functions.argument import _parse_args
@@ -143,7 +143,11 @@ def main():
         for p in _clip_model.parameters():
             p.requires_grad = False
 
-        clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
+        if args.dataset == 'diffusion':
+            from Functions.setup import build_diffusion_clip_text_features
+            clip_text_features = build_diffusion_clip_text_features(_clip_model, args.device)
+        else:
+            clip_text_features = build_imagenet_clip_text_features(_clip_model, args.device)
 
         if args.local_rank == 0:
             print(f"[DEBUG] CLIP text embeddings created: {clip_text_features.shape}")

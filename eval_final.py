@@ -11,13 +11,17 @@ import time
 import logging
 import models
 import clip
+
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
+
 from CLIP.dataloaders.aircraft import aircraft as aircraft_dataloader
 from CLIP.dataloaders.oxford_pets import OxfordPets
 from CLIP.dataloaders.food101 import Food101
 from CLIP.dataloaders.ucf101 import UCF101
 from CLIP.dataloaders import DiffisionImages
+
+
 # ---------------- Utils ----------------
 def count_parameters(model):
     total = sum(p.numel() for p in model.parameters())
@@ -185,6 +189,7 @@ def load_backbone(args, device):
     print(f"Backbone ready: {args.model}")
     return model
 
+
 # ---------------- Data ----------------
 def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
 
@@ -234,6 +239,7 @@ def setup_loaders(dataset_name, dataset_root, batch_size=128, num_workers=4):
                              num_workers=num_workers, pin_memory=True)
 
     return train_loader, test_loader
+
 
 # ---------------- Feature extraction ----------------
 def extract_features(loader, backbone, device, mode="forward_features"):
@@ -566,6 +572,7 @@ def _build_template_text_features_clip(dataset_name, dataset_root, clip_model, d
 
     return text_features, class_names
 
+
 def setup_zeroshot_evaluation_clip(
     dataset_name, dataset_root, device, batch_size=128, num_workers=4
 ):
@@ -865,6 +872,7 @@ def main():
     print(f"Top-1 Accuracy: {acc1:.3f}%")
     print(f"Top-5 Accuracy: {acc5:.3f}%")
     print(f"Runtime: {(time.time() - start_time)/60:.2f} min")
+
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,9 @@
 
+
+conda activate fastvit
+
+
+
 cd ~/VLMtoresnet/
 # python Scripts/run.sh
 conda activate fastvit

@@ -11,8 +11,7 @@ python -m pip install numpy==1.24.4
 python -m pip install git+https://github.com/openai/CLIP.git
 python -m pip install einops shapely timm==1.0.15 wandb
 python -m pip install scipy
-
-
+python -m pip install scikit-learn
 
 
 
