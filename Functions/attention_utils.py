@@ -259,51 +259,6 @@ def attention_distillation_loss(teacher_attn, student_attn,
     return loss
 
 
-def normalize_attention(attn):
-    """
-    Normalize attention maps to [0, 1] range per sample.
-
-    DEPRECATED: This min-max normalization destroys the attention probability
-    structure. Use row-wise normalization instead (divide by row sum).
-
-    Args:
-        attn: Attention tensor [B, num_heads, N, N] or [B, N, N]
-
-    Returns:
-        normalized: Attention tensor in [0, 1] range, same shape as input
-    """
-    import warnings
-    warnings.warn(
-        "normalize_attention() uses min-max normalization which destroys "
-        "attention probability structure. Use row-wise normalization instead: "
-        "attn / (attn.sum(dim=-1, keepdim=True) + 1e-8)",
-        DeprecationWarning,
-        stacklevel=2
-    )
-
-    # Determine dimensions
-    if attn.dim() == 4:
-        # [B, num_heads, N, N]
-        reduce_dims = (2, 3)
-    elif attn.dim() == 3:
-        # [B, N, N]
-        reduce_dims = (1, 2)
-    else:
-        raise ValueError(f"Expected 3D or 4D tensor, got {attn.dim()}D")
-
-    # Min-max normalization per sample (and per head if applicable)
-    attn_min = attn.amin(dim=reduce_dims, keepdim=True)
-    attn_max = attn.amax(dim=reduce_dims, keepdim=True)
-
-    # Avoid division by zero
-    attn_range = attn_max - attn_min
-    attn_range = torch.clamp(attn_range, min=1e-8)
-
-    normalized = (attn - attn_min) / attn_range
-
-    return normalized
-
-
 # Example usage
 if __name__ == '__main__':
     print("Testing attention utilities...")

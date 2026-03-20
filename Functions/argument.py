@@ -793,9 +793,12 @@ def _parse_args():
     )
     parser.add_argument(
         "--log-wandb",
-        action="store_true",
-        default=False,
-        help="log training and validation metrics to wandb",
+        default="",
+        type=str,
+        nargs="?",
+        const="",
+        metavar="RUN_NAME",
+        help="log training and validation metrics to wandb (optionally specify run name)",
     )
     parser.add_argument(
         "--imagenet-trainset-size",
