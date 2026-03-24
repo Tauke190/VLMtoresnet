@@ -478,12 +478,19 @@ def run_zeroshot_evaluation_fastvit_x(eval_ctx, model, device):
             targets = targets.to(device, non_blocking=True)
 
             outputs = model(images)
-            image_features = outputs[0] if isinstance(outputs, tuple) else outputs
+            if isinstance(outputs, tuple) and len(outputs) >= 4:
+                image_features = outputs[0]
+                # Learned logit_scale is typically returned in log space
+                logit_scale = torch.exp(outputs[3])
+            else:
+                image_features = outputs[0] if isinstance(outputs, tuple) else outputs
+                logit_scale = 100.0
+            
             image_features = image_features / (
                 image_features.norm(dim=-1, keepdim=True) + 1e-6
             )
 
-            logits = 100.0 * image_features.float() @ text_features.T
+            logits = logit_scale * image_features.float() @ text_features.T
 
             acc1, acc5 = accuracy(logits, targets, topk=(1, 5))
             top1_m.update(acc1.item(), images.size(0))
