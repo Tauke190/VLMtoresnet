@@ -852,6 +852,14 @@ def _parse_args():
         help="evaluate Train Validation set",
     )
     parser.add_argument(
+        "--intra-epoch-val",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Run validation N times per epoch during training (0 = disabled). "
+             "E.g. 4 runs validation every len(loader)//4 batches.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         default=False,

@@ -70,7 +70,7 @@ def create_attn_distill_loss(attn_distill_weight: float = 1.0, loss_type: str = 
     """
     from .attention_distillation_loss import AttentionDistillationLoss
 
-    attn_loss_fn = AttentionDistillationLoss(loss_type=loss_type, normalize=False)
+    attn_loss_fn = AttentionDistillationLoss(loss_type=loss_type)
 
     def compute_attn_distill_loss(
         output: torch.Tensor,  # noqa: ARG001
@@ -120,7 +120,7 @@ def create_clip_loss(
 
         # logit_scale MUST be provided from model forward pass
         assert logit_scale is not None, "logit_scale must be explicitly passed from model"
-        return clip_loss_fn(feats, clip_text_features[target], logit_scale)
+        return clip_loss_fn(feats, clip_text_features[target], logit_scale, labels=target)
 
     return compute_clip_loss
 
@@ -179,12 +179,17 @@ def create_mse_loss() -> Callable:
         if feats.ndim == 4 and feats.shape[2] > 1:
             feats = feats.mean(dim=[2, 3])
 
+        # Cast to float32: feats is float16 under AMP; clip_image_features is float32 (below).
+        # nn.MSELoss requires both inputs to have the same dtype.
+        feats = feats.float()
         feats = F.normalize(feats, dim=-1)
 
         clip_image_features = clip_image_features.float()
         clip_image_features = F.normalize(clip_image_features, dim=-1)
 
-        return mse_fn(feats, clip_image_features)
+        return (1 - F.cosine_similarity(feats, clip_image_features)).mean()
+
+        # return mse_fn(feats, clip_image_features)
 
     return compute_mse_loss
 
@@ -247,6 +252,7 @@ def create_distillation_loss_manager(
             create_clip_loss(clip_loss_fn, clip_text_features),
         )
 
+    mse_distill_weight = 0.5
     manager.add_loss("MSE Loss", create_mse_loss(), weight=mse_distill_weight)
 
     return manager

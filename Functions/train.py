@@ -10,13 +10,29 @@ from timm.loss import *
 import torch
 import torchvision.utils
 
+from Functions.eval import validate, run_zeroshot_eval
+
+# ImageNet normalization stats (used by FastViT / timm default pipeline)
+_IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+_IMAGENET_STD  = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+# CLIP normalization stats
+_CLIP_MEAN = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
+_CLIP_STD  = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
+
+def _to_clip_input(x: torch.Tensor) -> torch.Tensor:
+    """Re-normalize a batch from ImageNet stats to CLIP stats (in-place on dtype/device of x)."""
+    mean_in  = _IMAGENET_MEAN.to(device=x.device, dtype=x.dtype)
+    std_in   = _IMAGENET_STD.to(device=x.device, dtype=x.dtype)
+    mean_out = _CLIP_MEAN.to(device=x.device, dtype=x.dtype)
+    std_out  = _CLIP_STD.to(device=x.device, dtype=x.dtype)
+    return (x * std_in + mean_in - mean_out) / std_out
+
 from timm.models import model_parameters
 from Functions.losses import LossManager
 
 from models import VANILLA_MODELS
 
 _logger = logging.getLogger("train")
-
 
 def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, batch_time_m,
     lr, wd0, wd1, data_time_m, losses_m, loss_dict=None):
@@ -45,13 +61,13 @@ def log_output(epoch, batch_idx, total_len, last_idx, input_size, world_size, ba
 
     _logger.info(log_str)
         
-
 def train_one_epoch(
     epoch, model, loader, optimizer, loss_manager: LossManager, args, lr_scheduler=None,
     saver=None, output_dir=None, amp_autocast=suppress, loss_scaler=None,
     model_ema=None, mixup_fn=None, wd_scheduler=None,
     zeroshot_eval_ctx=None, clip_model=None,
     attn_extractor=None, clip_grouped_model=None,
+    loader_eval=None, validate_loss_fn=None,
     ):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
@@ -108,12 +124,12 @@ def train_one_epoch(
             clip_image_features = None
             if clip_model is not None and projected_embed is not None:
                 with torch.no_grad():
-                    clip_image_features = clip_model.encode_image(input)
+                    clip_image_features = clip_model.encode_image(_to_clip_input(input))
 
             # Extract attention maps for attention distillation
             extra_kwargs = {}
             if attn_extractor is not None and clip_grouped_model is not None:
-                from CLIP.clip.model_grouped import get_layer4_attention_maps, get_layer4_attention_logits
+                from CLIP.clip.model_grouped import get_layer4_attention_and_logits
                 # Student attention maps were already captured by hooks during model(input)
                 student_attn_maps = attn_extractor.attention_maps
                 student_logits_maps = attn_extractor.attention_logits
@@ -121,10 +137,11 @@ def train_one_epoch(
                 student_attn_layers = [student_attn_maps[k] for k in sorted(student_attn_maps.keys())]
                 student_logits_layers = [student_logits_maps[k] for k in sorted(student_logits_maps.keys())]
 
-                # Extract teacher attention from grouped CLIP layer4
+                # Extract teacher attention + logits in ONE forward pass with CLIP-normalized input
                 with torch.no_grad():
-                    teacher_attn_layers, _ = get_layer4_attention_maps(clip_grouped_model, input)
-                    teacher_logits_layers, _ = get_layer4_attention_logits(clip_grouped_model, input)
+                    teacher_attn_layers, teacher_logits_layers, _ = get_layer4_attention_and_logits(
+                        clip_grouped_model, _to_clip_input(input)
+                    )
 
                 extra_kwargs["teacher_attn_layers"] = teacher_attn_layers
                 extra_kwargs["student_attn_layers"] = student_attn_layers
@@ -172,11 +189,20 @@ def train_one_epoch(
             model_ema.update(model)
 
         # -----------------------------------------------------------------
-        # Optional generic zero-shot eval every N batches inside epoch
-        if ( zeroshot_eval_ctx is not None and args.rank == 0 and getattr(args, "zeroshot_eval_interval", 0) > 0 and (batch_idx + 1) % args.zeroshot_eval_interval == 0):
-            run_zeroshot_eval( zeroshot_eval_ctx, args, model,
-                when="batch", epoch=epoch, batch_idx=batch_idx + 1)
-
+        # Optional intra-epoch validation: runs N times per epoch (terminal only)
+        _intra_val = getattr(args, 'intra_epoch_val', 0)
+        if _intra_val > 0 and (batch_idx + 1) % max(1, len(loader) // _intra_val) == 0:
+            _frac = epoch + (batch_idx + 1) / len(loader)
+            model.eval()
+            if loader_eval is not None and validate_loss_fn is not None and getattr(args, 'vanilla_eval', False):
+                _m = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+                if args.local_rank == 0:
+                    _logger.info(f"[IntraVal {_frac:.2f}] top1={_m['top1']:.2f}  top5={_m['top5']:.2f}")
+            if zeroshot_eval_ctx is not None and args.model not in VANILLA_MODELS:
+                _acc1, _acc5 = run_zeroshot_eval(zeroshot_eval_ctx, args, model, when="batch", epoch=epoch, batch_idx=batch_idx + 1)
+                if args.local_rank == 0:
+                    _logger.info(f"[IntraVal {_frac:.2f}] zeroshot top1={_acc1:.2f}  top5={_acc5:.2f}")
+            model.train()
         # -----------------------------------------------------------------
 
         torch.cuda.synchronize()

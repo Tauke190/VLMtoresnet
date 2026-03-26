@@ -35,7 +35,7 @@ class AttentionDistillationLoss(nn.Module):
         loss = loss_fn(teacher_attn, student_attn)
     """
 
-    def __init__(self, loss_type='kl', normalize=False, reduction='mean'):
+    def __init__(self, loss_type='kl', reduction='mean'):
         """
         Initialize attention distillation loss.
 
@@ -49,7 +49,6 @@ class AttentionDistillationLoss(nn.Module):
         """
         super().__init__()
         self.loss_type = loss_type
-        self.normalize = normalize
         self.reduction = reduction
 
         if loss_type.lower() not in ['kl', 'mse', 'mse_logits']:

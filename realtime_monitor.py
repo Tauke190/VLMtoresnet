@@ -167,8 +167,6 @@ class RealtimeMonitor:
         plt.savefig(self.plot_path, dpi=140)
         plt.close()
         
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Updated plot - best={self.best_acc:.2f}% @ epoch {int(best_epoch)}")
-        
         # Critical warnings
         if overtime and plateau:
             print("\n[!!] TRAINING LIKELY WASTING GPU TIME [!!]")

@@ -29,6 +29,7 @@ from datetime import datetime
 from misc import LogitScalingClipLoss
 import clip 
 
+
 # Import real-time monitoring
 try:
     from realtime_monitor import start_monitoring, update_training_metrics, stop_monitoring
@@ -276,7 +277,7 @@ def main():
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
             # Only wrap model if it has trainable parameters
-            if not args.freeze_backbone:
+            if args.distributed:
                 model = NativeDDP(
                     model,
                     device_ids=[args.local_rank],
@@ -427,6 +428,9 @@ def main():
         if args.local_rank == 0:
             _logger.info("[CRD] Prefetcher disabled, using collate_with_indices for 3-tuple batches (pin_memory=True)")
 
+
+
+
     loader_train = create_loader(
         dataset_train,
         input_size=data_config["input_size"],
@@ -575,6 +579,7 @@ def main():
         clip_text_features=clip_text_features,
         attn_distill_weight=getattr(args, 'attn_distill_weight', 1.0),
         mse_distill_weight=getattr(args, 'mse_distill_weight', 1.0),
+        attn_loss_type='kl', # [kl , attn_loss_type]
         crd_module=crd_module,
         crd_weight=getattr(args, 'crd_weight', 1.0),
     )
@@ -675,6 +680,8 @@ def main():
             clip_model=clip_model_for_mse,
             attn_extractor=attn_extractor,
             clip_grouped_model=clip_grouped_model,
+            loader_eval=loader_eval,
+            validate_loss_fn=validate_loss_fn,
         )
 
         if args.distributed and args.dist_bn in ("broadcast", "reduce"):

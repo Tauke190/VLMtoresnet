@@ -90,7 +90,7 @@ def align_attention_spatial(clip_attn, target_size=7):
 
 
 def attention_distillation_loss(teacher_attn, student_attn,
-                                spatial_align=True, normalize=False,
+                                spatial_align=True,
                                 reduction='mean', loss_type='kl',
                                 teacher_logits=None, student_logits=None):
     """
@@ -181,17 +181,12 @@ def attention_distillation_loss(teacher_attn, student_attn,
         student_attn = student_attn / (student_attn.sum(dim=-1, keepdim=True) + 1e-8)
 
 
-    # Normalize attention maps if requested (row-wise for probability distributions)
-    if normalize:
-        # Row-wise normalization: preserve per-query attention probability structure
-        teacher_attn = teacher_attn / (teacher_attn.sum(dim=-1, keepdim=True) + 1e-8)
-        student_attn = student_attn / (student_attn.sum(dim=-1, keepdim=True) + 1e-8)
-
     # Compute loss using appropriate metric for probability distributions
     if loss_type.lower() == 'kl':
         # KL divergence: D_KL(teacher || student)
-        # Interprets attention maps as probability distributions
-        # Add small epsilon to avoid log(0)
+        # Cast to float32: KL log() on float16 risks underflow for small probabilities
+        teacher_attn = teacher_attn.float()
+        student_attn = student_attn.float()
         teacher_attn = torch.clamp(teacher_attn, min=1e-6)
         student_attn = torch.clamp(student_attn, min=1e-6)
 

@@ -188,12 +188,13 @@ class LogitScalingClipLoss(ClipLoss):
         logit_scale,
         logit_bias=None,
         output_dict=False,
+        labels=None,
     ):
         image_features, text_features = self.preprocess_feats(
             image_features, text_features
         )
 
-        logit_scale = logit_scale.exp().clamp(max=100) # main difference
+        logit_scale = logit_scale.exp().clamp(max=100)
 
         logits_per_image, logits_per_text = self.get_logits(
             image_features,
@@ -202,15 +203,16 @@ class LogitScalingClipLoss(ClipLoss):
             logit_bias=logit_bias,
         )
 
-        labels = self.get_ground_truth(
-            image_features.device,
-            logits_per_image.shape[0],
-        )
-
+        # Build soft target matrix: P[i,j] = 1/count_i if target[i]==target[j]
+        # Same-class pairs are treated as positives, normalized per row.
+        labels = labels.to(image_features.device)
+        pos_mask = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()  # [B, B]
+        soft_targets = pos_mask / pos_mask.sum(dim=1, keepdim=True)      # row-normalize
         loss = (
-            F.cross_entropy(logits_per_image, labels) +
-            F.cross_entropy(logits_per_text, labels)
+            -(soft_targets   * F.log_softmax(logits_per_image, dim=1)).sum(dim=1).mean() +
+            -(soft_targets.T * F.log_softmax(logits_per_text,  dim=1)).sum(dim=1).mean()
         ) / 2
+     
 
         return {"contrastive_loss": loss} if output_dict else loss
 
