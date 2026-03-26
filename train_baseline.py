@@ -110,11 +110,9 @@ def main():
 
     if args.log_wandb is not None and args.log_wandb != "":
         if has_wandb:
-            # Only initialize wandb from rank 0 to avoid duplicate logging
-            if args.local_rank == 0:
-                # Use provided run name or auto-generate from model and timestamp
-                run_name = args.log_wandb if args.log_wandb and args.log_wandb.strip() else f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                wandb.init(project=args.experiment, name=run_name, config=args)
+            # Initialize wandb on all ranks to enable logging from any rank
+            run_name = args.log_wandb if args.log_wandb and args.log_wandb.strip() else f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            wandb.init(project=args.experiment, name=run_name, config=args, reinit=True)
         else:
             _logger.warning(
                 "You've requested to log metrics to wandb but package not found. "
