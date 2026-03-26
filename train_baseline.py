@@ -39,6 +39,8 @@ except ImportError:
     print("Warning: Real-time monitor not available. Install realtime_monitor.py for live monitoring.") 
 from typing import Union
 
+HAS_REALTIME_MONITOR = False
+
 
 import torch
 import torch.nn as nn

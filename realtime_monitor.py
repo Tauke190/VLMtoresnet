@@ -213,11 +213,12 @@ def signal_handler(sig, frame):
     stop_monitoring()
     sys.exit(0)
 
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 if __name__ == "__main__":
+    # Only register signal handlers in standalone mode — do NOT register at import time
+    # as that overrides PyTorch DDP's signal handling and crashes distributed training.
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Standalone mode - for testing
     print("Testing real-time monitor...")
     monitor = start_monitoring()
