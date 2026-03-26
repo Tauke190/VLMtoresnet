@@ -206,6 +206,17 @@ class LogitScalingClipLoss(ClipLoss):
         # Build soft target matrix: P[i,j] = 1/count_i if target[i]==target[j]
         # Same-class pairs are treated as positives, normalized per row.
         labels = labels.to(image_features.device)
+        
+        # Gather labels across GPUs to match the logits shape
+        if self.world_size > 1 and not self.local_loss:
+            gathered_labels = [torch.zeros_like(labels) for _ in range(self.world_size)]
+            if has_distributed:
+                dist.all_gather(gathered_labels, labels)
+            # Offset labels from different ranks to prevent false positives
+            for i in range(self.world_size):
+                gathered_labels[i] = gathered_labels[i] + (i * (labels.max().item() + 1))
+            labels = torch.cat(gathered_labels, dim=0)
+        
         pos_mask = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()  # [B, B]
         soft_targets = pos_mask / pos_mask.sum(dim=1, keepdim=True)      # row-normalize
         loss = (

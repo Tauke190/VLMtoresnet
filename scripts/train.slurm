@@ -52,7 +52,7 @@ LOG=500
 
 EXP=fastvit
 MODEL=fastvit_sa36_lora_pp # Model = [fastvit_sa36, fastvit_sa36_adapter, fastvit_sa36_lrtokens, fastvit_sa36_lora_pp]
-METHOD=attention_distillation # Training methods = [default, baseline, distillation, attention_distillation]
+METHOD=distillation # Training methods = [default, baseline, distillation, attention_distillation]
 RUN_NAME="${MODEL}_${METHOD}"
 OUTPUT=./checkpoints/${RUN_NAME}
 
