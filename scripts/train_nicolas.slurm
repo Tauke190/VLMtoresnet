@@ -71,7 +71,7 @@ LOG=500
 
 ## E2E projector model 
 EXP=fastvit-proj
-MODEL=fastvit_sa36_projector
+MODEL=fastvit_sa36_lora_pp
 python -m torch.distributed.launch --nproc_per_node=$NUM_GPU train_baseline.py \
     $DIFF_PATH --dataset diffusion --num-classes 6000 --model $MODEL --val-set $VAL_SET --validation-data-dir $VAL_PATH --log-interval $LOG \
     --validation-eval-interval 1 --initial-checkpoint $WT --output $OUTPUT --experiment $EXP \
