@@ -42,9 +42,9 @@ class FastViT_Projector(FastViT):
         )
     
     def load_state_dict(self, state_dict, strict):
-        for key in list(state_dict.keys()):
-            if key.startswith("head."):
-                del state_dict[key]
+        # for key in list(state_dict.keys()):
+        #     if key.startswith("head."):
+        #         del state_dict[key]
 
         if "projector.fc1.weight" not in state_dict:
             state_dict["projector.fc1.weight"] = self.projector.fc1.weight
@@ -313,7 +313,7 @@ class FastViT_lora_PP(FastViT_Projector):
         for i,block in enumerate(self.network):
             if isinstance(block, nn.Sequential):
                 for j,sub_block in enumerate(block):
-                    if f"network.{i}.{j}.convffn.fc2.lora_A" not in state_dict:
+                    if f"network.{i}.{j}.convffn.fc2.lora_A.weight" not in state_dict:
                         # self.network[i][j].convffn.fc2.lora_A
                         state_dict[f"network.{i}.{j}.convffn.fc2.lora_A.weight"] = sub_block.convffn.fc2.lora_A.weight
                         state_dict[f"network.{i}.{j}.convffn.fc2.lora_B.weight"] = sub_block.convffn.fc2.lora_B.weight
